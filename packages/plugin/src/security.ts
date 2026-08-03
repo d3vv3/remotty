@@ -87,14 +87,16 @@ const secretMatches = (secret: string, expectedHash: string) => {
   return expected.length === actual.length && timingSafeEqual(actual, expected)
 }
 
-export const workspaceRelayId = (authorityId: string, host: string, directory: string) =>
-  createHash("sha256")
+export const workspaceRelayId = (authorityId: string, host: string, directory: string, instanceId?: string) => {
+  const hash = createHash("sha256")
     .update(authorityId)
     .update("\0")
     .update(host)
     .update("\0")
     .update(directory)
-    .digest("base64url")
+  if (instanceId) hash.update("\0").update(instanceId)
+  return hash.digest("base64url")
+}
 
 export const commandChangesState = (command: ClientCommand) =>
   ["session.prompt", "session.abort", "permission.reply", "question.reply", "question.reject"].includes(command.type)

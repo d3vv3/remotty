@@ -76,9 +76,11 @@ async function fixture() {
 }
 
 describe("relay v2 security", () => {
-  it("derives stable workspace-specific relay ids", () => {
+  it("derives workspace- and process-specific relay ids", () => {
     expect(workspaceRelayId("authority", "host", "/one")).toBe(workspaceRelayId("authority", "host", "/one"))
     expect(workspaceRelayId("authority", "host", "/one")).not.toBe(workspaceRelayId("authority", "host", "/two"))
+    expect(workspaceRelayId("authority", "host", "/one", "instance-1"))
+      .not.toBe(workspaceRelayId("authority", "host", "/one", "instance-2"))
   })
 
   it("persists replay protection only for state-changing commands", () => {

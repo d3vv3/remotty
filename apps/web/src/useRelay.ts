@@ -434,6 +434,8 @@ export function useRelay(initialBundle?: PairingBundle) {
             if (control.data.connected) connectedRelaysRef.current.add(control.data.relayId)
             else {
               connectedRelaysRef.current.delete(control.data.relayId)
+              slicesRef.current.delete(control.data.relayId)
+              publishSlices()
               for (const [requestId, pending] of pendingRef.current) {
                 if (pending.relayId !== control.data.relayId) continue
                 window.clearTimeout(pending.timeout)

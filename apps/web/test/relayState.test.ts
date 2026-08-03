@@ -37,6 +37,19 @@ describe("relay snapshot aggregation and routing", () => {
     expect(commandRelayId({ type: "session.messages", sessionId: "missing" }, ["relay-a", "relay-b"], new Map())).toBeUndefined()
   })
 
+  it("merges duplicate sessions and routes to the active instance", () => {
+    const idle = slice("relay-a", "session-a", 10)
+    const busy = slice("relay-b", "session-a", 10)
+    busy.sessions[0]!.status = "busy"
+
+    const state = aggregateRelaySlices(new Map([["relay-a", idle], ["relay-b", busy]]))
+
+    expect(state.sessions).toHaveLength(1)
+    expect(state.sessions[0]).toMatchObject({ id: "session-a", status: "busy", workspaceRelayId: "relay-b" })
+    expect(commandRelayId({ type: "session.messages", sessionId: "session-a" }, state.relays.map((relay) => relay.id), state.sessionRelays))
+      .toBe("relay-b")
+  })
+
   it("rejects rollback within a relay stream and from an older relay instance", () => {
     const current = slice("relay-a", "session-a", 1)
     current.relay.instanceId = "instance-2"

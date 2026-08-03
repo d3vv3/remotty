@@ -84,9 +84,9 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
     brokerUrl,
     name: process.env.REMOTTY_NAME ?? state.name,
   }
-  const relayId = workspaceRelayId(config.authorityId, hostname(), directory)
   const instanceId = randomUUID()
   const instanceStartedAt = Date.now()
+  const relayId = workspaceRelayId(config.authorityId, hostname(), directory, instanceId)
   const relay: RelayInfo = {
     id: relayId,
     name: config.name,

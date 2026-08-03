@@ -37,9 +37,20 @@ export const acceptsRelayPosition = (
 export const aggregateRelaySlices = (slices: Iterable<[string, RelaySlice]>): AggregatedRelayState => {
   const entries = [...slices]
   const relays = entries.map(([, slice]) => slice.relay)
-  const sessions = entries
+  const candidates = entries
     .flatMap(([relayId, slice]) => slice.sessions.map((session) => ({ ...session, workspaceRelayId: relayId })))
-    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .sort((left, right) => {
+      const recency = right.updatedAt - left.updatedAt
+      if (recency) return recency
+      const priority = (status: SessionSummary["status"]) => status === "busy" ? 2 : status === "retry" ? 1 : 0
+      return priority(right.status) - priority(left.status)
+    })
+  const seenSessions = new Set<string>()
+  const sessions = candidates.filter((session) => {
+    if (seenSessions.has(session.id)) return false
+    seenSessions.add(session.id)
+    return true
+  })
   const sessionRelays = new Map<string, string>()
   for (const session of sessions) {
     if (!sessionRelays.has(session.id)) sessionRelays.set(session.id, session.workspaceRelayId)
