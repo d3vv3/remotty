@@ -184,8 +184,12 @@ describe("E2EE protocol v2", () => {
     const token = encodePairingBundle(bundle)
 
     expect(token.startsWith("remotty:v2:")).toBe(true)
+    expect(token.length).toBeLessThan(500)
     expect(decodePairingBundle(token)).toEqual(bundle)
     expect(decodePairingBundle(`https://app.example.test/pair#${token}`)).toEqual(bundle)
+
+    const legacyToken = `remotty:v2:${base64urlEncode(new TextEncoder().encode(JSON.stringify(bundle)))}`
+    expect(decodePairingBundle(legacyToken)).toEqual(bundle)
   })
 
   it("rejects insecure remote broker URLs", async () => {

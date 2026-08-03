@@ -137,34 +137,11 @@ const requireV2 = (config: ConfigState): RelayConfig => {
   return config
 }
 
-export const terminalHyperlink = (url: string, interactive = process.stdout.isTTY) =>
-  interactive ? `\u001B]8;;${url}\u0007${url}\u001B]8;;\u0007` : url
+export const terminalHyperlink = (url: string, interactive = process.stdout.isTTY, label = url) =>
+  interactive ? `\u001B]8;;${url}\u0007${label}\u001B]8;;\u0007` : url
 
-const QR_QUADRANTS = Array.from(" ▘▝▀▖▌▞▛▗▚▐▜▄▙▟█")
-
-export const terminalQrCode = (value: string) => {
-  const qr = QRCode.create(value, { errorCorrectionLevel: "H" })
-  const margin = 4
-  const extent = qr.modules.size + margin * 2
-  const moduleAt = (x: number, y: number) => {
-    const column = x - margin
-    const row = y - margin
-    return column >= 0 && row >= 0 && column < qr.modules.size && row < qr.modules.size && qr.modules.get(row, column)
-  }
-  const rows: string[] = []
-  for (let y = 0; y < extent; y += 2) {
-    let row = ""
-    for (let x = 0; x < extent; x += 2) {
-      const pattern = Number(moduleAt(x, y))
-        | Number(moduleAt(x + 1, y)) << 1
-        | Number(moduleAt(x, y + 1)) << 2
-        | Number(moduleAt(x + 1, y + 1)) << 3
-      row += QR_QUADRANTS[pattern]
-    }
-    rows.push(`\u001B[30;47m${row}\u001B[0m`)
-  }
-  return rows.join("\n")
-}
+export const terminalQrCode = (value: string) =>
+  QRCode.toString(value, { type: "terminal", small: true, errorCorrectionLevel: "Q" })
 
 export const copyPairingToken = async (
   token: string,
@@ -184,10 +161,10 @@ const printInvitation = async (config: RelayConfig, invitation: Invitation, appU
   const url = pairingUrl(bundle, appUrl)
   const copied = await copyPairingToken(token)
   console.log(`Invite expires: ${invitation.record.expiresAt}`)
-  console.log(`Token: ${token}`)
-  console.log(`Open: ${terminalHyperlink(url)}`)
+  if (!copied) console.log(`Token: ${token}`)
+  console.log(`Open: ${terminalHyperlink(url, process.stdout.isTTY, "pairing page")}`)
   console.log(copied ? "Copied invite token to clipboard." : "Clipboard unavailable; copy the token or open the link.")
-  console.log(terminalQrCode(url))
+  console.log(await terminalQrCode(url))
   console.log(`Saved: ${configPath()}`)
 }
 

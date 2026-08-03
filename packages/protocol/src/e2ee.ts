@@ -367,7 +367,20 @@ export async function openEnrollmentPayload<T = JsonValue>(
 
 export function encodePairingBundle(bundle: PairingBundle): string {
   const parsed = pairingBundleSchema.parse(bundle)
-  return `${PAIRING_BUNDLE_PREFIX}${base64urlEncode(encoder.encode(canonicalizeJson(parsed)))}`
+  const compactKey = (key: EcPublicJwk): JsonValue[] => {
+    const values: JsonValue[] = [key.x, key.y, key.key_ops ?? null, key.ext ?? null, key.alg ?? null, key.use ?? null]
+    while (values.at(-1) === null) values.pop()
+    return values
+  }
+  const compact: JsonValue[] = [
+    parsed.brokerUrl,
+    parsed.roomToken,
+    parsed.inviteId,
+    parsed.inviteSecret,
+    compactKey(parsed.relaySigningKey),
+    compactKey(parsed.relayEncryptionKey),
+  ]
+  return `${PAIRING_BUNDLE_PREFIX}${base64urlEncode(encoder.encode(canonicalizeJson(compact)))}`
 }
 
 export function decodePairingBundle(value: string): PairingBundle {
@@ -376,7 +389,30 @@ export function decodePairingBundle(value: string): PairingBundle {
   if (!token.startsWith(PAIRING_BUNDLE_PREFIX)) {
     throw new Error(`Pairing bundle must start with ${PAIRING_BUNDLE_PREFIX}`)
   }
-  return pairingBundleSchema.parse(
-    JSON.parse(decoder.decode(base64urlDecode(token.slice(PAIRING_BUNDLE_PREFIX.length)))),
-  )
+  const decoded: unknown = JSON.parse(decoder.decode(base64urlDecode(token.slice(PAIRING_BUNDLE_PREFIX.length))))
+  if (!Array.isArray(decoded)) return pairingBundleSchema.parse(decoded)
+
+  const expandKey = (key: unknown) => {
+    if (!Array.isArray(key)) return key
+    return {
+      kty: "EC",
+      crv: "P-256",
+      x: key[0],
+      y: key[1],
+      ...(key[2] !== undefined && key[2] !== null ? { key_ops: key[2] } : {}),
+      ...(key[3] !== undefined && key[3] !== null ? { ext: key[3] } : {}),
+      ...(key[4] !== undefined && key[4] !== null ? { alg: key[4] } : {}),
+      ...(key[5] !== undefined && key[5] !== null ? { use: key[5] } : {}),
+    }
+  }
+  return pairingBundleSchema.parse({
+    version: 2,
+    brokerUrl: decoded[0],
+    roomToken: decoded[1],
+    inviteId: decoded[2],
+    inviteSecret: decoded[3],
+    relayId: decoded[1],
+    relaySigningKey: expandKey(decoded[4]),
+    relayEncryptionKey: expandKey(decoded[5]),
+  })
 }

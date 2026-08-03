@@ -9,6 +9,7 @@ describe("terminalHyperlink", () => {
   it("adds an OSC 8 link in an interactive terminal", () => {
     const url = "https://example.test/pair#token"
     expect(terminalHyperlink(url, true)).toBe(`\u001B]8;;${url}\u0007${url}\u001B]8;;\u0007`)
+    expect(terminalHyperlink(url, true, "pairing page")).toBe(`\u001B]8;;${url}\u0007pairing page\u001B]8;;\u0007`)
   })
 })
 
@@ -26,20 +27,20 @@ describe("copyPairingToken", () => {
 })
 
 describe("terminalQrCode", () => {
-  it("renders a compact high-density QR code", () => {
-    const output = terminalQrCode("https://example.test/pair#invite")
+  it("renders a square high-density QR code", async () => {
+    const output = await terminalQrCode("https://example.test/pair#invite")
     const lines = output.split("\n")
-    const visibleLines = lines.map((line) => line.replace(/\u001B\[[0-9;]*m/g, ""))
+    const visibleLines = lines.map((line) => line.replace(/\u001B\[[0-9;]*m/g, "")).filter(Boolean)
 
     expect(lines.length).toBeGreaterThan(10)
     expect(new Set(visibleLines.map((line) => Array.from(line).length))).toEqual(new Set([visibleLines[0]!.length]))
     expect(visibleLines.some((line) => /[^ ]/.test(line))).toBe(true)
-    expect(Math.max(...visibleLines.map((line) => Array.from(line).length))).toBeLessThan(30)
+    expect(Math.max(...visibleLines.map((line) => Array.from(line).length))).toBeLessThan(50)
 
-    const longInvite = terminalQrCode(`https://example.test/pair#${"x".repeat(500)}`)
+    const longInvite = (await terminalQrCode(`https://example.test/pair#${"x".repeat(500)}`))
       .replace(/\u001B\[[0-9;]*m/g, "")
       .split("\n")
     expect(longInvite.length).toBeLessThan(70)
-    expect(Math.max(...longInvite.map((line) => Array.from(line).length))).toBeLessThan(70)
+    expect(Math.max(...longInvite.map((line) => Array.from(line).length))).toBeLessThan(130)
   })
 })
