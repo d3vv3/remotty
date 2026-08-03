@@ -21,9 +21,9 @@ jobs:
         id: version
         run: |
           CURRENT=$(node -p "require('./packages/plugin/package.json').version")
-          PREV=$(git show "${{ github.event.before }}:packages/plugin/package.json" 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version" || echo "")
+          PUBLISHED=$(npm view opencode-remotty version 2>/dev/null || echo "")
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
-          if [ "$CURRENT" != "$PREV" ]; then
+          if [ "$CURRENT" != "$PUBLISHED" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
