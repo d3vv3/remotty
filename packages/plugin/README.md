@@ -12,10 +12,10 @@ Add the npm package to `~/.config/opencode/opencode.json`:
 }
 ```
 
-Create a pairing key for your remotty broker:
+Create a pairing key:
 
 ```sh
-npx opencode-remotty pair --broker wss://your-remotty-domain.example/ws
+npx opencode-remotty pair
 ```
 
 The CLI prints the key, a pairing deep link, and a terminal QR code. Scan the QR with your phone camera or the scanner in the remotty pairing screen.
@@ -25,8 +25,7 @@ Restart OpenCode after installation.
 ## Commands
 
 ```sh
-npx opencode-remotty pair --broker wss://your-remotty-domain.example/ws
-npx opencode-remotty pair --broker wss://broker.example/ws --app https://app.example
+npx opencode-remotty pair
 npx opencode-remotty status
 ```
 

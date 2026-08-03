@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto"
 import { hostname } from "node:os"
 import QRCode from "qrcode"
 import { configPath, readConfig, writeConfig } from "./config.js"
-import { pairingUrl } from "./pairing.js"
+import { DEFAULT_BROKER_URL, pairingUrl } from "./pairing.js"
 
 const pairingCode = () => randomBytes(32).toString("base64url")
 
@@ -14,7 +14,7 @@ const option = (name: string) => {
 }
 
 if (command === "pair") {
-  const brokerUrl = option("--broker") ?? process.env.REMOTTY_URL ?? process.env.OPENCODE_RELAY_URL ?? "ws://localhost:8787/ws"
+  const brokerUrl = option("--broker") ?? process.env.REMOTTY_URL ?? process.env.OPENCODE_RELAY_URL ?? DEFAULT_BROKER_URL
   const code = pairingCode()
   await writeConfig({ brokerUrl, code, name: option("--name") ?? process.env.REMOTTY_NAME ?? hostname() })
   const url = pairingUrl(brokerUrl, code, option("--app") ?? process.env.REMOTTY_APP_URL)
@@ -27,5 +27,5 @@ if (command === "pair") {
   const config = await readConfig()
   console.log(config ? JSON.stringify({ ...config, path: configPath() }, null, 2) : "Not paired")
 } else {
-  console.log("Usage: remotty <pair|status> [--broker wss://host/ws] [--app https://host] [--name workstation]")
+  console.log("Usage: remotty <pair|status>")
 }

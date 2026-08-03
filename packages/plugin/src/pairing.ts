@@ -1,3 +1,5 @@
+export const DEFAULT_BROKER_URL = "wss://remotty.devve.space/ws"
+
 export const pairingUrl = (brokerUrl: string, code: string, appUrl?: string) => {
   const broker = new URL(brokerUrl)
   const target = new URL(appUrl ?? broker.origin)

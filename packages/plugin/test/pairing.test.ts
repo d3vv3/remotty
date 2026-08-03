@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest"
-import { pairingUrl } from "../src/pairing"
+import { DEFAULT_BROKER_URL, pairingUrl } from "../src/pairing"
 
 describe("pairingUrl", () => {
+  it("uses the hosted broker by default", () => {
+    expect(DEFAULT_BROKER_URL).toBe("wss://remotty.devve.space/ws")
+  })
+
   it("builds a production pairing deep link", () => {
     expect(pairingUrl("wss://remotty.devve.space/ws", "secret-key")).toBe(
       "https://remotty.devve.space/?code=secret-key",

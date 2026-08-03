@@ -170,8 +170,6 @@ export function App() {
 function PairingScreen({ onConnect, error }: { onConnect: (code: string) => void; error?: string }) {
   const [code, setCode] = useState("")
   const [scannerOpen, setScannerOpen] = useState(false)
-  const relayProtocol = location.protocol === "https:" ? "wss:" : "ws:"
-  const broker = import.meta.env.VITE_REMOTTY_URL ?? `${relayProtocol}//${location.hostname}:8787/ws`
   const submit = (event: FormEvent) => {
     event.preventDefault()
     onConnect(code)
@@ -212,7 +210,7 @@ function PairingScreen({ onConnect, error }: { onConnect: (code: string) => void
         <div className="install-sequence">
           <div className="install-heading"><Terminal size={18} /><span>Install and pair</span></div>
           <div className="install-step"><b>01</b><div><span>Add the OpenCode plugin</span><code>{`"plugin": ["opencode-remotty"]`}</code><small>~/.config/opencode/opencode.json</small></div></div>
-          <div className="install-step"><b>02</b><div><span>Create a 256-bit pairing key</span><code>{`npx opencode-remotty pair --broker ${broker}`}</code></div></div>
+          <div className="install-step"><b>02</b><div><span>Create a 256-bit pairing key</span><code>npx opencode-remotty pair</code></div></div>
           <div className="install-step"><b>03</b><div><span>Restart OpenCode, then paste the key here</span><code>opencode --continue</code></div></div>
         </div>
       </section>

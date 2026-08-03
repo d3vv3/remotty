@@ -24,7 +24,7 @@ Add the package to `~/.config/opencode/opencode.json`:
 Create a 256-bit pairing key:
 
 ```sh
-npx opencode-remotty pair --broker wss://your-remotty-domain.example/ws
+npx opencode-remotty pair
 ```
 
 Restart OpenCode. Paste the printed key into the PWA.
