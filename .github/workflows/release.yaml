@@ -15,13 +15,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Check version change
         id: version
         run: |
           CURRENT=$(node -p "require('./packages/plugin/package.json').version")
-          PREV=$(git show HEAD~1:packages/plugin/package.json 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version" || echo "")
+          PREV=$(git show "${{ github.event.before }}:packages/plugin/package.json" 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version" || echo "")
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
           if [ "$CURRENT" != "$PREV" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
