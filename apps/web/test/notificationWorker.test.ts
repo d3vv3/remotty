@@ -85,7 +85,9 @@ describe("notification service worker security boundary", () => {
     const worker = workerCrypto()
 
     await expect(worker.verifyAndOpen(frame, identity)).resolves.toMatchObject({ title: "Private title" })
-    await expect(worker.verifyAndOpen({ ...frame, ciphertext: `${frame.ciphertext.slice(0, -1)}A` }, identity)).rejects.toThrow()
+    const tamperedCiphertext = Buffer.from(frame.ciphertext, "base64url")
+    tamperedCiphertext[0] ^= 1
+    await expect(worker.verifyAndOpen({ ...frame, ciphertext: tamperedCiphertext.toString("base64url") }, identity)).rejects.toThrow()
 
     const command = { type: "permission.reply", requestId: "request-1", sessionId: "session-1", permissionId: "permission-1", response: "once" }
     const sealed = await worker.sealCommand(command, identity, "relay-1")
