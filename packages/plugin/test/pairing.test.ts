@@ -1,6 +1,6 @@
 import { decodePairingBundle, generateEncryptionKeyPair, generateSigningKeyPair, type PairingBundle } from "@remotty/protocol"
 import { describe, expect, it } from "vitest"
-import { DEFAULT_BROKER_URL, pairingUrl } from "../src/pairing"
+import { DEFAULT_BROKER_URL, pairingToken, pairingUrl } from "../src/pairing"
 
 const bundle = async (brokerUrl: string): Promise<PairingBundle> => {
   const [signing, encryption] = await Promise.all([generateSigningKeyPair(), generateEncryptionKeyPair()])
@@ -24,10 +24,13 @@ describe("pairingUrl", () => {
   it("puts the v2 bundle in the fragment, never the search string", async () => {
     const pairing = await bundle("wss://remotty.devve.space/ws")
     const url = new URL(pairingUrl(pairing))
+    const token = pairingToken(pairing)
 
     expect(url.origin + url.pathname).toBe("https://remotty.devve.space/pair")
     expect(url.search).toBe("")
-    expect(url.hash).not.toBe("")
+    expect(url.hash).toBe(`#${token}`)
+    expect(token).toMatch(/^remotty:v2:/)
+    expect(decodePairingBundle(token)).toEqual(pairing)
     expect(decodePairingBundle(url.href)).toEqual(pairing)
   })
 

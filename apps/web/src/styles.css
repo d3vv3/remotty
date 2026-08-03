@@ -258,7 +258,7 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .scanner-panel > .form-error { padding: 0 16px 16px; }
 .scanner-view { position: relative; width: 100%; aspect-ratio: 4 / 3; overflow: hidden; background: #050607; }
 .scanner-view video { width: 100%; height: 100%; display: block; object-fit: cover; }
-.scanner-frame { position: absolute; inset: 18%; border: 2px solid var(--acid); box-shadow: 0 0 0 999px #00000055, 0 0 24px #d8ff3e55; }
+.scanner-frame { position: absolute; top: 50%; left: 50%; width: min(66%, 360px); aspect-ratio: 1; border: 2px solid var(--acid); box-shadow: 0 0 0 999px #00000055, 0 0 24px #d8ff3e55; transform: translate(-50%, -50%); }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -293,4 +293,9 @@ button:disabled { cursor: not-allowed; opacity: .38; }
   .permission-actions { grid-column: 1 / -1; display: grid !important; grid-template-columns: 36px 1fr 1fr; }
   .permission-actions button { justify-content: center; }
   .question-panel { padding-right: 14px; padding-left: 14px; }
+  .scanner-overlay { place-items: stretch; padding: 0; }
+  .scanner-panel { width: 100%; height: 100dvh; display: flex; flex-direction: column; border: 0; border-radius: 0; box-shadow: none; }
+  .scanner-panel > header { flex: 0 0 58px; padding-right: 12px; padding-left: 18px; }
+  .scanner-view { min-height: 0; flex: 1; aspect-ratio: auto; }
+  .scanner-frame { width: min(82vw, 440px); }
 }

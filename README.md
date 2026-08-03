@@ -27,9 +27,9 @@ Create the relay identity and a ten-minute encrypted device invite:
 npx opencode-remotty pair
 ```
 
-Restart OpenCode. Paste the printed invite into the PWA.
+Restart OpenCode. Paste the printed invite token into the PWA or open the clickable pairing link.
 
-The pairing command also prints a QR code. Scan it with your phone camera or the scanner beside the pairing input.
+The pairing command copies the token when a system clipboard is available. It also prints a QR code. Scan it with your phone camera or the scanner beside the pairing input.
 
 The CLI writes relay authority keys, device records, and invitation hashes to `~/.config/remotty/config.json` with mode `0600`. These environment variables override non-secret settings:
 
@@ -81,6 +81,8 @@ The broker does not receive plaintext chat messages, diffs, commands, or notific
 The room identifier is the relay authority fingerprint and grants no command authority. P-256 ECDH, HKDF-SHA-256, AES-256-GCM, and ECDSA protect application payloads end to end. The relay rejects stale, replayed, unsigned, unknown-device, and revoked-device commands. The broker still sees room and device identifiers, Push endpoints, frame sizes, and timing, and it can delay or drop traffic.
 
 Use `remotty invite`, `remotty devices`, and `remotty revoke <device-id>` to manage browser access.
+
+The hosted service privacy design is available at `https://remotty.devve.space/privacy`.
 
 ## Verify
 

@@ -7,6 +7,7 @@ import {
 } from "@remotty/protocol"
 import { createHash, randomBytes } from "node:crypto"
 import { hostname } from "node:os"
+import clipboard from "clipboardy"
 import QRCode from "qrcode"
 import {
   configPath,
@@ -17,7 +18,7 @@ import {
   type LegacyConfigMarker,
   type RelayConfig,
 } from "./config.js"
-import { DEFAULT_BROKER_URL, pairingUrl } from "./pairing.js"
+import { DEFAULT_BROKER_URL, pairingToken, pairingUrl } from "./pairing.js"
 
 export const INVITE_TTL_MS = 10 * 60 * 1_000
 
@@ -136,10 +137,30 @@ const requireV2 = (config: ConfigState): RelayConfig => {
   return config
 }
 
+export const terminalHyperlink = (url: string, interactive = process.stdout.isTTY) =>
+  interactive ? `\u001B]8;;${url}\u0007${url}\u001B]8;;\u0007` : url
+
+export const copyPairingToken = async (
+  token: string,
+  write: (value: string) => Promise<void> = (value) => clipboard.write(value),
+) => {
+  try {
+    await write(token)
+    return true
+  } catch {
+    return false
+  }
+}
+
 const printInvitation = async (config: RelayConfig, invitation: Invitation, appUrl?: string) => {
-  const url = pairingUrl(pairingBundle(config, invitation), appUrl)
+  const bundle = pairingBundle(config, invitation)
+  const token = pairingToken(bundle)
+  const url = pairingUrl(bundle, appUrl)
+  const copied = await copyPairingToken(token)
   console.log(`Invite expires: ${invitation.record.expiresAt}`)
-  console.log(`Open: ${url}`)
+  console.log(`Token: ${token}`)
+  console.log(`Open: ${terminalHyperlink(url)}`)
+  console.log(copied ? "Copied invite token to clipboard." : "Clipboard unavailable; copy the token or open the link.")
   console.log(await QRCode.toString(url, { type: "terminal", small: true }))
   console.log(`Saved: ${configPath()}`)
 }

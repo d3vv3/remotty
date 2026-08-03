@@ -20,6 +20,7 @@ import {
   isSecureBrokerUrl,
 } from "@remotty/protocol"
 import { readConfig, type DeviceRecord, type RelayConfig } from "./config.js"
+import { completionNotification, completionSessionForEvent, type CompletionState } from "./notifications.js"
 import {
   consumeEnrollment,
   commandChangesState,
@@ -105,6 +106,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
   let transportReady = false
   const recentReadFrames = new Set<string>()
   const recentReadFrameQueue: string[] = []
+  const completionState: CompletionState = { busy: new Set(), notified: new Set() }
 
   const log = (level: "warn" | "error", message: string, error?: unknown) => client.app.log({
     body: {
@@ -431,7 +433,16 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
   connect()
 
   const sendPushForEvent = async (eventType: string, properties: JsonObject) => {
-    if (["permission.updated", "permission.asked"].includes(eventType)) {
+    const completedSessionId = completionSessionForEvent(eventType, properties, completionState)
+    if (completedSessionId) {
+      const session = await (sdkData(client.session.get({ path: { id: completedSessionId } })) as Promise<JsonObject>)
+        .catch(() => undefined)
+      await broadcast(completionNotification(
+        relayId,
+        completedSessionId,
+        typeof session?.title === "string" ? session.title : undefined,
+      ), "push")
+    } else if (["permission.updated", "permission.asked"].includes(eventType)) {
       const permissionId = String(properties.id ?? properties.requestID ?? "")
       const sessionId = String(properties.sessionID ?? "")
       if (!permissionId || !sessionId) return

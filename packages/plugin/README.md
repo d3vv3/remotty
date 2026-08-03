@@ -18,7 +18,7 @@ Create the relay identity and an encrypted device invite:
 npx opencode-remotty pair
 ```
 
-The CLI prints a fragment-only pairing link and a terminal QR code. The one-time invite expires after ten minutes.
+The CLI prints the raw invite token, a clickable fragment-only pairing link, and a terminal QR code. It copies the token to the clipboard when the system clipboard is available. The one-time invite expires after ten minutes.
 
 Restart OpenCode after installation.
 

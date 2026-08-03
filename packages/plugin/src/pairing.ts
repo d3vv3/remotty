@@ -2,6 +2,8 @@ import { encodePairingBundle, isSecureAppUrl, type PairingBundle } from "@remott
 
 export const DEFAULT_BROKER_URL = "wss://remotty.devve.space/ws"
 
+export const pairingToken = (bundle: PairingBundle) => encodePairingBundle(bundle)
+
 export const pairingUrl = (bundle: PairingBundle, appUrl?: string) => {
   const broker = new URL(bundle.brokerUrl)
   const target = new URL(appUrl ?? broker.origin)
@@ -12,6 +14,6 @@ export const pairingUrl = (bundle: PairingBundle, appUrl?: string) => {
   if (!isSecureAppUrl(target.href)) throw new Error("The pairing app must use HTTPS outside loopback")
   target.pathname = "/pair"
   target.search = ""
-  target.hash = encodePairingBundle(bundle)
+  target.hash = pairingToken(bundle)
   return target.href
 }

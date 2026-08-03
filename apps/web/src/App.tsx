@@ -19,7 +19,6 @@ import {
   GitBranch,
   KeyRound,
   Laptop,
-  ListTodo,
   LockKeyhole,
   LoaderCircle,
   LogOut,
@@ -29,11 +28,9 @@ import {
   RefreshCw,
   ScanLine,
   Send,
-  Server,
   ShieldAlert,
   Smartphone,
   UserRound,
-  Workflow,
   Wifi,
   WifiOff,
   X,
@@ -75,6 +72,7 @@ export function App() {
     routePairingBundle = undefined
   }, [])
   if (location.pathname === "/") return <LandingPage />
+  if (location.pathname === "/privacy") return <PrivacyPage />
   return <RelayApp initialBundle={pairingBundle} />
 }
 
@@ -223,19 +221,12 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
 }
 
 const publicFeatures = [
-  { icon: Workflow, title: "Live sessions", copy: "Follow every active OpenCode session and switch between workspaces from one screen." },
-  { icon: Send, title: "Remote prompts", copy: "Send the next instruction, select an agent, queue work, or stop a run from your phone." },
-  { icon: Bell, title: "Actionable Push", copy: "Get permission and question alerts. Approve once, always, or reject without opening the PWA." },
+  { icon: Bell, title: "Actionable Push notifications", copy: "Get completion, permission, and question alerts. Approve once, always, or reject without opening the PWA." },
   { icon: ShieldCheck, title: "Approval controls", copy: "Read the requested command and its patterns before you grant access." },
-  { icon: CircleHelp, title: "Agent questions", copy: "Answer choices and free-form questions without returning to your development machine." },
   { icon: Terminal, title: "Tool details", copy: "Expand tool calls to inspect inputs, outputs, errors, and readable edit diffs." },
-  { icon: ListTodo, title: "Todos and changes", copy: "Track the current plan and see file-level additions and deletions as work progresses." },
-  { icon: Folder, title: "Multi-workspace", copy: "Run one relay in each OpenCode process and group all open sessions by folder." },
   { icon: Smartphone, title: "Installable PWA", copy: "Use the full mobile interface from your home screen without an app-store install." },
-  { icon: Unplug, title: "No inbound port", copy: "The local plugin opens an outbound WSS connection. You do not expose the OpenCode web server or change firewall rules." },
-  { icon: KeyRound, title: "No account", copy: "Create a one-time encrypted invite locally. No hosted account or sign-in is required." },
   { icon: Database, title: "No chat storage", copy: "The broker keeps routing state in memory and does not persist your session messages." },
-  { icon: Server, title: "Self-hostable", copy: "Run the broker and web application on infrastructure inside your own trust boundary." },
+  { icon: Unplug, title: "No inbound port", copy: "The local plugin opens an outbound WSS connection. You do not expose the OpenCode web server or change firewall rules." },
 ]
 
 function PublicBrand() {
@@ -271,6 +262,69 @@ function PhonePreview() {
   )
 }
 
+function PrivacyPage() {
+  useEffect(() => {
+    const previous = document.title
+    document.title = "Privacy | remotty"
+    return () => { document.title = previous }
+  }, [])
+
+  return (
+    <main className="h-dvh overflow-y-auto bg-[#090a0b] text-[#f4f2eb] selection:bg-[#d8ff3e] selection:text-[#090a0b]">
+      <header className="sticky top-0 z-30 border-b border-[#292d2d] bg-[#090a0bf2]">
+        <nav className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-5 sm:px-8">
+          <PublicBrand />
+          <a className="inline-flex h-10 items-center gap-2 rounded-sm border border-[#3a4140] px-4 font-mono text-[10px] font-bold uppercase text-[#b5bdb9] hover:border-[#42e8d4] hover:text-[#42e8d4]" href="/"><ArrowLeft size={15} /> Home</a>
+        </nav>
+      </header>
+
+      <section className="border-b border-[#2b5551] bg-[#0b1514] py-20">
+        <div className="mx-auto w-full max-w-6xl px-5 sm:px-8">
+          <p className="flex items-center gap-2 font-mono text-[10px] font-bold uppercase text-[#42e8d4]"><LockKeyhole size={15} /> Privacy design</p>
+          <h1 className="mt-5 max-w-4xl font-mono text-4xl font-bold leading-tight sm:text-6xl">Your OpenCode content stays between your devices.</h1>
+          <p className="mt-7 max-w-3xl text-sm leading-7 text-[#9eb8b4]">remotty uses end-to-end encryption. The hosted broker routes ciphertext and keeps no chat history. You can verify the design in the public source.</p>
+        </div>
+      </section>
+
+      <section className="border-b border-[#292d2d] bg-[#0d1011] py-16">
+        <div className="mx-auto w-full max-w-6xl px-5 sm:px-8">
+          <p className="font-mono text-[10px] font-bold uppercase text-[#ff635d]">How it works</p>
+          <h2 className="mt-3 font-mono text-3xl font-bold sm:text-4xl">Encryption starts before the network.</h2>
+          <div className="mt-10 grid border-y border-[#3a4140] md:grid-cols-3">
+            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:pr-8"><b className="font-mono text-xs text-[#ff635d]">01</b><h3 className="mt-4 font-mono text-sm font-bold">Create local keys</h3><p className="mt-4 text-xs leading-6 text-[#8d9692]">The OpenCode plugin creates relay keys. Each browser creates separate device keys during a ten-minute, one-time enrollment.</p></div>
+            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:px-8"><b className="font-mono text-xs text-[#ff635d]">02</b><h3 className="mt-4 font-mono text-sm font-bold">Encrypt and sign</h3><p className="mt-4 text-xs leading-6 text-[#8d9692]">P-256 key agreement and HKDF derive AES-256-GCM keys. Signed commands bind every action to an enrolled device.</p></div>
+            <div className="py-7 md:pl-8"><b className="font-mono text-xs text-[#ff635d]">03</b><h3 className="mt-4 font-mono text-sm font-bold">Route ciphertext</h3><p className="mt-4 text-xs leading-6 text-[#8d9692]">The broker forwards encrypted frames. It cannot read sessions, tool output, questions, approvals, prompts, or notification text.</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section className="border-b border-[#292d2d] bg-[#090a0b] py-16">
+        <div className="mx-auto grid w-full max-w-6xl gap-12 px-5 sm:px-8 lg:grid-cols-[.75fr_1.25fr]">
+          <div><p className="font-mono text-[10px] font-bold uppercase text-[#42e8d4]">Data handling</p><h2 className="mt-3 font-mono text-3xl font-bold sm:text-4xl">What is stored and seen.</h2></div>
+          <div className="border-t border-[#3a4140]">
+            <div className="grid gap-2 border-b border-[#292d2d] py-5 sm:grid-cols-[180px_1fr]"><strong className="font-mono text-xs text-[#d8ff3e]">Session content</strong><p className="text-xs leading-6 text-[#8d9692]">Encrypted in transit. The broker holds frames only while it routes them and does not write chat content to storage.</p></div>
+            <div className="grid gap-2 border-b border-[#292d2d] py-5 sm:grid-cols-[180px_1fr]"><strong className="font-mono text-xs text-[#d8ff3e]">Device secrets</strong><p className="text-xs leading-6 text-[#8d9692]">Relay private keys stay in the local config. Browser private keys stay in IndexedDB. One-time invite secrets expire or disappear after use.</p></div>
+            <div className="grid gap-2 border-b border-[#292d2d] py-5 sm:grid-cols-[180px_1fr]"><strong className="font-mono text-xs text-[#d8ff3e]">Push notifications</strong><p className="text-xs leading-6 text-[#8d9692]">The broker and Push provider receive encrypted notification envelopes. Your service worker verifies and decrypts them on the device.</p></div>
+            <div className="grid gap-2 border-b border-[#292d2d] py-5 sm:grid-cols-[180px_1fr]"><strong className="font-mono text-xs text-[#d8ff3e]">Visible metadata</strong><p className="text-xs leading-6 text-[#8d9692]">The service can see IP addresses, request times, message sizes, opaque room and device IDs, delivery timing, and Push endpoints.</p></div>
+            <div className="grid gap-2 border-b border-[#292d2d] py-5 sm:grid-cols-[180px_1fr]"><strong className="font-mono text-xs text-[#d8ff3e]">Tracking</strong><p className="text-xs leading-6 text-[#8d9692]">The PWA has no account, analytics, advertising tracker, or application cookie.</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section className="border-b border-[#2b5551] bg-[#0b1514] py-16">
+        <div className="mx-auto grid w-full max-w-6xl gap-10 px-5 sm:px-8 lg:grid-cols-2">
+          <div><p className="flex items-center gap-2 font-mono text-[10px] font-bold uppercase text-[#ffbd4a]"><ShieldAlert size={15} /> Security boundary</p><h2 className="mt-4 font-mono text-3xl font-bold">What encryption does not hide.</h2></div>
+          <div className="space-y-4 text-sm leading-7 text-[#9eb8b4]"><p>A compromised browser or development machine can read content at that endpoint. Revoke a lost device from the local CLI.</p><p>The broker can delay, drop, or reorder traffic. Hosting and Push providers can observe network metadata, but they cannot forge a valid approval.</p><p>remotty opens an outbound WSS connection. It does not expose an inbound OpenCode port.</p></div>
+        </div>
+      </section>
+
+      <footer className="bg-[#090a0b] py-10">
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-5 sm:flex-row sm:items-center sm:justify-between sm:px-8"><PublicBrand /><div className="flex flex-wrap gap-5 font-mono text-[10px] uppercase text-[#8d9692]"><a className="hover:text-[#42e8d4]" href="/pair">Pair</a><a className="hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer">Source</a><a className="hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty/blob/main/LICENSE" target="_blank" rel="noreferrer">AGPL-3.0</a></div></div>
+      </footer>
+    </main>
+  )
+}
+
 function LandingPage() {
   useEffect(() => {
     let anchor = ""
@@ -279,7 +333,7 @@ function LandingPage() {
     } catch {
       return
     }
-    if (!["features", "security"].includes(anchor)) return
+    if (anchor !== "features") return
     requestAnimationFrame(() => document.getElementById(anchor)?.scrollIntoView())
   }, [])
 
@@ -315,9 +369,9 @@ function LandingPage() {
         <div className="mx-auto w-full max-w-7xl px-5 sm:px-8">
           <p className="font-mono text-[10px] font-bold uppercase text-[#ff635d]">Full remote control surface</p>
           <h2 className="mt-3 max-w-3xl font-mono text-3xl font-bold sm:text-5xl">Everything you need to leave the desk.</h2>
-          <div className="mt-10 grid gap-px overflow-hidden rounded-md border border-[#292d2d] bg-[#292d2d] sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-10 grid gap-px overflow-hidden rounded-md border border-[#292d2d] bg-[#292d2d] sm:grid-cols-2 lg:grid-cols-3">
             {publicFeatures.map(({ icon: Icon, title, copy }) => (
-              <article className="min-h-52 bg-[#0e1011] p-6" key={title}>
+              <article className="min-h-48 bg-[#0e1011] p-6" key={title}>
                 <span className="grid size-10 place-items-center rounded-sm border border-[#3a4140] bg-[#171a1b] text-[#d8ff3e]"><Icon size={19} /></span>
                 <h3 className="mt-7 font-mono text-sm font-bold">{title}</h3>
                 <p className="mt-3 text-xs leading-6 text-[#8d9692]">{copy}</p>
@@ -332,33 +386,15 @@ function LandingPage() {
           <p className="font-mono text-[10px] font-bold uppercase text-[#42e8d4]">Three local steps</p>
           <h2 className="mt-3 font-mono text-3xl font-bold sm:text-5xl">Pair without an account.</h2>
           <div className="mt-10 grid border-y border-[#3a4140] md:grid-cols-3">
-            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:pr-8"><b className="font-mono text-xs text-[#ff635d]">01</b><h3 className="mt-4 font-mono text-sm font-bold">Install the plugin</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">"opencode-remotty@0.2.0"</code></div>
+            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:pr-8"><b className="font-mono text-xs text-[#ff635d]">01</b><h3 className="mt-4 font-mono text-sm font-bold">Install the plugin</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">"opencode-remotty@0.2.1"</code></div>
             <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:px-8"><b className="font-mono text-xs text-[#ff635d]">02</b><h3 className="mt-4 font-mono text-sm font-bold">Create an invite</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">npx opencode-remotty pair</code></div>
             <div className="py-7 md:pl-8"><b className="font-mono text-xs text-[#ff635d]">03</b><h3 className="mt-4 font-mono text-sm font-bold">Scan and continue</h3><p className="mt-4 text-xs leading-6 text-[#8d9692]">Restart OpenCode. Scan the QR code or paste the encrypted invite into the pairing page.</p></div>
           </div>
         </div>
       </section>
 
-      <section className="border-b border-[#2b5551] bg-[#0b1514] py-20" id="security">
-        <div className="mx-auto grid w-full max-w-7xl gap-12 px-5 sm:px-8 lg:grid-cols-[.75fr_1.25fr]">
-          <div><span className="inline-flex items-center gap-2 rounded-sm border border-[#42e8d466] bg-[#071817] px-3 py-2 font-mono text-[9px] font-bold uppercase text-[#42e8d4]"><ShieldCheck size={14} /> End-to-end encrypted</span><h2 className="mt-5 font-mono text-3xl font-bold sm:text-5xl">The broker routes ciphertext.</h2></div>
-          <div className="space-y-5 text-sm leading-7 text-[#9eb8b4]">
-            <p>The relay and each browser use separate P-256 encryption and signing keys. AES-GCM protects session data, tool output, commands, and notification content before it leaves either endpoint.</p>
-            <p>Every command is signed by one enrolled device. The relay rejects stale messages, replays, changed ciphertext, unknown devices, and revoked devices before it calls OpenCode.</p>
-            <p>The broker sees opaque room and device identifiers, Push endpoints, message sizes, and delivery timing. It can delay or drop traffic, but it cannot read content or forge an approval.</p>
-          </div>
-        </div>
-      </section>
-
-      <section className="border-b border-[#292d2d] bg-[#0b1514] py-20">
-        <div className="mx-auto grid w-full max-w-7xl gap-12 px-5 sm:px-8 lg:grid-cols-2">
-          <div><span className="inline-flex items-center gap-2 font-mono text-[10px] font-bold uppercase text-[#42e8d4]"><LockKeyhole size={15} /> Per-device trust</span><h2 className="mt-4 font-mono text-3xl font-bold sm:text-5xl">One-time invites. Individual revocation.</h2><p className="mt-5 max-w-xl text-sm leading-7 text-[#9eb8b4]">A ten-minute invite enrolls keys generated inside the browser. The invite secret disappears after use. Revoke one device without rotating keys for every other device.</p></div>
-          <div className="border-y border-[#2b5551] py-7"><h3 className="flex items-center gap-3 font-mono text-sm font-bold text-[#d8ff3e]"><Bell size={18} /> Private notification content</h3><p className="mt-4 text-sm leading-7 text-[#9eb8b4]">OpenCode encrypts a notification envelope for each device. The broker forwards only ciphertext through Web Push. The service worker verifies and decrypts it before calling <code className="text-[#42e8d4]">showNotification</code>.</p><p className="mt-4 text-sm leading-7 text-[#9eb8b4]">Notification actions are signed and encrypted in the service worker. The broker cannot read the command or change its response.</p></div>
-        </div>
-      </section>
-
       <footer className="bg-[#090a0b] py-10">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 sm:flex-row sm:items-center sm:justify-between sm:px-8"><PublicBrand /><div className="flex flex-wrap gap-5 font-mono text-[10px] uppercase text-[#8d9692]"><a className="hover:text-[#42e8d4]" href="/pair">Pair</a><a className="hover:text-[#42e8d4]" href="#security">Security</a><a className="hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer">Source</a><a className="hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty/blob/main/LICENSE" target="_blank" rel="noreferrer">AGPL-3.0</a></div></div>
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 sm:flex-row sm:items-center sm:justify-between sm:px-8"><PublicBrand /><div className="flex flex-wrap gap-5 font-mono text-[10px] uppercase text-[#8d9692]"><a className="hover:text-[#42e8d4]" href="/pair">Pair</a><a className="hover:text-[#42e8d4]" href="/privacy">Privacy</a><a className="hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer">Source</a><a className="hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty/blob/main/LICENSE" target="_blank" rel="noreferrer">AGPL-3.0</a></div></div>
       </footer>
     </main>
   )
@@ -380,13 +416,13 @@ function PairingScreen({ onConnect, error }: { onConnect: (bundle: PairingBundle
   return (
     <main className="h-dvh overflow-y-auto bg-[#090a0b] text-[#f4f2eb]">
       <header className="border-b-2 border-[#d8ff3e] bg-[#0b0d0e]">
-        <nav className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-5 sm:px-8"><PublicBrand /><a className="inline-flex items-center gap-2 font-mono text-[10px] uppercase text-[#8d9692] hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer"><Github size={15} /> GitHub</a></nav>
+        <nav className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-5 sm:px-8"><PublicBrand /><div className="flex items-center gap-5"><a className="font-mono text-[10px] uppercase text-[#8d9692] hover:text-[#42e8d4]" href="/privacy">Privacy</a><a className="inline-flex items-center gap-2 font-mono text-[10px] uppercase text-[#8d9692] hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer"><Github size={15} /> GitHub</a></div></nav>
       </header>
       <section className="mx-auto grid min-h-[calc(100svh-64px)] w-full max-w-6xl items-center gap-12 px-5 py-12 sm:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(400px,.85fr)]">
         <div>
           <p className="font-mono text-[10px] font-bold uppercase text-[#42e8d4]">Connect this browser</p>
           <h1 className="mt-4 font-mono text-4xl font-bold sm:text-6xl">Pair your device.</h1>
-          <p className="mt-5 max-w-xl text-sm leading-7 text-[#b5bdb9]">Paste the encrypted invite printed by the local CLI, or scan its QR code. The invite enrolls a device identity generated by this browser.</p>
+          <p className="mt-5 max-w-xl text-sm leading-7 text-[#b5bdb9]">Paste the invite token printed by the local CLI, or scan its QR code.</p>
           <form onSubmit={submit} className="mt-8 max-w-xl">
             <label className="mb-2 flex items-center gap-2 font-mono text-[9px] font-bold uppercase text-[#d8ff3e]" htmlFor="pairing-code"><KeyRound size={14} /> Encrypted invite</label>
             <div className="grid grid-cols-[minmax(0,1fr)_48px_48px] gap-2">
@@ -396,11 +432,10 @@ function PairingScreen({ onConnect, error }: { onConnect: (bundle: PairingBundle
             </div>
             {(pairingError ?? error) && <p className="mt-3 font-mono text-[10px] text-[#ff635d]">{pairingError ?? error}</p>}
           </form>
-          <div className="mt-8 flex gap-3 border-l-2 border-[#ffbd4a] bg-[#151108] p-4 text-xs leading-6 text-[#c9b98f]"><ShieldAlert className="mt-1 shrink-0 text-[#ffbd4a]" size={17} /><p>The invite secret is removed after enrollment. Device private keys and relay trust material stay in this browser's IndexedDB.</p></div>
         </div>
         <div className="border-y border-[#3a4140] bg-[#0c0f10]">
           <div className="flex h-12 items-center gap-2 border-b border-[#292d2d] px-4 font-mono text-[10px] font-bold uppercase text-[#d8ff3e]"><Terminal size={18} /> Install and pair</div>
-          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">01</b><div><strong className="text-xs">Add the OpenCode plugin</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">{`"plugin": ["opencode-remotty@0.2.0"]`}</code></div></div>
+          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">01</b><div><strong className="text-xs">Add the OpenCode plugin</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">{`"plugin": ["opencode-remotty@0.2.1"]`}</code></div></div>
           <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">02</b><div><strong className="text-xs">Create an encrypted device invite</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">npx opencode-remotty pair</code></div></div>
           <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 p-4"><b className="font-mono text-[10px] text-[#ff635d]">03</b><div><strong className="text-xs">Restart OpenCode</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">opencode --continue</code></div></div>
         </div>
