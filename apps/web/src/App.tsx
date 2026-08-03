@@ -42,6 +42,7 @@ type MessagePart = {
   type: string
   text?: string
   tool?: string
+  time?: { start?: number; end?: number }
   state?: {
     status?: string
     title?: string
@@ -347,20 +348,33 @@ function SessionDetail({
   const detailContentRef = useRef<HTMLDivElement>(null)
   const mountedRef = useRef(true)
   const followOutputRef = useRef(true)
+  const lastScrollTopRef = useRef(0)
+  const snapshotRef = useRef<Record<string, string>>({})
 
   const refresh = async () => {
-    const load = async <T,>(command: Record<string, unknown>, update: (value: T[]) => void) => {
+    const load = async <T,>(
+      key: string,
+      command: Record<string, unknown>,
+      update: (value: T[]) => void,
+    ) => {
       try {
         const result = await request(command)
-        if (mountedRef.current) update(Array.isArray(result) ? result as T[] : [])
+        if (mountedRef.current) {
+          const next = Array.isArray(result) ? result as T[] : []
+          const snapshot = JSON.stringify(next)
+          if (snapshotRef.current[key] !== snapshot) {
+            snapshotRef.current[key] = snapshot
+            update(next)
+          }
+        }
       } catch {
         return
       }
     }
     await Promise.all([
-      load<SessionMessage>({ type: "session.messages", sessionId: session.id }, setMessages),
-      load<SessionTodo>({ type: "session.todos", sessionId: session.id }, setTodos),
-      load<FileDiff>({ type: "session.diff", sessionId: session.id }, setDiffs),
+      load<SessionMessage>("messages", { type: "session.messages", sessionId: session.id }, setMessages),
+      load<SessionTodo>("todos", { type: "session.todos", sessionId: session.id }, setTodos),
+      load<FileDiff>("diffs", { type: "session.diff", sessionId: session.id }, setDiffs),
     ])
     if (!mountedRef.current) return
     setLoading(false)
@@ -387,16 +401,9 @@ function SessionDetail({
     () => new Set(messages.flatMap((message) => message.info.role === "assistant" && message.info.parentID ? [message.info.parentID] : [])),
     [messages],
   )
-  const activeTool = useMemo(
-    () =>
-      visibleMessages
-        .flatMap((message) => message.parts)
-        .filter(
-          (part) =>
-            part.type === "tool" && (part.state?.status === "pending" || part.state?.status === "running"),
-        )
-        .at(-1),
-    [visibleMessages],
+  const isThinking = useMemo(
+    () => messages.some((message) => message.parts.some((part) => part.type === "reasoning" && part.time?.start && !part.time.end)),
+    [messages],
   )
 
   useLayoutEffect(() => {
@@ -405,7 +412,7 @@ function SessionDetail({
       if (detailContentRef.current) detailContentRef.current.scrollTop = detailContentRef.current.scrollHeight
     })
     return () => cancelAnimationFrame(frame)
-  }, [tab, visibleMessages, revision])
+  }, [tab, visibleMessages])
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -506,7 +513,10 @@ function SessionDetail({
         ref={detailContentRef}
         onScroll={(event) => {
           const element = event.currentTarget
-          followOutputRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80
+          const scrollingUp = element.scrollTop < lastScrollTopRef.current - 1
+          if (scrollingUp) followOutputRef.current = false
+          else if (element.scrollHeight - element.scrollTop - element.clientHeight < 80) followOutputRef.current = true
+          lastScrollTopRef.current = element.scrollTop
         }}
       >
         {tab === "activity" ? (
@@ -547,10 +557,10 @@ function SessionDetail({
       <div className="input-dock">
         {permission && <PermissionPanel permission={permission} request={request} onError={onError} />}
         {question && <QuestionPanel requestInfo={question} request={request} onError={onError} />}
-        {session.status === "busy" && (
+        {(session.status === "busy" || session.status === "retry") && (
           <div className="work-strip" role="status">
             <span className="work-pulse"><i /><i /><i /></span>
-            <strong>{activeTool?.state?.title ?? "Thinking"}</strong>
+            <strong>{isThinking ? "Thinking" : "Working"}</strong>
           </div>
         )}
         <form className="composer" onSubmit={submit}>
