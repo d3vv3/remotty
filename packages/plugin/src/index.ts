@@ -20,7 +20,7 @@ import {
   isSecureBrokerUrl,
 } from "@remotty/protocol"
 import { readConfig, type DeviceRecord, type RelayConfig } from "./config.js"
-import { completionNotification, completionSessionForEvent, type CompletionState } from "./notifications.js"
+import { completionNotification, completionSessionForEvent, shouldNotifySessionCompletion, type CompletionState } from "./notifications.js"
 import {
   consumeEnrollment,
   commandChangesState,
@@ -30,7 +30,7 @@ import {
   validateEnrollmentFrame,
   workspaceRelayId,
 } from "./security.js"
-import { selectOpenSessions } from "./sessions.js"
+import { routeSessionRequests, selectOpenSessions } from "./sessions.js"
 
 type JsonObject = Record<string, unknown>
 type SdkResult<T> = { data?: T; error?: unknown }
@@ -107,6 +107,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
   const recentReadFrames = new Set<string>()
   const recentReadFrameQueue: string[] = []
   const completionState: CompletionState = { busy: new Set(), notified: new Set() }
+  let knownSessions: JsonObject[] = []
 
   const log = (level: "warn" | "error", message: string, error?: unknown) => client.app.log({
     body: {
@@ -191,6 +192,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
       sdkData(rawClient.get<QuestionRequest[]>({ url: "/question" })).catch(() => []),
     ])
     const selected = selectOpenSessions(sessions, statuses, activeSessionId)
+    knownSessions = sessions
     activeSessionId = selected.activeSessionId
     const summaries: SessionSummary[] = selected.sessions.map((session) => {
       const summary = session.summary as JsonObject | undefined
@@ -222,8 +224,8 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
             color: typeof agent.color === "string" ? agent.color : undefined,
           }),
         ),
-      permissions,
-      questions,
+      permissions: routeSessionRequests(permissions, sessions),
+      questions: routeSessionRequests(questions, sessions),
     }
     await sendOrderedState(() => ({ ...message, sequence: sequence++ }), target)
   }
@@ -437,6 +439,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
     if (completedSessionId) {
       const session = await (sdkData(client.session.get({ path: { id: completedSessionId } })) as Promise<JsonObject>)
         .catch(() => undefined)
+      if (!shouldNotifySessionCompletion(session)) return
       await broadcast(completionNotification(
         relayId,
         completedSessionId,
@@ -457,7 +460,12 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
           { action: "once", title: "Allow once" },
           { action: "always", title: "Always allow" },
         ],
-        data: { sessionId, permissionId, workspaceRelayId: relayId },
+        data: {
+          sessionId,
+          permissionId,
+          workspaceRelayId: relayId,
+          ...(typeof properties.targetSessionID === "string" ? { targetSessionId: properties.targetSessionID } : {}),
+        },
       }, "push")
     } else if (eventType === "permission.replied") {
       const permissionId = String(properties.requestID ?? properties.permissionID ?? "")
@@ -497,13 +505,23 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
     event: async ({ event }) => {
       const eventType = String(event.type)
       const properties = (event.properties ?? {}) as JsonObject
+      const info = properties.info as JsonObject | undefined
+      if (["session.created", "session.updated"].includes(eventType) && info?.id) {
+        knownSessions = [...knownSessions.filter((session) => session.id !== info.id), info]
+      } else if (eventType === "session.deleted" && info?.id) {
+        knownSessions = knownSessions.filter((session) => session.id !== info.id)
+      }
+      const routedProperties = ["permission.updated", "permission.asked", "question.asked"].includes(eventType) &&
+        typeof properties.sessionID === "string"
+        ? routeSessionRequests([properties as JsonObject & { sessionID: string }], knownSessions)[0] ?? properties
+        : properties
       await sendOrderedState(() => ({
           type: "relay.event",
           sequence: sequence++,
           instanceId,
-          event: { type: eventType, properties },
+          event: { type: eventType, properties: routedProperties },
         }))
-      await sendPushForEvent(eventType, properties)
+      await sendPushForEvent(eventType, routedProperties)
       if (eventType === "tui.session.select") activeSessionId = String(properties.sessionID)
       if (eventType === "session.created") {
         const info = properties.info as JsonObject | undefined

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { selectOpenSessions } from "../src/sessions"
+import { rootSessionId, routeSessionRequests, selectOpenSessions } from "../src/sessions"
 
 describe("selectOpenSessions", () => {
   const sessions = [
@@ -19,5 +19,32 @@ describe("selectOpenSessions", () => {
     const result = selectOpenSessions(sessions, {})
     expect(result.activeSessionId).toBe("current")
     expect(result.sessions).toEqual([sessions[0]])
+  })
+
+  it("excludes subagent sessions even while they are busy", () => {
+    const subagent = { id: "subagent", parentID: "current", time: { updated: 4 } }
+    const result = selectOpenSessions(
+      [subagent, ...sessions],
+      { subagent: { type: "busy" }, background: { type: "busy" } },
+      "subagent",
+    )
+
+    expect(result.activeSessionId).toBe("current")
+    expect(result.sessions).toEqual([sessions[0], sessions[1]])
+  })
+
+  it("routes nested subagent input to its root without losing the reply target", () => {
+    const hierarchy = [
+      { id: "root" },
+      { id: "child", parentID: "root" },
+      { id: "grandchild", parentID: "child" },
+    ]
+
+    expect(rootSessionId("grandchild", hierarchy)).toBe("root")
+    expect(routeSessionRequests([{ id: "permission", sessionID: "grandchild" }], hierarchy)).toEqual([{
+      id: "permission",
+      sessionID: "root",
+      targetSessionID: "grandchild",
+    }])
   })
 })

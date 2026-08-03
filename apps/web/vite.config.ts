@@ -8,9 +8,9 @@ export default defineConfig({
     tailwindcss(),
     react(),
     VitePWA({
-      registerType: "prompt",
+      registerType: "autoUpdate",
       devOptions: { enabled: true },
-      workbox: { importScripts: ["/notification-sw.js"] },
+      workbox: { importScripts: ["/notification-sw.js"], clientsClaim: true, skipWaiting: true },
       manifest: {
         name: "remotty",
         short_name: "remotty",

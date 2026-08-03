@@ -148,7 +148,7 @@ const verifyAndOpen = async (frame, identity) => {
 const notificationData = (value, identityKey) => {
   if (!value || typeof value !== "object" || typeof value.workspaceRelayId !== "string") throw new Error("Invalid notification data")
   const data = { workspaceRelayId: value.workspaceRelayId, identityKey }
-  for (const key of ["sessionId", "permissionId", "questionId"]) {
+  for (const key of ["sessionId", "targetSessionId", "permissionId", "questionId"]) {
     if (typeof value[key] === "string") data[key] = value[key]
   }
   return data
@@ -244,7 +244,7 @@ const sendPermissionAction = async (action, data) => {
   const frame = await sealCommand({
     type: "permission.reply",
     requestId: crypto.randomUUID(),
-    sessionId: data.sessionId,
+    sessionId: typeof data.targetSessionId === "string" ? data.targetSessionId : data.sessionId,
     permissionId: data.permissionId,
     response: action,
   }, identity, data.workspaceRelayId)
@@ -267,12 +267,18 @@ const openApplication = async (data) => {
   return clients.openWindow(url.href)
 }
 
+const notificationClickMode = (action, data) => action ? "action" : typeof data?.permissionId === "string" ? "ignore" : "open"
+
 self.addEventListener("notificationclick", (event) => {
+  event.preventDefault?.()
+  event.stopImmediatePropagation?.()
   event.notification.close()
   const data = event.notification.data
-  if (event.action) {
+  const mode = notificationClickMode(event.action, data)
+  if (mode === "action") {
     event.waitUntil(sendPermissionAction(event.action, data).catch(() => undefined))
     return
   }
+  if (mode === "ignore") return
   event.waitUntil(openApplication(data))
 })

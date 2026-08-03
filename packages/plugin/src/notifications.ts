@@ -40,3 +40,6 @@ export const completionNotification = (relayId: string, sessionId: string, sessi
   openApp: true,
   data: { sessionId, workspaceRelayId: relayId },
 })
+
+export const shouldNotifySessionCompletion = (session: { parentID?: unknown } | undefined) =>
+  Boolean(session && (typeof session.parentID !== "string" || !session.parentID))

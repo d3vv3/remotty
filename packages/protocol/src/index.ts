@@ -31,6 +31,7 @@ export type AgentSummary = z.infer<typeof agentSummarySchema>
 export const permissionRequestSchema = z.object({
   id: z.string(),
   sessionID: z.string(),
+  targetSessionID: z.string().optional(),
   permission: z.string(),
   patterns: z.array(z.string()),
   metadata: z.record(z.string(), z.unknown()).default({}),
@@ -54,6 +55,7 @@ export type RelayInfo = z.infer<typeof relayInfoSchema>
 export const questionRequestSchema = z.object({
   id: z.string(),
   sessionID: z.string(),
+  targetSessionID: z.string().optional(),
   questions: z.array(
     z.object({
       question: z.string(),

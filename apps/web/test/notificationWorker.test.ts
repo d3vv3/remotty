@@ -29,10 +29,11 @@ const workerCrypto = () => {
       registration: {},
     },
   } as Record<string, unknown>
-  runInNewContext(`${source}\nglobalThis.workerCrypto = { verifyAndOpen, sealCommand }`, context)
+  runInNewContext(`${source}\nglobalThis.workerCrypto = { verifyAndOpen, sealCommand, notificationClickMode }`, context)
   return context.workerCrypto as {
     verifyAndOpen: (frame: unknown, identity: unknown) => Promise<unknown>
     sealCommand: (command: unknown, identity: unknown, relayId: string) => Promise<unknown>
+    notificationClickMode: (action: string, data: unknown) => "action" | "ignore" | "open"
   }
 }
 
@@ -41,6 +42,16 @@ describe("notification service worker security boundary", () => {
     expect(source).toContain("body: JSON.stringify({ roomToken: identity.roomToken, frame })")
     expect(source).not.toContain("code: data.code")
     expect(source).not.toContain("brokerUrl: data.brokerUrl")
+    expect(source).toContain("event.preventDefault?.()")
+    expect(source).toContain("event.stopImmediatePropagation?.()")
+    expect(source).toContain('typeof data.targetSessionId === "string" ? data.targetSessionId : data.sessionId')
+  })
+
+  it("does not open the app for permission actions with a missing action value", () => {
+    const worker = workerCrypto()
+    expect(worker.notificationClickMode("once", { permissionId: "permission-1" })).toBe("action")
+    expect(worker.notificationClickMode("", { permissionId: "permission-1" })).toBe("ignore")
+    expect(worker.notificationClickMode("", { sessionId: "session-1" })).toBe("open")
   })
 
   it("verifies, decrypts, and rejects stale Push frames", () => {

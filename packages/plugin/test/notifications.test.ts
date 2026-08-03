@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { completionNotification, completionSessionForEvent, type CompletionState } from "../src/notifications"
+import { completionNotification, completionSessionForEvent, shouldNotifySessionCompletion, type CompletionState } from "../src/notifications"
 
 const state = (): CompletionState => ({ busy: new Set(), notified: new Set() })
 
@@ -38,5 +38,11 @@ describe("completionNotification", () => {
       openApp: true,
       data: { sessionId: "session-1", workspaceRelayId: "relay-1" },
     })
+  })
+
+  it("only notifies for a known root session", () => {
+    expect(shouldNotifySessionCompletion({})).toBe(true)
+    expect(shouldNotifySessionCompletion({ parentID: "main-session" })).toBe(false)
+    expect(shouldNotifySessionCompletion(undefined)).toBe(false)
   })
 })
