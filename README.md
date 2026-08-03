@@ -29,6 +29,8 @@ npx opencode-remotty pair --broker wss://your-remotty-domain.example/ws
 
 Restart OpenCode. Paste the printed key into the PWA.
 
+The pairing command also prints a QR code. Scan it with your phone camera or the scanner beside the pairing input.
+
 The CLI writes `~/.config/remotty/config.json` with mode `0600`. These environment variables override that file:
 
 ```sh

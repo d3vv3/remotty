@@ -12,6 +12,7 @@ import {
   type SessionSummary,
 } from "@remotty/protocol"
 import { readConfig, type RelayConfig } from "./config.js"
+import { selectOpenSessions } from "./sessions.js"
 
 type JsonObject = Record<string, unknown>
 type SdkResult<T> = { data?: T; error?: unknown }
@@ -64,6 +65,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
   let stopped = false
   let sequence = 0
   let reconnectDelay = 1_000
+  let activeSessionId: string | undefined
 
   const send = (message: RelayMessage) => {
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message))
@@ -93,7 +95,10 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
       sdkData(rawClient.get<PermissionRequest[]>({ url: "/permission" })).catch(() => []),
       sdkData(rawClient.get<QuestionRequest[]>({ url: "/question" })).catch(() => []),
     ])
-    const summaries: SessionSummary[] = sessions.map((session) => {
+    const selected = selectOpenSessions(sessions, statuses, activeSessionId)
+    activeSessionId = selected.activeSessionId
+    const openSessions = selected.sessions
+    const summaries: SessionSummary[] = openSessions.map((session) => {
       const summary = session.summary as JsonObject | undefined
       const time = session.time as JsonObject | undefined
       return {
@@ -246,12 +251,22 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
 
   return {
     event: async ({ event }) => {
+      const eventType = String(event.type)
       send({
         type: "relay.event",
         sequence: sequence++,
-        event: { type: event.type, properties: event.properties },
+        event: { type: eventType, properties: event.properties },
       })
-      if (["session.created", "session.updated", "session.idle", "session.error"].includes(event.type)) {
+      const properties = event.properties as JsonObject
+      if (eventType === "tui.session.select") activeSessionId = String(properties.sessionID)
+      if (eventType === "session.created") {
+        const info = properties.info as JsonObject | undefined
+        if (info?.id) activeSessionId = String(info.id)
+      }
+      if (eventType === "session.deleted" && properties.info && (properties.info as JsonObject).id === activeSessionId) {
+        activeSessionId = undefined
+      }
+      if (["tui.session.select", "session.created", "session.updated", "session.deleted", "session.status", "session.idle", "session.error"].includes(eventType)) {
         await snapshot()
       }
     },

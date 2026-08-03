@@ -22,6 +22,7 @@ import {
   Smartphone,
   Terminal,
   RefreshCw,
+  ScanLine,
   Send,
   ShieldAlert,
   UserRound,
@@ -29,10 +30,12 @@ import {
   WifiOff,
   X,
 } from "lucide-react"
+import type { IScannerControls } from "@zxing/browser"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import type { AgentSummary, PermissionRequest, QuestionRequest, SessionSummary } from "@remotty/protocol"
 import { useRelay } from "./useRelay"
+import { pairingCredentialFrom } from "./pairing"
 
 type MessagePart = { type: string; text?: string; tool?: string; state?: { status?: string; title?: string; output?: string } }
 type SessionMessage = { info: { id: string; role: string; time?: { created?: number } }; parts: MessagePart[] }
@@ -137,6 +140,7 @@ export function App() {
         <section className={`detail-panel ${!selected ? "mobile-hidden" : ""}`}>
           {selected ? (
             <SessionDetail
+              key={selected.id}
               session={selected}
               agents={relayState.agents}
               revision={relayState.sessionRevisions[selected.id] ?? 0}
@@ -165,6 +169,7 @@ export function App() {
 
 function PairingScreen({ onConnect, error }: { onConnect: (code: string) => void; error?: string }) {
   const [code, setCode] = useState("")
+  const [scannerOpen, setScannerOpen] = useState(false)
   const relayProtocol = location.protocol === "https:" ? "wss:" : "ws:"
   const broker = import.meta.env.VITE_REMOTTY_URL ?? `${relayProtocol}//${location.hostname}:8787/ws`
   const submit = (event: FormEvent) => {
@@ -197,6 +202,7 @@ function PairingScreen({ onConnect, error }: { onConnect: (code: string) => void
                 maxLength={128}
                 autoFocus
               />
+              <button type="button" className="scan-button" title="Scan pairing QR code" aria-label="Scan pairing QR code" onClick={() => setScannerOpen(true)}><ScanLine size={20} /></button>
               <button type="submit" className="primary-button" aria-label="Connect remotty"><ChevronRight size={20} /></button>
             </div>
             {error && <p className="form-error">{error}</p>}
@@ -216,7 +222,61 @@ function PairingScreen({ onConnect, error }: { onConnect: (code: string) => void
         <div><Smartphone size={18} /><strong>Native Push</strong><span>Receive questions and permission actions while the PWA is closed.</span></div>
         <div><ShieldCheck size={18} /><strong>Approval controls</strong><span>Review the exact command before Reject, Once, or Always.</span></div>
       </section>
+      {scannerOpen && (
+        <PairingScanner
+          onClose={() => setScannerOpen(false)}
+          onScan={(credential) => {
+            setCode(credential)
+            setScannerOpen(false)
+            onConnect(credential)
+          }}
+        />
+      )}
     </main>
+  )
+}
+
+function PairingScanner({ onScan, onClose }: { onScan: (credential: string) => void; onClose: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [error, setError] = useState<string>()
+
+  useEffect(() => {
+    let controls: IScannerControls | undefined
+    let cancelled = false
+    void import("@zxing/browser").then(({ BrowserQRCodeReader }) => {
+      if (cancelled) return
+      const reader = new BrowserQRCodeReader(undefined, { delayBetweenScanAttempts: 150 })
+      return reader.decodeFromVideoDevice(undefined, videoRef.current ?? undefined, (result, _error, scannerControls) => {
+        controls = scannerControls
+        if (!result || cancelled) return
+        const credential = pairingCredentialFrom(result.getText())
+        if (!credential) {
+          setError("This QR code does not contain a remotty pairing key.")
+          return
+        }
+        scannerControls.stop()
+        onScan(credential)
+      })
+    }).then((scannerControls) => {
+      if (!scannerControls) return
+      controls = scannerControls
+      if (cancelled) scannerControls.stop()
+    }).catch(() => setError("Camera access is unavailable. Check the browser permission."))
+
+    return () => {
+      cancelled = true
+      controls?.stop()
+    }
+  }, [onScan])
+
+  return (
+    <div className="scanner-overlay" role="dialog" aria-modal="true" aria-label="Scan pairing QR code">
+      <section className="scanner-panel">
+        <header><span><ScanLine size={18} /> Scan pairing QR</span><button className="icon-button" title="Close scanner" onClick={onClose}><X size={19} /></button></header>
+        <div className="scanner-view"><video ref={videoRef} muted playsInline /><span className="scanner-frame" /></div>
+        {error && <p className="form-error">{error}</p>}
+      </section>
+    </div>
   )
 }
 
@@ -265,6 +325,7 @@ function SessionDetail({
   const [tab, setTab] = useState<"activity" | "todos" | "changes">("activity")
   const [agent, setAgent] = useState(session.agent ?? agents[0]?.name ?? "")
   const [agentMenuOpen, setAgentMenuOpen] = useState(false)
+  const [loading, setLoading] = useState(true)
   const promptRef = useRef<HTMLTextAreaElement>(null)
   const detailContentRef = useRef<HTMLDivElement>(null)
 
@@ -280,6 +341,8 @@ function SessionDetail({
       setDiffs(Array.isArray(diffResult) ? (diffResult as FileDiff[]) : [])
     } catch (error) {
       onError((error as Error).message)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -413,8 +476,14 @@ function SessionDetail({
       <div className="detail-content" ref={detailContentRef}>
         {tab === "activity" ? (
           <div className="message-list">
-            {visibleMessages.map((message) => <Message key={message.info.id} message={message} />)}
-            {visibleMessages.length === 0 && <div className="empty-state"><p>No message activity yet.</p></div>}
+            {loading ? (
+              <div className="empty-state"><LoaderCircle className="spin" size={22} /></div>
+            ) : (
+              <>
+                {visibleMessages.map((message) => <Message key={message.info.id} message={message} />)}
+                {visibleMessages.length === 0 && <div className="empty-state"><p>No message activity yet.</p></div>}
+              </>
+            )}
           </div>
         ) : tab === "todos" ? (
           <div className="todo-list">
