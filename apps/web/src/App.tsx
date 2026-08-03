@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import {
   AlertTriangle,
   ArrowLeft,
@@ -41,6 +41,7 @@ import remarkGfm from "remark-gfm"
 import type { AgentSummary, PairingBundle, PermissionRequest, QuestionRequest, SessionSummary } from "@remotty/protocol"
 import { useRelay } from "./useRelay"
 import { pairingBundleFrom } from "./pairing"
+import { NOTIFICATION_PROMPT_SEEN, shouldOfferPushNotifications } from "./notificationPrompt"
 import type { RoutedSession } from "./relayState"
 
 type MessagePart = {
@@ -81,6 +82,9 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
   const [selectedKey, setSelectedKey] = useState<string | undefined>(
     () => new URLSearchParams(location.search).get("session") ?? undefined,
   )
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
+  const [notificationPromptOpen, setNotificationPromptOpen] = useState(false)
+  const [enablingNotifications, setEnablingNotifications] = useState(false)
   const sessionKey = (session: SessionSummary & { workspaceRelayId?: string }) => `${session.workspaceRelayId ?? ""}:${session.id}`
   const selected = relayState.sessions.find((session) =>
     sessionKey(session) === selectedKey || (!selectedKey?.includes(":") && session.id === selectedKey),
@@ -101,10 +105,36 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
     return () => window.clearTimeout(timeout)
   }, [relayState.error])
 
+  useEffect(() => {
+    const supported = "Notification" in window && "serviceWorker" in navigator && "PushManager" in window
+    const permission = supported ? Notification.permission : "unsupported"
+    if (shouldOfferPushNotifications({
+      connected: relayState.connection === "online",
+      hasRelay: Boolean(relayState.relay),
+      enabled: relayState.notificationsEnabled,
+      supported,
+      permission,
+      seen: localStorage.getItem(NOTIFICATION_PROMPT_SEEN) === "true",
+    })) setNotificationPromptOpen(true)
+  }, [relayState.connection, relayState.relay, relayState.notificationsEnabled])
+
+  const closeNotificationPrompt = () => {
+    localStorage.setItem(NOTIFICATION_PROMPT_SEEN, "true")
+    setNotificationPromptOpen(false)
+  }
+
+  const toggleGroup = (directory: string) => setCollapsedGroups((current) => {
+    const next = new Set(current)
+    if (next.has(directory)) next.delete(directory)
+    else next.add(directory)
+    return next
+  })
+
   if (relayState.connection === "disconnected" && !relayState.relay) {
     return (
       <PairingScreen
         onConnect={(bundle) => {
+          localStorage.removeItem(NOTIFICATION_PROMPT_SEEN)
           history.replaceState({}, "", "/app")
           void relayState.connect(bundle)
         }}
@@ -160,12 +190,12 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
           <div className="session-list">
             {sessionGroups.map(([directory, sessions]) => (
               <section className="workspace-group" key={directory}>
-                <div className="workspace-heading" title={directory}>
+                <button className="workspace-heading" title={directory} aria-expanded={!collapsedGroups.has(directory)} onClick={() => toggleGroup(directory)}>
                   <Folder size={14} />
                   <span><strong>{folderName(directory)}</strong><small>{directory}</small></span>
-                  <b>{sessions.length}</b>
-                </div>
-                {sessions.map((session) => (
+                  <b>{sessions.length}</b><ChevronDown className={collapsedGroups.has(directory) ? "collapsed" : ""} size={16} />
+                </button>
+                {!collapsedGroups.has(directory) && sessions.map((session) => (
                   <SessionRow
                     key={sessionKey(session)}
                     session={session}
@@ -215,6 +245,31 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
 
       {relayState.error && (
         <div className="toast" role="alert"><AlertTriangle size={17} /><span>{relayState.error}</span><button title="Dismiss error" onClick={() => relayState.setError(undefined)}><X size={16} /></button></div>
+      )}
+      {notificationPromptOpen && (
+        <div className="notification-prompt-overlay" role="presentation">
+          <section className="notification-prompt" role="dialog" aria-modal="true" aria-labelledby="notification-prompt-title">
+            <button className="icon-button notification-prompt-close" title="Not now" aria-label="Close notification prompt" onClick={closeNotificationPrompt}><X size={18} /></button>
+            <span className="notification-prompt-icon"><Bell size={24} /></span>
+            <p>Stay in the loop</p>
+            <h2 id="notification-prompt-title">Enable Push notifications?</h2>
+            <span>Get an alert when an agent finishes, asks a question, or needs approval.</span>
+            <div>
+              <button className="notification-secondary" onClick={closeNotificationPrompt}>Not now</button>
+              <button
+                className="notification-primary"
+                disabled={enablingNotifications}
+                onClick={() => {
+                  setEnablingNotifications(true)
+                  void relayState.toggleNotifications().finally(() => {
+                    setEnablingNotifications(false)
+                    closeNotificationPrompt()
+                  })
+                }}
+              >{enablingNotifications ? <LoaderCircle className="spin" size={17} /> : <Bell size={17} />} Enable Push</button>
+            </div>
+          </section>
+        </div>
       )}
     </main>
   )
@@ -387,7 +442,7 @@ function LandingPage() {
           <p className="font-mono text-[10px] font-bold uppercase text-[#42e8d4]">Three local steps</p>
           <h2 className="mt-3 font-mono text-3xl font-bold sm:text-5xl">Pair without an account.</h2>
           <div className="mt-10 grid border-y border-[#3a4140] md:grid-cols-3">
-            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:pr-8"><b className="font-mono text-xs text-[#ff635d]">01</b><h3 className="mt-4 font-mono text-sm font-bold">Install the plugin</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">"opencode-remotty@0.2.1"</code></div>
+            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:pr-8"><b className="font-mono text-xs text-[#ff635d]">01</b><h3 className="mt-4 font-mono text-sm font-bold">Install the plugin</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">"opencode-remotty@0.2.2"</code></div>
             <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:px-8"><b className="font-mono text-xs text-[#ff635d]">02</b><h3 className="mt-4 font-mono text-sm font-bold">Create an invite</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">npx opencode-remotty pair</code></div>
             <div className="py-7 md:pl-8"><b className="font-mono text-xs text-[#ff635d]">03</b><h3 className="mt-4 font-mono text-sm font-bold">Scan and continue</h3><p className="mt-4 text-xs leading-6 text-[#8d9692]">Restart OpenCode. Scan the QR code or paste the encrypted invite into the pairing page.</p></div>
           </div>
@@ -436,7 +491,7 @@ function PairingScreen({ onConnect, error }: { onConnect: (bundle: PairingBundle
         </div>
         <div className="border-y border-[#3a4140] bg-[#0c0f10]">
           <div className="flex h-12 items-center gap-2 border-b border-[#292d2d] px-4 font-mono text-[10px] font-bold uppercase text-[#d8ff3e]"><Terminal size={18} /> Install and pair</div>
-          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">01</b><div><strong className="text-xs">Add the OpenCode plugin</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">{`"plugin": ["opencode-remotty@0.2.1"]`}</code></div></div>
+          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">01</b><div><strong className="text-xs">Add the OpenCode plugin</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">{`"plugin": ["opencode-remotty@0.2.2"]`}</code></div></div>
           <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">02</b><div><strong className="text-xs">Create an encrypted device invite</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">npx opencode-remotty pair</code></div></div>
           <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 p-4"><b className="font-mono text-[10px] text-[#ff635d]">03</b><div><strong className="text-xs">Restart OpenCode</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">opencode --continue</code></div></div>
         </div>
@@ -497,7 +552,6 @@ function SessionRow({ session, needsInput, offline, selected, onSelect }: { sess
       <span className="session-copy">
         <strong>{session.title}</strong>
         <span><GitBranch size={13} /><i>{session.branch ?? "no branch"}</i></span>
-        <span><Folder size={13} /><i>{session.directory}</i></span>
       </span>
       <span className="session-meta">
         <time>{relativeTime(session.updatedAt)}</time>
@@ -542,6 +596,8 @@ function SessionDetail({
   const followOutputRef = useRef(true)
   const lastScrollTopRef = useRef(0)
   const snapshotRef = useRef<Record<string, string>>({})
+  const selectedAgent = agents.find((item) => item.name === agent)
+  const selectedAgentStyle = { "--agent-color": selectedAgent?.color ?? "var(--cyan)" } as CSSProperties
 
   const refresh = async () => {
     const load = async <T,>(
@@ -658,11 +714,12 @@ function SessionDetail({
             <button
               type="button"
               className="agent-picker"
+              style={selectedAgentStyle}
               aria-haspopup="listbox"
               aria-expanded={agentMenuOpen}
               onClick={() => setAgentMenuOpen((open) => !open)}
             >
-              <Bot size={15} />
+              <span className="agent-picker-color" /><Bot size={15} />
               <span>{agent || "Select agent"}</span>
               <ChevronDown size={14} />
             </button>
@@ -674,6 +731,7 @@ function SessionDetail({
                     role="option"
                     aria-selected={item.name === agent}
                     className={item.name === agent ? "selected" : ""}
+                    style={{ "--agent-color": item.color ?? "var(--cyan)" } as CSSProperties}
                     key={item.name}
                     onClick={() => { setAgent(item.name); setAgentMenuOpen(false) }}
                   >
