@@ -1,36 +1,50 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
-  brokerMessageSchema,
+  brokerTransportControlSchema,
+  e2eeFrameSchema,
+  openJsonPayload,
   permissionRequestSchema,
   relayMessageSchema,
-  type AgentSummary,
+  sealEnrollmentPayload,
+  sealJsonPayload,
+  signCanonicalJson,
+  transportProofPayload,
   type ClientCommand,
-  type PermissionRequest,
+  type JsonValue,
+  type PairingBundle,
   type QuestionRequest,
-  type RelayInfo,
   type SessionSummary,
 } from "@remotty/protocol"
+import {
+  deleteIdentity,
+  loadCurrentIdentity,
+  markIdentityEnrolled,
+  prepareIdentity,
+  setCurrentIdentity,
+  type DeviceIdentity,
+} from "./deviceStore"
+import { acceptsRelayPosition, aggregateRelaySlices, commandRelayId, type RelaySlice } from "./relayState"
 
 type PendingRequest = {
+  relayId: string
   resolve: (value: unknown) => void
   reject: (error: Error) => void
   timeout: number
 }
 
-const defaultBrokerUrl = () => {
-  const protocol = location.protocol === "https:" ? "wss:" : "ws:"
-  return `${protocol}//${location.hostname}:8787/ws`
-}
+const MAX_FRAME_AGE_MS = 5 * 60 * 1_000
+const MAX_RECENT_MESSAGES = 1_000
 
-const brokerUrl = () => new URL(import.meta.env.VITE_REMOTTY_URL ?? import.meta.env.VITE_RELAY_URL ?? defaultBrokerUrl())
-
-const brokerHttpUrl = () => {
-  const url = brokerUrl()
+const httpBrokerUrl = (identity: DeviceIdentity) => {
+  const url = new URL(identity.brokerUrl)
   url.protocol = url.protocol === "wss:" ? "https:" : "http:"
   url.pathname = "/"
   url.search = ""
+  url.hash = ""
   return url
 }
+
+const endpoint = (identity: DeviceIdentity, path: string) => new URL(path, httpBrokerUrl(identity))
 
 const applicationServerKey = (value: string) => {
   const padding = "=".repeat((4 - (value.length % 4)) % 4)
@@ -38,29 +52,13 @@ const applicationServerKey = (value: string) => {
   return Uint8Array.from(bytes, (character) => character.charCodeAt(0))
 }
 
-const supportsNotificationClose = (registration: ServiceWorkerRegistration) =>
-  new Promise<boolean>((resolve) => {
-    if (!registration.active) {
-      resolve(false)
-      return
-    }
-    const channel = new MessageChannel()
-    let complete = false
-    const finish = (supported: boolean) => {
-      if (complete) return
-      complete = true
-      resolve(supported)
-    }
-    channel.port1.onmessage = (event) => finish(event.data?.closeNotifications === true)
-    registration.active.postMessage({ type: "notification.capabilities" }, [channel.port2])
-    window.setTimeout(() => finish(false), 500)
-  })
-
-const registerPush = async (code: string) => {
+const registerPush = async (identity: DeviceIdentity) => {
+  if (!identity.enrolled || !identity.deviceCertificate) throw new Error("Finish device enrollment before enabling notifications.")
   const registration = await navigator.serviceWorker.ready
-  const { publicKey } = (await fetch(new URL("push/public-key", brokerHttpUrl())).then((response) =>
-    response.json(),
-  )) as { publicKey: string }
+  const { publicKey } = (await fetch(endpoint(identity, "push/public-key")).then((response) => {
+    if (!response.ok) throw new Error("Cannot read the Push server key.")
+    return response.json()
+  })) as { publicKey: string }
   const key = applicationServerKey(publicKey)
   const existing = await registration.pushManager.getSubscription()
   const existingKey = existing?.options.applicationServerKey
@@ -69,21 +67,28 @@ const registerPush = async (code: string) => {
   const keyChanged = existingKey &&
     (existingKey.length !== key.length || existingKey.some((byte, index) => byte !== key[index]))
   if (keyChanged) await existing?.unsubscribe()
-  const subscription =
-    !keyChanged && existing
-      ? existing
-      : await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key })
-  const response = await fetch(new URL("push/subscribe", brokerHttpUrl()), {
+  const subscription = !keyChanged && existing
+    ? existing
+    : await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key })
+  const response = await fetch(endpoint(identity, "push/subscribe"), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      code,
-      brokerUrl: brokerHttpUrl().origin,
-      closeNotifications: await supportsNotificationClose(registration),
-      subscription: subscription.toJSON(),
-    }),
+    body: JSON.stringify(await signedPushRequest(identity, "subscribe", { subscription: subscription.toJSON() })),
   })
   if (!response.ok) throw new Error("The broker rejected the Push subscription.")
+}
+
+const unregisterPush = async (identity: DeviceIdentity) => {
+  if (!("serviceWorker" in navigator)) return
+  const registration = await navigator.serviceWorker.ready
+  const subscription = await registration.pushManager.getSubscription()
+  if (!subscription) return
+  await fetch(endpoint(identity, "push/unsubscribe"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(await signedPushRequest(identity, "unsubscribe", { endpoint: subscription.endpoint })),
+  }).catch(() => undefined)
+  await subscription.unsubscribe()
 }
 
 const closeNotification = (tag: string) => {
@@ -93,267 +98,473 @@ const closeNotification = (tag: string) => {
   })
 }
 
-export function useRelay() {
-  const storedCredential = () => {
-    const current = localStorage.getItem("remotty-credential")
-    if (current) return current
-    const legacy = localStorage.getItem("opencode-relay-code")
-    if (legacy) localStorage.setItem("remotty-credential", legacy)
-    return legacy
+const jsonValue = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue
+
+const signedPushRequest = async (
+  identity: DeviceIdentity,
+  operation: "subscribe" | "unsubscribe",
+  details: Record<string, unknown>,
+) => {
+  const authorization = jsonValue({
+    operation,
+    roomToken: identity.roomToken,
+    deviceId: identity.deviceId,
+    issuedAt: Date.now(),
+    nonce: crypto.randomUUID(),
+    ...details,
+  }) as Record<string, JsonValue>
+  return {
+    ...authorization,
+    signingPublicKey: identity.signingPublicKey,
+    relaySigningKey: identity.relaySigningKey,
+    deviceCertificate: identity.deviceCertificate,
+    signature: await signCanonicalJson(authorization, identity.signingPrivateKey),
   }
-  const [connection, setConnection] = useState<"disconnected" | "connecting" | "online" | "offline">(
-    "disconnected",
-  )
-  const [relay, setRelay] = useState<RelayInfo>()
-  const [relays, setRelays] = useState<RelayInfo[]>([])
-  const [sessions, setSessions] = useState<SessionSummary[]>([])
-  const [agents, setAgents] = useState<AgentSummary[]>([])
-  const [permissions, setPermissions] = useState<PermissionRequest[]>([])
-  const [questions, setQuestions] = useState<QuestionRequest[]>([])
+}
+
+export function useRelay(initialBundle?: PairingBundle) {
+  const [connection, setConnection] = useState<"disconnected" | "connecting" | "online" | "offline">("connecting")
+  const [relay, setRelay] = useState<ReturnType<typeof aggregateRelaySlices>["relay"]>()
+  const [relays, setRelays] = useState<ReturnType<typeof aggregateRelaySlices>["relays"]>([])
+  const [sessions, setSessions] = useState<ReturnType<typeof aggregateRelaySlices>["sessions"]>([])
+  const [agents, setAgents] = useState<ReturnType<typeof aggregateRelaySlices>["agents"]>([])
+  const [permissions, setPermissions] = useState<ReturnType<typeof aggregateRelaySlices>["permissions"]>([])
+  const [questions, setQuestions] = useState<ReturnType<typeof aggregateRelaySlices>["questions"]>([])
   const [sessionRevisions, setSessionRevisions] = useState<Record<string, number>>({})
   const [notificationsEnabled, setNotificationsEnabled] = useState(
-    () =>
-      (localStorage.getItem("remotty-notifications") ?? localStorage.getItem("opencode-relay-notifications")) === "enabled" &&
-      typeof Notification !== "undefined" &&
-      Notification.permission === "granted",
+    () => localStorage.getItem("remotty-notifications") === "enabled" &&
+      typeof Notification !== "undefined" && Notification.permission === "granted",
   )
   const [error, setError] = useState<string>()
   const socketRef = useRef<WebSocket | undefined>(undefined)
+  const identityRef = useRef<DeviceIdentity | undefined>(undefined)
   const pendingRef = useRef(new Map<string, PendingRequest>())
+  const connectedRelaysRef = useRef(new Set<string>())
+  const slicesRef = useRef(new Map<string, RelaySlice>())
+  const sessionRelaysRef = useRef(new Map<string, string>())
+  const recentMessageIdsRef = useRef(new Set<string>())
+  const recentMessageQueueRef = useRef<string[]>([])
+  const connectionEpochRef = useRef(0)
+  const cleanupRef = useRef<Promise<void>>(Promise.resolve())
 
-  const disconnect = useCallback(() => {
-    socketRef.current?.close(1000, "Client disconnected")
-    socketRef.current = undefined
-    setConnection("disconnected")
-    setRelay(undefined)
-    setRelays([])
-    setSessions([])
-    setAgents([])
-    setPermissions([])
-    setQuestions([])
-    localStorage.removeItem("remotty-credential")
-    localStorage.removeItem("opencode-relay-code")
+  const publishSlices = useCallback(() => {
+    const state = aggregateRelaySlices(slicesRef.current)
+    sessionRelaysRef.current = state.sessionRelays
+    setRelay(state.relay)
+    setRelays(state.relays)
+    setSessions(state.sessions)
+    setAgents(state.agents)
+    setPermissions(state.permissions)
+    setQuestions(state.questions)
   }, [])
 
-  const connect = useCallback(function open(inputCode: string) {
-    const code = inputCode.trim()
-    if (!code.match(/^[A-Za-z0-9_-]{32,128}$/)) {
-      setError("Enter the 256-bit pairing key from the relay.")
-      localStorage.removeItem("remotty-credential")
-      localStorage.removeItem("opencode-relay-code")
-      setConnection("disconnected")
-      setRelay(undefined)
-      setRelays([])
-      setSessions([])
-      return
+  const rememberMessage = useCallback((messageId: string) => {
+    recentMessageIdsRef.current.add(messageId)
+    recentMessageQueueRef.current.push(messageId)
+    if (recentMessageQueueRef.current.length > MAX_RECENT_MESSAGES) {
+      recentMessageIdsRef.current.delete(recentMessageQueueRef.current.shift()!)
     }
-
-    socketRef.current?.close()
-    setConnection("connecting")
-    setError(undefined)
-    localStorage.setItem("remotty-credential", code)
-    const broker = brokerUrl()
-    broker.searchParams.set("role", "client")
-    const socket = new WebSocket(broker, ["remotty", code])
-    socketRef.current = socket
-
-    socket.addEventListener("open", () => {
-      if (socketRef.current === socket) setConnection("offline")
-      if ((localStorage.getItem("remotty-notifications") ?? localStorage.getItem("opencode-relay-notifications")) === "enabled") {
-        void registerPush(code).catch((error) => setError((error as Error).message))
-      }
-    })
-    socket.addEventListener("close", () => {
-      if (socketRef.current !== socket) return
-      setConnection("connecting")
-      window.setTimeout(() => {
-        if (socketRef.current === socket) open(code)
-      }, 1_000)
-    })
-    socket.addEventListener("error", () => {
-      if (socketRef.current === socket) setError("Cannot reach the relay broker.")
-    })
-    socket.addEventListener("message", (message) => {
-      if (socketRef.current !== socket) return
-      let value: unknown
-      try {
-        value = JSON.parse(String(message.data))
-      } catch {
-        return
-      }
-
-      const brokerMessage = brokerMessageSchema.safeParse(value)
-      if (brokerMessage.success) {
-        if (brokerMessage.data.type === "broker.ready") {
-          setConnection(brokerMessage.data.relayConnected ? "online" : "offline")
-        } else if (brokerMessage.data.type === "broker.relay-status") {
-          setConnection(brokerMessage.data.connected ? "online" : "offline")
-        } else if (brokerMessage.data.type === "broker.snapshot") {
-          setRelays(brokerMessage.data.relays)
-          if (brokerMessage.data.relays.length > 0) {
-            setRelay(brokerMessage.data.relays[0])
-            setSessions(brokerMessage.data.sessions)
-            setAgents(brokerMessage.data.agents)
-            setPermissions(brokerMessage.data.permissions)
-            setQuestions(brokerMessage.data.questions)
-            setConnection("online")
-          } else {
-            setConnection("offline")
-          }
-        } else {
-          setError(brokerMessage.data.message)
-        }
-        return
-      }
-
-      const relayMessage = relayMessageSchema.safeParse(value)
-      if (!relayMessage.success) {
-        console.warn("Rejected relay message", relayMessage.error.issues)
-        return
-      }
-      const data = relayMessage.data
-      if (data.type === "relay.hello") {
-        setRelay(data.relay)
-        setRelays([data.relay])
-        setConnection("online")
-      } else if (data.type === "relay.snapshot") {
-        setRelay(data.relay)
-        setRelays([data.relay])
-        setSessions(data.sessions.sort((a, b) => b.updatedAt - a.updatedAt))
-        setAgents(data.agents)
-        setPermissions(data.permissions)
-        setQuestions(data.questions)
-        setConnection("online")
-      } else if (data.type === "relay.event") {
-        applyEvent(data.event)
-      } else if (data.type === "rpc.result") {
-        const pending = pendingRef.current.get(data.requestId)
-        if (!pending) return
-        clearTimeout(pending.timeout)
-        pendingRef.current.delete(data.requestId)
-        if (data.error) pending.reject(new Error(data.error))
-        else pending.resolve(data.result)
-      }
-    })
   }, [])
 
-  const applyEvent = (event: { type: string; properties: unknown }) => {
-    const properties = event.properties as Record<string, unknown>
-    const info = properties.info as Record<string, unknown> | undefined
-    const part = properties.part as Record<string, unknown> | undefined
-    const sessionID = String(properties.sessionID ?? info?.sessionID ?? part?.sessionID ?? "")
-    if (
-      sessionID &&
-      ["message.updated", "message.part.updated", "message.part.delta", "session.diff", "todo.updated"].includes(event.type)
-    ) {
-      setSessionRevisions((current) => ({
-        ...current,
-        [sessionID]: (current[sessionID] ?? 0) + 1,
-      }))
-    }
-    if (event.type === "session.status") {
-      const status = properties.status as { type?: SessionSummary["status"] }
-      setSessions((current) =>
-        current.map((session) =>
-          session.id === properties.sessionID ? { ...session, status: status.type ?? session.status } : session,
-        ),
-      )
-    }
-    if (event.type === "session.idle") {
-      setSessions((current) =>
-        current.map((session) =>
-          session.id === properties.sessionID ? { ...session, status: "idle" } : session,
-        ),
-      )
-    }
-    if (event.type === "session.error") {
-      setSessions((current) =>
-        current.map((session) =>
-          session.id === properties.sessionID ? { ...session, status: "error" } : session,
-        ),
-      )
-    }
-    if (["permission.updated", "permission.asked"].includes(event.type)) {
-      const parsed = permissionRequestSchema.safeParse(properties)
-      if (parsed.success) {
-        setPermissions((current) => [...current.filter((item) => item.id !== parsed.data.id), parsed.data])
-      }
-    }
-    if (event.type === "permission.replied") {
-      const permissionId = String(properties.requestID ?? properties.permissionID ?? "")
-      setPermissions((current) =>
-        current.filter((item) => item.id !== permissionId),
-      )
-      if (permissionId) closeNotification(`permission-${permissionId}`)
-    }
-    if (event.type === "question.asked") {
-      const question = properties as QuestionRequest
-      setQuestions((current) => [...current.filter((item) => item.id !== question.id), question])
-    }
-    if (["question.replied", "question.rejected"].includes(event.type)) {
-      const questionId = String(properties.requestID ?? "")
-      setQuestions((current) => current.filter((item) => item.id !== questionId))
-      if (questionId) closeNotification(`question-${questionId}`)
-    }
-  }
-
-  const request = useCallback((command: Omit<ClientCommand, "requestId">): Promise<unknown> => {
+  const sendCommandFrame = useCallback(async (identity: DeviceIdentity, relayId: string, command: ClientCommand) => {
     const socket = socketRef.current
-    if (!socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error("Relay is offline"))
+    if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error("Relay is offline")
+    const frame = await sealJsonPayload(jsonValue(command), {
+      channel: "data",
+      sender: identity.deviceId,
+      recipient: relayId,
+      messageId: crypto.randomUUID(),
+      issuedAt: Date.now(),
+      senderSigningPrivateKey: identity.signingPrivateKey,
+      senderEncryptionPrivateKey: identity.encryptionPrivateKey,
+      recipientEncryptionPublicKey: identity.relayEncryptionKey,
+    })
+    if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) throw new Error("Relay is offline")
+    socket.send(JSON.stringify(frame))
+  }, [])
+
+  const requestFromRelay = useCallback((identity: DeviceIdentity, relayId: string, command: Omit<ClientCommand, "requestId">) => {
+    if (!connectedRelaysRef.current.has(relayId)) return Promise.reject(new Error("The workspace relay is offline."))
     const requestId = crypto.randomUUID()
-    socket.send(JSON.stringify({ ...command, requestId }))
-    return new Promise((resolve, reject) => {
+    return new Promise<unknown>((resolve, reject) => {
       const timeout = window.setTimeout(() => {
         pendingRef.current.delete(requestId)
         reject(new Error("The relay did not respond."))
       }, 30_000)
-      pendingRef.current.set(requestId, { resolve, reject, timeout })
+      pendingRef.current.set(requestId, { relayId, resolve, reject, timeout })
+      void sendCommandFrame(identity, relayId, { ...command, requestId } as ClientCommand).catch((cause) => {
+        window.clearTimeout(timeout)
+        pendingRef.current.delete(requestId)
+        reject(cause)
+      })
     })
-  }, [])
+  }, [sendCommandFrame])
+
+  const requestSnapshots = useCallback((identity: DeviceIdentity, relayIds: Iterable<string>, waitForReply = false) => {
+    const requests = [...relayIds].map((relayId) => {
+      if (waitForReply) return requestFromRelay(identity, relayId, { type: "snapshot.request" })
+      return sendCommandFrame(identity, relayId, { type: "snapshot.request", requestId: crypto.randomUUID() })
+    })
+    return Promise.all(requests)
+  }, [requestFromRelay, sendCommandFrame])
+
+  const applyEvent = useCallback((
+    relayId: string,
+    event: { type: string; properties: unknown },
+    instanceId: string | undefined,
+    sequence: number,
+  ) => {
+    const slice = slicesRef.current.get(relayId)
+    if (!slice || !instanceId || slice.relay.instanceId !== instanceId || sequence <= (slice.sequence ?? -1)) return
+    slice.sequence = sequence
+    const properties = event.properties as Record<string, unknown>
+    const info = properties.info as Record<string, unknown> | undefined
+    const part = properties.part as Record<string, unknown> | undefined
+    const sessionID = String(properties.sessionID ?? info?.sessionID ?? part?.sessionID ?? "")
+    if (sessionID && ["message.updated", "message.part.updated", "message.part.delta", "session.diff", "todo.updated"].includes(event.type)) {
+      const revisionKey = `${relayId}:${sessionID}`
+      setSessionRevisions((current) => ({ ...current, [revisionKey]: (current[revisionKey] ?? 0) + 1 }))
+    }
+    if (["session.status", "session.idle", "session.error"].includes(event.type)) {
+      const status = event.type === "session.idle" ? "idle" : event.type === "session.error" ? "error"
+        : (properties.status as { type?: SessionSummary["status"] })?.type
+      slice.sessions = slice.sessions.map((session) => session.id === sessionID && status ? { ...session, status } : session)
+    }
+    if (["permission.updated", "permission.asked"].includes(event.type)) {
+      const parsed = permissionRequestSchema.safeParse(properties)
+      if (parsed.success) slice.permissions = [...slice.permissions.filter((item) => item.id !== parsed.data.id), parsed.data]
+    }
+    if (event.type === "permission.replied") {
+      const permissionId = String(properties.requestID ?? properties.permissionID ?? "")
+      slice.permissions = slice.permissions.filter((item) => item.id !== permissionId)
+      if (permissionId) closeNotification(`${relayId}:permission-${permissionId}`)
+    }
+    if (event.type === "question.asked") {
+      const question = properties as QuestionRequest
+      slice.questions = [...slice.questions.filter((item) => item.id !== question.id), question]
+    }
+    if (["question.replied", "question.rejected"].includes(event.type)) {
+      const questionId = String(properties.requestID ?? "")
+      slice.questions = slice.questions.filter((item) => item.id !== questionId)
+      if (questionId) closeNotification(`${relayId}:question-${questionId}`)
+    }
+    publishSlices()
+  }, [publishSlices])
+
+  const handleEncryptedFrame = useCallback(async (frameValue: unknown, epoch: number) => {
+    const identity = identityRef.current
+    if (!identity) return
+    const identityKey = identity.key
+    const parsed = e2eeFrameSchema.safeParse(frameValue)
+    if (!parsed.success) return
+    const frame = parsed.data
+    if (frame.channel !== "data" || frame.recipient !== identity.deviceId ||
+      Math.abs(Date.now() - frame.issuedAt) > MAX_FRAME_AGE_MS || recentMessageIdsRef.current.has(frame.messageId)) return
+    try {
+      const payload = await openJsonPayload<unknown>(frame, {
+        recipient: identity.deviceId,
+        recipientEncryptionPrivateKey: identity.encryptionPrivateKey,
+        senderEncryptionPublicKey: identity.relayEncryptionKey,
+        senderSigningPublicKey: identity.relaySigningKey,
+      })
+      if (connectionEpochRef.current !== epoch || identityRef.current?.key !== identityKey) return
+      if (recentMessageIdsRef.current.has(frame.messageId)) return
+      rememberMessage(frame.messageId)
+
+      if (typeof payload === "object" && payload !== null && (payload as { type?: unknown }).type === "enrollment.accepted") {
+        const accepted = payload as { type: string; deviceId?: unknown; relayId?: unknown; deviceCertificate?: unknown }
+        if (accepted.deviceId !== identity.deviceId || accepted.relayId !== frame.sender ||
+          typeof accepted.deviceCertificate !== "string") return
+        const enrolled = await markIdentityEnrolled(identity, accepted.deviceCertificate)
+        if (!enrolled) return
+        if (connectionEpochRef.current !== epoch || identityRef.current?.key !== identityKey) {
+          if (identityRef.current) await setCurrentIdentity(identityRef.current)
+          return
+        }
+        identityRef.current = enrolled
+        await requestSnapshots(enrolled, connectedRelaysRef.current)
+        if (localStorage.getItem("remotty-notifications") === "enabled") await registerPush(enrolled)
+        return
+      }
+      if (typeof payload === "object" && payload !== null && (payload as { type?: unknown }).type === "enrollment.rejected") {
+        const rejected = payload as { deviceId?: unknown; message?: unknown }
+        if (rejected.deviceId === identity.deviceId && typeof rejected.message === "string") {
+          setError(`Enrollment failed: ${rejected.message}`)
+        }
+        return
+      }
+
+      const relayMessage = relayMessageSchema.safeParse(payload)
+      if (!relayMessage.success) {
+        console.warn("Rejected decrypted relay payload", relayMessage.error.issues)
+        return
+      }
+      const data = relayMessage.data
+      if (data.type === "relay.hello") {
+        if (data.relay.id !== frame.sender) return
+        const current = slicesRef.current.get(frame.sender)
+        if (!acceptsRelayPosition(current, data.relay, data.sequence)) return
+        slicesRef.current.set(frame.sender, current ? { ...current, relay: data.relay } : {
+          relay: data.relay, sessions: [], agents: [], permissions: [], questions: [], sequence: data.sequence,
+        })
+        slicesRef.current.get(frame.sender)!.sequence = data.sequence
+        publishSlices()
+      } else if (data.type === "relay.snapshot") {
+        if (data.relay.id !== frame.sender) return
+        const current = slicesRef.current.get(frame.sender)
+        if (!acceptsRelayPosition(current, data.relay, data.sequence)) return
+        slicesRef.current.set(frame.sender, {
+          relay: data.relay,
+          sessions: data.sessions,
+          agents: data.agents,
+          permissions: data.permissions,
+          questions: data.questions,
+          sequence: data.sequence,
+        })
+        publishSlices()
+      } else if (data.type === "relay.event") {
+        applyEvent(frame.sender, data.event, data.instanceId, data.sequence)
+      } else if (data.type === "rpc.result") {
+        const pending = pendingRef.current.get(data.requestId)
+        if (!pending) return
+        if (pending.relayId !== frame.sender) {
+          console.warn("Ignored unmatched encrypted RPC response", {
+            requestId: data.requestId,
+            relayId: frame.sender,
+            pendingRelayId: pending?.relayId,
+          })
+          return
+        }
+        window.clearTimeout(pending.timeout)
+        pendingRef.current.delete(data.requestId)
+        if (data.error) pending.reject(new Error(data.error))
+        else pending.resolve(data.result)
+      }
+    } catch (cause) {
+      console.warn("Rejected encrypted relay frame", cause)
+      return
+    }
+  }, [applyEvent, publishSlices, rememberMessage, requestSnapshots])
+
+  const connectIdentity = useCallback((identity: DeviceIdentity) => {
+    const epoch = ++connectionEpochRef.current
+    identityRef.current = identity
+    socketRef.current?.close(1000, "Connection replaced")
+    setConnection("connecting")
+    setError(undefined)
+    const open = () => {
+      if (connectionEpochRef.current !== epoch) return
+      const broker = new URL(identity.brokerUrl)
+      broker.searchParams.set("role", "client")
+      const socket = new WebSocket(broker, ["remotty", identity.roomToken])
+      socketRef.current = socket
+      let enrollmentSent = false
+      let helloStarted = false
+
+      const enroll = async () => {
+        const current = identityRef.current
+        if (!current || current.enrolled || enrollmentSent) return
+        if (!current.inviteId || !current.inviteSecret) throw new Error("This device has no active encrypted invite.")
+        enrollmentSent = true
+        const frame = await sealEnrollmentPayload({
+          type: "device.enroll",
+          inviteId: current.inviteId,
+          inviteSecret: current.inviteSecret,
+          device: {
+            id: current.deviceId,
+            name: current.name,
+            signingPublicKey: current.signingPublicKey,
+            encryptionPublicKey: current.encryptionPublicKey,
+          },
+        }, {
+          sender: current.deviceId,
+          recipient: "*",
+          messageId: crypto.randomUUID(),
+          issuedAt: Date.now(),
+          signingPrivateKey: current.signingPrivateKey,
+          senderEncryptionPrivateKey: current.encryptionPrivateKey,
+          senderEncryptionPublicKey: current.encryptionPublicKey,
+          recipientEncryptionPublicKey: current.relayEncryptionKey,
+        })
+        if (socketRef.current === socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(frame))
+      }
+
+      socket.addEventListener("message", (message) => {
+        if (socketRef.current !== socket) return
+        let value: unknown
+        try {
+          value = JSON.parse(String(message.data))
+        } catch {
+          return
+        }
+        const control = brokerTransportControlSchema.safeParse(value)
+        if (control.success) {
+          if (control.data.type === "broker.challenge" && !helloStarted) {
+            helloStarted = true
+            const challenge = control.data.nonce
+            void signCanonicalJson(
+              transportProofPayload("client", identity.deviceId, identity.roomToken, challenge),
+              identity.signingPrivateKey,
+            ).then((signature) => {
+              if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return
+              socket.send(JSON.stringify({
+                type: "transport.hello",
+                version: 2,
+                role: "client",
+                deviceId: identity.deviceId,
+                publicKey: identity.signingPublicKey,
+                signature,
+              }))
+            }).catch((cause) => setError((cause as Error).message))
+          } else if (control.data.type === "broker.ready") {
+            connectedRelaysRef.current = new Set(control.data.connectedRelayIds)
+            setConnection(control.data.connectedRelayIds.length ? "online" : "offline")
+            const current = identityRef.current
+            if (current?.enrolled) {
+              void requestSnapshots(current, connectedRelaysRef.current).catch(() => undefined)
+              if (localStorage.getItem("remotty-notifications") === "enabled") {
+                void registerPush(current).catch((cause) => setError((cause as Error).message))
+              }
+            }
+            else if (control.data.connectedRelayIds.length) void enroll().catch((cause) => setError((cause as Error).message))
+          } else if (control.data.type === "broker.relay-status") {
+            if (control.data.connected) connectedRelaysRef.current.add(control.data.relayId)
+            else {
+              connectedRelaysRef.current.delete(control.data.relayId)
+              for (const [requestId, pending] of pendingRef.current) {
+                if (pending.relayId !== control.data.relayId) continue
+                window.clearTimeout(pending.timeout)
+                pending.reject(new Error("The workspace relay disconnected."))
+                pendingRef.current.delete(requestId)
+              }
+            }
+            setConnection(connectedRelaysRef.current.size ? "online" : "offline")
+            const current = identityRef.current
+            if (control.data.connected && current?.enrolled) {
+              void requestSnapshots(current, [control.data.relayId]).catch(() => undefined)
+            } else if (control.data.connected) {
+              void enroll().catch((cause) => setError((cause as Error).message))
+            }
+          } else if (control.data.type === "broker.error") {
+            setError(`Broker transport error (${control.data.code}).`)
+          }
+          return
+        }
+        void handleEncryptedFrame(value, epoch)
+      })
+      socket.addEventListener("error", () => {
+        if (socketRef.current === socket) setError("Cannot reach the relay broker.")
+      })
+      socket.addEventListener("close", () => {
+        if (socketRef.current !== socket || connectionEpochRef.current !== epoch) return
+        setConnection("connecting")
+        window.setTimeout(open, 1_000)
+      })
+    }
+    open()
+  }, [handleEncryptedFrame, publishSlices, requestSnapshots])
+
+  const connect = useCallback(async (bundle: PairingBundle) => {
+    try {
+      await cleanupRef.current
+      const identity = await prepareIdentity(bundle)
+      connectIdentity(identity)
+    } catch (cause) {
+      setConnection("disconnected")
+      setError((cause as Error).message)
+    }
+  }, [connectIdentity])
+
+  const disconnect = useCallback(() => {
+    ++connectionEpochRef.current
+    const identity = identityRef.current
+    identityRef.current = undefined
+    socketRef.current?.close(1000, "Client disconnected")
+    socketRef.current = undefined
+    for (const pending of pendingRef.current.values()) {
+      window.clearTimeout(pending.timeout)
+      pending.reject(new Error("Client disconnected"))
+    }
+    pendingRef.current.clear()
+    connectedRelaysRef.current.clear()
+    slicesRef.current.clear()
+    sessionRelaysRef.current.clear()
+    publishSlices()
+    setConnection("disconnected")
+    setNotificationsEnabled(false)
+    localStorage.removeItem("remotty-notifications")
+    cleanupRef.current = (async () => {
+      if (identity) await unregisterPush(identity)
+      if (identity) await deleteIdentity(identity)
+    })().catch(() => undefined)
+  }, [publishSlices])
+
+  const request = useCallback((command: Omit<ClientCommand, "requestId">, workspaceRelayId?: string): Promise<unknown> => {
+    const identity = identityRef.current
+    if (!identity?.enrolled) return Promise.reject(new Error("The browser device is not enrolled."))
+    if (command.type === "snapshot.request") {
+      return requestSnapshots(identity, connectedRelaysRef.current, true)
+    }
+    const relayId = workspaceRelayId ?? commandRelayId(command, connectedRelaysRef.current, sessionRelaysRef.current)
+    if (!relayId) return Promise.reject(new Error("Cannot determine the workspace relay for this command."))
+    return requestFromRelay(identity, relayId, command)
+  }, [requestFromRelay, requestSnapshots])
 
   const toggleNotifications = useCallback(async () => {
     if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) {
       setError("This browser does not support PWA notifications.")
       return
     }
-    if (notificationsEnabled) {
-      const subscription = await navigator.serviceWorker.ready.then((registration) =>
-        registration.pushManager.getSubscription(),
-      )
-      await subscription?.unsubscribe()
-      localStorage.removeItem("remotty-notifications")
-      localStorage.removeItem("opencode-relay-notifications")
-      setNotificationsEnabled(false)
-      return
-    }
-    const permission = await Notification.requestPermission()
-    if (permission !== "granted") {
-      setError("Notification permission was not granted.")
-      return
-    }
-    const code = storedCredential()
-    if (!code) {
-      setError("Connect the relay before you enable notifications.")
+    const identity = identityRef.current
+    if (!identity?.enrolled) {
+      setError("Connect and enroll this browser before enabling notifications.")
       return
     }
     try {
-      await registerPush(code)
+      if (notificationsEnabled) {
+        await unregisterPush(identity)
+        localStorage.removeItem("remotty-notifications")
+        setNotificationsEnabled(false)
+        return
+      }
+      const permission = await Notification.requestPermission()
+      if (permission !== "granted") throw new Error("Notification permission was not granted.")
+      await registerPush(identity)
       localStorage.setItem("remotty-notifications", "enabled")
       setNotificationsEnabled(true)
-    } catch (error) {
-      setError((error as Error).message)
+    } catch (cause) {
+      setError((cause as Error).message)
     }
   }, [notificationsEnabled])
 
+  const isRelayConnected = useCallback((relayId: string) => connectedRelaysRef.current.has(relayId), [])
+
   useEffect(() => {
-    const code = new URLSearchParams(location.search).get("code") ?? storedCredential()
-    if (code) connect(code)
+    let cancelled = false
+    void (async () => {
+      if (initialBundle) {
+        const identity = await prepareIdentity(initialBundle)
+        if (!cancelled) connectIdentity(identity)
+        return
+      }
+      const identity = await loadCurrentIdentity()
+      if (cancelled) return
+      if (identity) connectIdentity(identity)
+      else setConnection("disconnected")
+    })().catch((cause) => {
+      if (!cancelled) {
+        setConnection("disconnected")
+        setError((cause as Error).message)
+      }
+    })
     return () => {
+      cancelled = true
+      ++connectionEpochRef.current
       const socket = socketRef.current
       socketRef.current = undefined
       socket?.close(1000, "Page closed")
     }
-  }, [connect])
+  }, [connect, connectIdentity, initialBundle])
 
   return {
     connection,
@@ -371,5 +582,6 @@ export function useRelay() {
     request,
     toggleNotifications,
     setError,
+    isRelayConnected,
   }
 }

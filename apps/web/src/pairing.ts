@@ -1,11 +1,22 @@
-const credentialPattern = /^[A-Za-z0-9_-]{32,128}$/
+import { decodePairingBundle, PAIRING_BUNDLE_PREFIX, type PairingBundle } from "@remotty/protocol"
 
-export const pairingCredentialFrom = (value: string) => {
+export const pairingBundleFrom = (value: string): PairingBundle | undefined => {
   const input = value.trim()
-  if (credentialPattern.test(input)) return input
+  let token: string
+  if (input.startsWith(PAIRING_BUNDLE_PREFIX)) {
+    token = input
+  } else {
+    try {
+      const url = new URL(input)
+      if (!url.hash || url.search) return undefined
+      token = decodeURIComponent(url.hash.slice(1))
+    } catch {
+      return undefined
+    }
+  }
+  if (!token.startsWith(PAIRING_BUNDLE_PREFIX) || token.includes("#") || token.includes("?")) return undefined
   try {
-    const code = new URL(input).searchParams.get("code") ?? ""
-    return credentialPattern.test(code) ? code : undefined
+    return decodePairingBundle(token)
   } catch {
     return undefined
   }

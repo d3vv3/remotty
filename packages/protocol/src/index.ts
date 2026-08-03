@@ -1,5 +1,8 @@
 import { z } from "zod"
 
+export * from "./e2ee-schema"
+export * from "./e2ee"
+
 export const sessionStatusSchema = z.enum(["busy", "idle", "retry", "error"])
 export type SessionStatus = z.infer<typeof sessionStatusSchema>
 
@@ -43,6 +46,8 @@ export const relayInfoSchema = z.object({
   arch: z.string(),
   workspace: z.string(),
   version: z.string().optional(),
+  instanceId: z.string().optional(),
+  instanceStartedAt: z.number().int().nonnegative().optional(),
 })
 export type RelayInfo = z.infer<typeof relayInfoSchema>
 
@@ -62,7 +67,7 @@ export const questionRequestSchema = z.object({
 export type QuestionRequest = z.infer<typeof questionRequestSchema>
 
 export const relayMessageSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("relay.hello"), relay: relayInfoSchema }),
+  z.object({ type: z.literal("relay.hello"), relay: relayInfoSchema, sequence: z.number().int().nonnegative().optional() }),
   z.object({
     type: z.literal("relay.snapshot"),
     relay: relayInfoSchema,
@@ -70,9 +75,11 @@ export const relayMessageSchema = z.discriminatedUnion("type", [
     agents: z.array(agentSummarySchema).default([]),
     permissions: z.array(permissionRequestSchema).default([]),
     questions: z.array(questionRequestSchema).default([]),
+    sequence: z.number().int().nonnegative().optional(),
   }),
   z.object({
     type: z.literal("relay.event"),
+    instanceId: z.string().optional(),
     sequence: z.number().int().nonnegative(),
     event: z.object({ type: z.string(), properties: z.unknown() }),
   }),

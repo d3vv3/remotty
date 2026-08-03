@@ -21,21 +21,20 @@ Add the package to `~/.config/opencode/opencode.json`:
 }
 ```
 
-Create a 256-bit pairing key:
+Create the relay identity and a ten-minute encrypted device invite:
 
 ```sh
 npx opencode-remotty pair
 ```
 
-Restart OpenCode. Paste the printed key into the PWA.
+Restart OpenCode. Paste the printed invite into the PWA.
 
 The pairing command also prints a QR code. Scan it with your phone camera or the scanner beside the pairing input.
 
-The CLI writes `~/.config/remotty/config.json` with mode `0600`. These environment variables override that file:
+The CLI writes relay authority keys, device records, and invitation hashes to `~/.config/remotty/config.json` with mode `0600`. These environment variables override non-secret settings:
 
 ```sh
 REMOTTY_URL=wss://your-remotty-domain.example/ws
-REMOTTY_KEY=your-pairing-key
 REMOTTY_NAME=workstation
 ```
 
@@ -50,7 +49,7 @@ node packages/plugin/dist/cli.js pair
 pnpm dev
 ```
 
-Open `http://localhost:5173` and enter the pairing key.
+Open `http://localhost:5173/pair` and enter the encrypted invite.
 
 ## Deploy
 
@@ -77,9 +76,11 @@ Push and PWA installation require HTTPS outside localhost. The current broker ke
 
 ## Data boundary
 
-The broker does not store chat messages or diff responses. It forwards those frames and discards them. It keeps only the latest session metadata snapshot and Push subscriptions in memory.
+The broker does not receive plaintext chat messages, diffs, commands, or notification content. It routes signed ciphertext and keeps WebSocket and Push routing state in memory.
 
-The pairing key is a 256-bit bearer credential sent in the WebSocket subprotocol header. Before public production use, add account authentication, credential rotation, end-to-end room encryption, replay protection, rate limits, and stronger confirmation for dangerous approvals.
+The room identifier is the relay authority fingerprint and grants no command authority. P-256 ECDH, HKDF-SHA-256, AES-256-GCM, and ECDSA protect application payloads end to end. The relay rejects stale, replayed, unsigned, unknown-device, and revoked-device commands. The broker still sees room and device identifiers, Push endpoints, frame sizes, and timing, and it can delay or drop traffic.
+
+Use `remotty invite`, `remotty devices`, and `remotty revoke <device-id>` to manage browser access.
 
 ## Verify
 

@@ -1,50 +1,73 @@
-import { createServer, type IncomingMessage } from "node:http"
+/// <reference lib="dom" />
+
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
+import { lookup } from "node:dns/promises"
+import { isIP } from "node:net"
+import { randomBytes } from "node:crypto"
 import { URL } from "node:url"
-import { clientCommandSchema, relayMessageSchema, type ClientCommand } from "@remotty/protocol"
-import { WebSocket, WebSocketServer, type RawData } from "ws"
+import {
+  brokerTransportControlSchema,
+  brokerTransportHelloSchema,
+  deviceCertificatePayload,
+  ecPublicJwkSchema,
+  e2eeFrameSchema,
+  signingKeyFingerprint,
+  transportProofPayload,
+  verifyCanonicalJson,
+  verifyFrameSignature,
+  type BrokerTransportControl,
+  type EcPublicJwk,
+  type JsonValue,
+} from "@remotty/protocol"
 import webpush, { type PushSubscription } from "web-push"
-import { RelayRooms, type Room } from "./rooms.js"
+import { WebSocket, WebSocketServer, type RawData } from "ws"
+import {
+  RelayRooms,
+  isRoomToken,
+  registerClient,
+  registerRelay,
+  registrationsForDevice,
+  removeClient,
+  removeRelay,
+  routeClientFrame,
+  routeRelayFrame,
+  type PushRegistration,
+  type Room,
+  type RouteResult,
+} from "./rooms.js"
 
 const port = Number(process.env.PORT ?? 8787)
 const rooms = new RelayRooms()
 const maxClientFrameBytes = 100_000
 const maxRelayFrameBytes = 8_000_000
-const credentialPattern = /^[A-Za-z0-9_-]{32,128}$/
+const maxIdentityLength = 512
+const maxPushRegistrationsPerDevice = 5
+const maxPushRegistrationsPerRoom = 100
+const authorizationMaxAgeMs = 2 * 60 * 1_000
+const maxConnectionsPerRoom = 64
+const roomConnectionCounts = new Map<string, number>()
+const enrollmentRates = new Map<string, { startedAt: number; count: number }>()
 const generatedVapidKeys = webpush.generateVAPIDKeys()
 const vapidPublicKey = process.env.VAPID_PUBLIC_KEY ?? generatedVapidKeys.publicKey
 const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY ?? generatedVapidKeys.privateKey
 webpush.setVapidDetails(process.env.VAPID_SUBJECT ?? "mailto:admin@example.com", vapidPublicKey, vapidPrivateKey)
 
-const send = (socket: WebSocket, message: unknown) => {
-  if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message))
+const isIdentity = (value: unknown): value is string =>
+  typeof value === "string" && value.length > 0 && value.length <= maxIdentityLength && value !== "*"
+
+const sendControl = (socket: WebSocket, control: BrokerTransportControl) => {
+  if (socket.readyState !== WebSocket.OPEN) return
+  socket.send(JSON.stringify(brokerTransportControlSchema.parse(control)))
 }
 
-const uniqueBy = <T>(items: T[], key: (item: T) => string) =>
-  [...new Map(items.map((item) => [key(item), item])).values()]
+const sendError = (socket: WebSocket, code: string, message: string) =>
+  sendControl(socket, { type: "broker.error", version: 2, code, message })
 
-const combinedSnapshot = (room: Room) => {
-  const connections = [...room.relays.values()]
-  const snapshots = connections.flatMap((connection) => connection.snapshot ? [connection.snapshot] : [])
-  return {
-    type: "broker.snapshot" as const,
-    relays: connections.map((connection) => connection.relay),
-    sessions: uniqueBy(snapshots.flatMap((snapshot) => snapshot.sessions), (session) => session.id)
-      .sort((a, b) => b.updatedAt - a.updatedAt),
-    agents: uniqueBy(snapshots.flatMap((snapshot) => snapshot.agents), (agent) => agent.name),
-    permissions: uniqueBy(snapshots.flatMap((snapshot) => snapshot.permissions), (permission) => permission.id),
-    questions: uniqueBy(snapshots.flatMap((snapshot) => snapshot.questions), (question) => question.id),
+const broadcastRelayStatus = (room: Room, relayId: string, connected: boolean) => {
+  for (const client of room.clients.values()) {
+    sendControl(client, { type: "broker.relay-status", version: 2, relayId, connected })
   }
 }
-
-const broadcastSnapshot = (room: Room) => {
-  const snapshot = combinedSnapshot(room)
-  for (const client of room.clients) send(client, snapshot)
-}
-
-const connectionForSession = (room: Room, sessionId: string) =>
-  [...room.relays.values()].find((connection) =>
-    connection.snapshot?.sessions.some((session) => session.id === sessionId),
-  )
 
 const corsHeaders = {
   "access-control-allow-origin": "*",
@@ -58,91 +81,217 @@ const readJson = async (request: IncomingMessage) => {
   for await (const chunk of request) {
     const buffer = Buffer.from(chunk)
     size += buffer.byteLength
-    if (size > maxClientFrameBytes) throw new Error("Request body is too large")
+    if (size > maxClientFrameBytes) throw new Error("request_too_large")
     chunks.push(buffer)
   }
   return JSON.parse(Buffer.concat(chunks).toString()) as unknown
 }
 
-const sendPush = async (room: Room, payload: Record<string, unknown>) => {
-  await Promise.all(
-    [...room.pushSubscriptions.entries()].map(async ([endpoint, registration]) => {
-      if (payload.closeTag && !registration.closeNotifications) return
-      try {
-        await webpush.sendNotification(
-          registration.subscription,
-          JSON.stringify({
-            ...payload,
-            data: {
-              ...(payload.data as Record<string, unknown>),
-              brokerUrl: registration.brokerUrl,
-            },
-          }),
-        )
-      } catch (error) {
-        const statusCode = (error as { statusCode?: number }).statusCode
-        if (statusCode === 404 || statusCode === 410) room.pushSubscriptions.delete(endpoint)
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+const hasOnlyKeys = (value: Record<string, unknown>, keys: string[]) =>
+  Object.keys(value).every((key) => keys.includes(key))
+
+const isPushEndpoint = (value: unknown): value is string => {
+  if (typeof value !== "string" || value.length === 0 || value.length > 4096) return false
+  try {
+    const url = new URL(value)
+    const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "")
+    const privateHost = hostname === "localhost" || hostname.endsWith(".local") || hostname === "::1" ||
+      /^127\./.test(hostname) || /^10\./.test(hostname) || /^192\.168\./.test(hostname) ||
+      /^169\.254\./.test(hostname) || /^172\.(?:1[6-9]|2\d|3[01])\./.test(hostname) ||
+      /^f[cd][0-9a-f]{2}:/i.test(hostname) || /^fe[89ab][0-9a-f]:/i.test(hostname) ||
+      /^::ffff:(?:127\.|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.)/i.test(hostname)
+    return url.protocol === "https:" && (!url.port || url.port === "443") && !url.username && !url.password && !privateHost
+  } catch {
+    return false
+  }
+}
+
+const isPublicAddress = (address: string) => {
+  if (isIP(address) === 4) {
+    return !/^127\.|^10\.|^192\.168\.|^169\.254\.|^172\.(?:1[6-9]|2\d|3[01])\./.test(address) && address !== "0.0.0.0"
+  }
+  const normalized = address.toLowerCase()
+  return normalized !== "::" && normalized !== "::1" && !/^f[cd]/.test(normalized) && !/^fe[89ab]/.test(normalized) &&
+    !/^::ffff:(?:127\.|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.)/.test(normalized)
+}
+
+const isPublicPushEndpoint = async (endpoint: string) => {
+  if (!isPushEndpoint(endpoint)) return false
+  const addresses = await lookup(new URL(endpoint).hostname, { all: true }).catch(() => [])
+  return addresses.length > 0 && addresses.every(({ address }) => isPublicAddress(address))
+}
+
+const jsonValue = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue
+
+type PushAuthorization = {
+  roomToken: string
+  deviceId: string
+  signingPublicKey: EcPublicJwk
+  authorization: Record<string, JsonValue>
+}
+
+const verifyPushAuthorization = async (
+  value: unknown,
+  operation: "subscribe" | "unsubscribe",
+): Promise<PushAuthorization | undefined> => {
+  if (!isRecord(value)) return undefined
+  const detailKey = operation === "subscribe" ? "subscription" : "endpoint"
+  if (!hasOnlyKeys(value, ["operation", "roomToken", "deviceId", "issuedAt", "nonce", detailKey, "signingPublicKey", "relaySigningKey", "deviceCertificate", "signature"]) ||
+    value.operation !== operation || !isRoomToken(value.roomToken) || !isIdentity(value.deviceId) ||
+    typeof value.issuedAt !== "number" || Math.abs(Date.now() - value.issuedAt) > authorizationMaxAgeMs ||
+    typeof value.nonce !== "string" || !value.nonce || typeof value.signature !== "string" ||
+    typeof value.deviceCertificate !== "string") return undefined
+  const key = ecPublicJwkSchema.safeParse(value.signingPublicKey)
+  const relayKey = ecPublicJwkSchema.safeParse(value.relaySigningKey)
+  if (!key.success || !relayKey.success || await signingKeyFingerprint(key.data) !== value.deviceId ||
+    await signingKeyFingerprint(relayKey.data) !== value.roomToken ||
+    !await verifyCanonicalJson(
+      deviceCertificatePayload(value.deviceId, value.roomToken),
+      value.deviceCertificate,
+      relayKey.data,
+    ).catch(() => false)) return undefined
+  const authorization = jsonValue({
+    operation,
+    roomToken: value.roomToken,
+    deviceId: value.deviceId,
+    issuedAt: value.issuedAt,
+    nonce: value.nonce,
+    [detailKey]: value[detailKey],
+  }) as Record<string, JsonValue>
+  if (!await verifyCanonicalJson(authorization, value.signature, key.data).catch(() => false)) return undefined
+  return { roomToken: value.roomToken, deviceId: value.deviceId, signingPublicKey: key.data, authorization }
+}
+
+const parseSubscription = (value: unknown): PushSubscription | undefined => {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["endpoint", "expirationTime", "keys"])) return undefined
+  if (!isPushEndpoint(value.endpoint)) return undefined
+  if (value.expirationTime !== undefined && value.expirationTime !== null &&
+    (typeof value.expirationTime !== "number" || !Number.isFinite(value.expirationTime))) {
+    return undefined
+  }
+  if (!isRecord(value.keys) || !hasOnlyKeys(value.keys, ["auth", "p256dh"])) return undefined
+  if (typeof value.keys.auth !== "string" || value.keys.auth.length === 0 || value.keys.auth.length > 1024) return undefined
+  if (typeof value.keys.p256dh !== "string" || value.keys.p256dh.length === 0 || value.keys.p256dh.length > 1024) return undefined
+  return {
+    endpoint: value.endpoint,
+    expirationTime: value.expirationTime as number | null | undefined,
+    keys: { auth: value.keys.auth, p256dh: value.keys.p256dh },
+  }
+}
+
+const jsonResponse = (response: ServerResponse, status: number, body?: unknown) => {
+  const headers = body === undefined ? corsHeaders : { "content-type": "application/json", ...corsHeaders }
+  response.writeHead(status, headers)
+  response.end(body === undefined ? undefined : JSON.stringify(body))
+}
+
+const badRequest = (response: ServerResponse, code = "invalid_request") => jsonResponse(response, 400, { error: code })
+
+const sendPushFrame = async (room: Room, registrations: PushRegistration[], payload: string) => {
+  await Promise.all(registrations.map(async (registration) => {
+    try {
+      if (!await isPublicPushEndpoint(registration.subscription.endpoint)) throw new Error("push_endpoint_not_public")
+      await webpush.sendNotification(registration.subscription, payload)
+    } catch (error) {
+      const statusCode = (error as { statusCode?: number }).statusCode
+      const endpoint = registration.subscription.endpoint
+      if ((statusCode === 404 || statusCode === 410) && room.pushRegistrations.get(endpoint) === registration) {
+        room.pushRegistrations.delete(endpoint)
       }
-    }),
-  )
+    }
+  }))
+}
+
+const deliverRoute = (room: Room, route: RouteResult, payload: string) => {
+  if (!route.ok) return
+  if (route.kind === "push") {
+    void sendPushFrame(room, route.registrations, payload)
+    return
+  }
+  for (const target of route.sockets) target.send(payload)
 }
 
 const server = createServer(async (request, response) => {
   if (request.method === "OPTIONS") {
-    response.writeHead(204, corsHeaders)
-    response.end()
+    jsonResponse(response, 204)
     return
   }
   if (request.url === "/health") {
-    response.writeHead(200, { "content-type": "application/json", ...corsHeaders })
-    response.end(JSON.stringify({ healthy: true, push: true, rooms: rooms.size }))
+    jsonResponse(response, 200, { healthy: true, push: true, rooms: rooms.size })
     return
   }
   if (request.method === "GET" && request.url === "/push/public-key") {
-    response.writeHead(200, { "content-type": "application/json", ...corsHeaders })
-    response.end(JSON.stringify({ publicKey: vapidPublicKey }))
+    jsonResponse(response, 200, { publicKey: vapidPublicKey })
     return
   }
   if (request.method === "POST" && request.url === "/push/subscribe") {
     try {
-      const body = (await readJson(request)) as {
-        code?: string
-        brokerUrl?: string
-        closeNotifications?: boolean
-        subscription?: PushSubscription
+      const body = await readJson(request)
+      const authorization = await verifyPushAuthorization(body, "subscribe")
+      const subscription = parseSubscription(authorization?.authorization.subscription)
+      if (!authorization || !subscription || !await isPublicPushEndpoint(subscription.endpoint)) {
+        return badRequest(response, "invalid_authorization")
       }
-      const code = body.code
-      if (!code?.match(credentialPattern) || !body.subscription?.endpoint || !body.brokerUrl) {
-        throw new Error("Invalid Push subscription")
+      const room = rooms.get(authorization.roomToken)
+      const existing = room.pushRegistrations.get(subscription.endpoint)
+      const deviceRegistrations = [...room.pushRegistrations.values()].filter((item) => item.deviceId === authorization.deviceId)
+      if (!existing && (deviceRegistrations.length >= maxPushRegistrationsPerDevice || room.pushRegistrations.size >= maxPushRegistrationsPerRoom)) {
+        return badRequest(response, "registration_limit")
       }
-      rooms.get(code).pushSubscriptions.set(body.subscription.endpoint, {
-        subscription: body.subscription,
-        brokerUrl: body.brokerUrl,
-        closeNotifications: body.closeNotifications === true,
+      room.pushRegistrations.set(subscription.endpoint, {
+        deviceId: authorization.deviceId,
+        signingPublicKey: authorization.signingPublicKey,
+        subscription,
       })
-      response.writeHead(204, corsHeaders)
-      response.end()
+      jsonResponse(response, 204)
     } catch (error) {
-      response.writeHead(400, { "content-type": "application/json", ...corsHeaders })
-      response.end(JSON.stringify({ error: (error as Error).message }))
+      badRequest(response, (error as Error).message === "request_too_large" ? "request_too_large" : "invalid_request")
+    }
+    return
+  }
+  if (request.method === "POST" && request.url === "/push/unsubscribe") {
+    try {
+      const body = await readJson(request)
+      const authorization = await verifyPushAuthorization(body, "unsubscribe")
+      const endpoint = authorization?.authorization.endpoint
+      if (!authorization || !isPushEndpoint(endpoint)) return badRequest(response, "invalid_authorization")
+      const room = rooms.peek(authorization.roomToken)
+      const registration = room?.pushRegistrations.get(endpoint)
+      if (room && registration?.deviceId === authorization.deviceId) {
+        room.pushRegistrations.delete(endpoint)
+        rooms.removeIfEmpty(authorization.roomToken)
+      }
+      jsonResponse(response, 204)
+    } catch (error) {
+      badRequest(response, (error as Error).message === "request_too_large" ? "request_too_large" : "invalid_request")
     }
     return
   }
   if (request.method === "POST" && request.url === "/push/action") {
     try {
-      const body = (await readJson(request)) as { code?: string; command?: unknown }
-      const code = body.code
-      if (!code?.match(credentialPattern)) throw new Error("Invalid pairing credential")
-      const room = rooms.get(code)
-      const command = clientCommandSchema.parse(body.command)
-      const connection = "sessionId" in command ? connectionForSession(room, command.sessionId) : undefined
-      if (!connection || connection.socket.readyState !== WebSocket.OPEN) throw new Error("Session relay is offline")
-      connection.socket.send(JSON.stringify(command))
-      response.writeHead(202, corsHeaders)
-      response.end()
+      const body = await readJson(request)
+      if (!isRecord(body) || !hasOnlyKeys(body, ["roomToken", "frame"]) || !isRoomToken(body.roomToken)) {
+        return badRequest(response)
+      }
+      const parsed = e2eeFrameSchema.safeParse(body.frame)
+      if (!parsed.success || parsed.data.channel !== "data" || !isIdentity(parsed.data.sender) || !isIdentity(parsed.data.recipient)) {
+        return badRequest(response, "invalid_frame")
+      }
+      const room = rooms.peek(body.roomToken)
+      const registration = room && registrationsForDevice(room, parsed.data.sender)[0]
+      if (!registration || !(await verifyFrameSignature(parsed.data, registration.signingPublicKey).catch(() => false)) ||
+        Math.abs(Date.now() - parsed.data.issuedAt) > authorizationMaxAgeMs) {
+        return badRequest(response, "invalid_authorization")
+      }
+      const relay = room?.relays.get(parsed.data.recipient)
+      if (!relay || relay.readyState !== WebSocket.OPEN) return badRequest(response, "relay_offline")
+      relay.send(JSON.stringify(body.frame))
+      jsonResponse(response, 202)
     } catch (error) {
-      response.writeHead(400, { "content-type": "application/json", ...corsHeaders })
-      response.end(JSON.stringify({ error: (error as Error).message }))
+      badRequest(response, (error as Error).message === "request_too_large" ? "request_too_large" : "invalid_request")
     }
     return
   }
@@ -152,171 +301,205 @@ const server = createServer(async (request, response) => {
 
 const webSockets = new WebSocketServer({
   noServer: true,
+  maxPayload: maxRelayFrameBytes,
   handleProtocols: (protocols) => (protocols.has("remotty") ? "remotty" : false),
 })
 
 const credentialFrom = (request: IncomingMessage) => {
   const protocols = request.headers["sec-websocket-protocol"]?.split(",").map((protocol) => protocol.trim()) ?? []
-  return protocols[0] === "remotty" ? protocols[1] : undefined
+  return protocols.length === 2 && protocols[0] === "remotty" ? protocols[1] : undefined
 }
 
 server.on("upgrade", (request, socket, head) => {
-  const url = new URL(request.url ?? "/", `http://${request.headers.host}`)
+  let url: URL
+  try {
+    url = new URL(request.url ?? "/", "http://broker.invalid")
+  } catch {
+    socket.destroy()
+    return
+  }
   const role = url.searchParams.get("role")
-  const code = credentialFrom(request)
+  const roomToken = credentialFrom(request)
 
-  if (url.pathname !== "/ws" || !code?.match(credentialPattern) || !["relay", "client"].includes(role ?? "")) {
+  if (url.pathname !== "/ws" || !isRoomToken(roomToken) || (role !== "relay" && role !== "client")) {
     socket.write("HTTP/1.1 400 Bad Request\r\n\r\n")
     socket.destroy()
     return
   }
 
-  webSockets.handleUpgrade(request, socket, head, (webSocket) => {
-    webSockets.emit("connection", webSocket, request)
-  })
+  webSockets.handleUpgrade(request, socket, head, (webSocket) => webSockets.emit("connection", webSocket, request))
 })
 
-webSockets.on("connection", (socket: WebSocket, request: IncomingMessage) => {
-  const url = new URL(request.url ?? "/", `http://${request.headers.host}`)
-  const code = credentialFrom(request)!
-  const role = url.searchParams.get("role")!
-  const room = rooms.get(code)
-  let relayId: string | undefined
+const alive = new WeakMap<WebSocket, boolean>()
 
-  if (role === "client") {
-    room.clients.add(socket)
+webSockets.on("connection", (socket: WebSocket, request: IncomingMessage) => {
+  const url = new URL(request.url ?? "/", "http://broker.invalid")
+  const roomToken = credentialFrom(request)!
+  const role = url.searchParams.get("role") as "relay" | "client"
+  const room = rooms.get(roomToken)
+  const connectionCount = (roomConnectionCounts.get(roomToken) ?? 0) + 1
+  roomConnectionCounts.set(roomToken, connectionCount)
+  if (connectionCount > maxConnectionsPerRoom) {
+    roomConnectionCounts.set(roomToken, connectionCount - 1)
+    socket.close(1013, "room_connection_limit")
+    return
+  }
+  let identity: string | undefined
+  const challenge = randomBytes(32).toString("base64url")
+  sendControl(socket, { type: "broker.challenge", version: 2, nonce: challenge })
+  const helloTimeout = setTimeout(() => {
+    if (!identity) socket.close(1008, "hello_timeout")
+  }, 5_000)
+  let rateStartedAt = Date.now()
+  let messageCount = 0
+  alive.set(socket, true)
+  socket.on("pong", () => alive.set(socket, true))
+
+  const reject = (code: string, message: string, close = false) => {
+    sendError(socket, code, message)
+    if (close) socket.close(1008, code)
   }
 
-  send(socket, { type: "broker.ready", relayConnected: room.relays.size > 0 })
-  if (role === "client") send(socket, combinedSnapshot(room))
-
-  socket.on("message", (data: RawData, isBinary: boolean) => {
+  const handleMessage = async (data: RawData, isBinary: boolean) => {
+    if (Date.now() - rateStartedAt >= 60_000) {
+      rateStartedAt = Date.now()
+      messageCount = 0
+    }
+    messageCount += 1
+    if (messageCount > (role === "relay" ? 3_000 : 600)) {
+      socket.close(1008, "message_rate_limit")
+      return
+    }
     const payload = data.toString()
     const maxFrameBytes = role === "relay" ? maxRelayFrameBytes : maxClientFrameBytes
     if (isBinary || Buffer.byteLength(payload) > maxFrameBytes) {
-      socket.close(1009, "Unsupported message")
+      socket.close(1009, "unsupported_message")
       return
     }
 
-    if (role === "relay") {
-      let message
-      try {
-        message = relayMessageSchema.parse(JSON.parse(payload))
-      } catch {
-        send(socket, { type: "broker.error", message: "Relay sent invalid JSON" })
-        return
-      }
-      if (message.type === "relay.hello") {
-        relayId = message.relay.id
-        const existing = room.relays.get(relayId)
-        room.relays.set(relayId, { socket, relay: message.relay, snapshot: existing?.snapshot })
-        if (existing && existing.socket !== socket) existing.socket.close(4001, "Workspace relay replaced")
-        for (const client of room.clients) send(client, { type: "broker.relay-status", connected: true })
-        broadcastSnapshot(room)
-        return
-      }
-      if (message.type === "relay.snapshot") {
-        relayId = message.relay.id
-        const existing = room.relays.get(relayId)
-        if (existing && existing.socket !== socket) existing.socket.close(4001, "Workspace relay replaced")
-        room.relays.set(relayId, { socket, relay: message.relay, snapshot: message })
-        broadcastSnapshot(room)
-        return
-      }
-      if (message.type === "relay.event") {
-        const event = message.event as { type?: string; properties?: Record<string, unknown> }
-        if (event.type === "permission.asked" && event.properties) {
-          const patterns = Array.isArray(event.properties.patterns) ? event.properties.patterns.map(String) : []
-          void sendPush(room, {
-            title: "OpenCode needs permission",
-            body: `${String(event.properties.permission ?? "Action")}: ${patterns.join(", ")}`,
-            tag: `permission-${String(event.properties.id)}`,
-            requireInteraction: true,
-            actions: [
-              { action: "reject", title: "Reject" },
-              { action: "once", title: "Once" },
-              { action: "always", title: "Always" },
-            ],
-            data: {
-              code,
-              type: "permission",
-              permissionId: String(event.properties.id),
-              sessionId: String(event.properties.sessionID),
-            },
-          })
-        }
-        if (event.type === "permission.replied" && event.properties) {
-          const permissionId = String(event.properties.requestID ?? event.properties.permissionID ?? "")
-          if (permissionId) void sendPush(room, { closeTag: `permission-${permissionId}`, data: {} })
-        }
-        if (event.type === "question.asked" && event.properties) {
-          const questions = event.properties.questions as Array<{ question?: string }> | undefined
-          void sendPush(room, {
-            title: "OpenCode has a question",
-            body: questions?.[0]?.question ?? "Open the relay to answer.",
-            tag: `question-${String(event.properties.id)}`,
-            data: {
-              code,
-              type: "question",
-              sessionId: String(event.properties.sessionID),
-            },
-          })
-        }
-        if (["question.replied", "question.rejected"].includes(event.type ?? "") && event.properties) {
-          const questionId = String(event.properties.requestID ?? "")
-          if (questionId) void sendPush(room, { closeTag: `question-${questionId}`, data: {} })
-        }
-      }
-      for (const client of room.clients) {
-        client.send(payload)
-      }
-      return
-    }
-
-    let command: ClientCommand
+    let decoded: unknown
     try {
-      command = clientCommandSchema.parse(JSON.parse(payload))
+      decoded = JSON.parse(payload)
     } catch {
-      send(socket, { type: "broker.error", message: "Client sent an invalid command" })
+      reject("invalid_json", "Message must be valid JSON", identity === undefined)
       return
     }
-    if (command.type === "snapshot.request") {
-      if (room.relays.size === 0) {
-        send(socket, { type: "rpc.result", requestId: command.requestId, error: "Relay is offline" })
+
+    if (identity === undefined) {
+      const hello = brokerTransportHelloSchema.safeParse(decoded)
+      if (!hello.success) {
+        reject("hello_required", "The first message must be transport.hello v2", true)
         return
       }
-      for (const connection of room.relays.values()) connection.socket.send(payload)
+      if (hello.data.role !== role) {
+        reject("role_mismatch", "Transport role does not match authenticated socket role", true)
+        return
+      }
+      const nextIdentity = role === "relay" ? (hello.data as Extract<typeof hello.data, { role: "relay" }>).relayId
+        : (hello.data as Extract<typeof hello.data, { role: "client" }>).deviceId
+      if (!isIdentity(nextIdentity)) {
+        reject("identity_invalid", "Transport identity is invalid", true)
+        return
+      }
+      const fingerprint = await signingKeyFingerprint(hello.data.publicKey)
+      const expectedFingerprint = role === "relay" ? roomToken : nextIdentity
+      const proof = transportProofPayload(role, nextIdentity, roomToken, challenge)
+      if (fingerprint !== expectedFingerprint ||
+        !(await verifyCanonicalJson(proof, hello.data.signature, hello.data.publicKey).catch(() => false))) {
+        reject("identity_proof_invalid", "Transport identity proof is invalid", true)
+        return
+      }
+      identity = nextIdentity
+      clearTimeout(helloTimeout)
+      if (role === "relay") {
+        if (!registerRelay(room, identity, socket)) {
+          reject("identity_in_use", "Transport identity already has an active connection", true)
+          return
+        }
+        broadcastRelayStatus(room, identity, true)
+      } else {
+        if (!registerClient(room, identity, socket)) {
+          reject("identity_in_use", "Transport identity already has an active connection", true)
+          return
+        }
+        sendControl(socket, {
+          type: "broker.ready",
+          version: 2,
+          connectedRelayIds: [...room.relays.entries()]
+            .filter(([, relay]) => relay.readyState === WebSocket.OPEN)
+            .map(([relayId]) => relayId),
+        })
+      }
       return
     }
-    const connection = connectionForSession(room, command.sessionId)
-    if (!connection || connection.socket.readyState !== WebSocket.OPEN) {
-      send(socket, {
-        type: "rpc.result",
-        requestId: command.requestId,
-        error: "The OpenCode relay for this session is offline.",
-      })
+
+    if (brokerTransportHelloSchema.safeParse(decoded).success) {
+      reject("hello_duplicate", "Transport identity is already bound")
       return
     }
-    connection.socket.send(payload)
+    const isCurrentIdentity = role === "relay"
+      ? room.relays.get(identity) === socket
+      : room.clients.get(identity) === socket
+    if (!isCurrentIdentity) {
+      reject("identity_replaced", "Transport identity has been replaced", true)
+      return
+    }
+    const frame = e2eeFrameSchema.safeParse(decoded)
+    if (!frame.success) {
+      reject("invalid_frame", "Message must be an E2EE v2 frame")
+      return
+    }
+    if (role === "client" && frame.data.channel === "enroll") {
+      let rate = enrollmentRates.get(roomToken)
+      if (!rate || Date.now() - rate.startedAt >= 60_000) {
+        rate = { startedAt: Date.now(), count: 0 }
+        enrollmentRates.set(roomToken, rate)
+      }
+      rate.count += 1
+      if (rate.count > 20) {
+        reject("enrollment_rate_limit", "Too many enrollment attempts")
+        return
+      }
+    }
+
+    const route = role === "relay"
+      ? routeRelayFrame(room, identity, frame.data)
+      : routeClientFrame(room, identity, frame.data)
+    if (!route.ok) {
+      reject(route.code, route.message)
+      return
+    }
+    deliverRoute(room, route, payload)
+  }
+  let messageQueue = Promise.resolve()
+  socket.on("message", (data: RawData, isBinary: boolean) => {
+    messageQueue = messageQueue.then(() => handleMessage(data, isBinary)).catch(() => {
+      reject("message_processing_failed", "Broker could not process the message", true)
+    })
   })
 
   socket.on("close", () => {
-    if (role === "relay" && relayId && room.relays.get(relayId)?.socket === socket) {
-      room.relays.delete(relayId)
-      for (const client of room.clients) {
-        send(client, { type: "broker.relay-status", connected: room.relays.size > 0 })
-      }
-      broadcastSnapshot(room)
-    } else {
-      room.clients.delete(socket)
+    clearTimeout(helloTimeout)
+    if (identity && role === "relay" && removeRelay(room, identity, socket)) {
+      broadcastRelayStatus(room, identity, false)
+    } else if (identity && role === "client") {
+      removeClient(room, identity, socket)
     }
-    rooms.removeIfEmpty(code)
+    rooms.removeIfEmpty(roomToken)
+    const remaining = Math.max(0, (roomConnectionCounts.get(roomToken) ?? 1) - 1)
+    if (remaining) roomConnectionCounts.set(roomToken, remaining)
+    else roomConnectionCounts.delete(roomToken)
   })
 })
 
 const heartbeat = setInterval(() => {
   for (const socket of webSockets.clients) {
-    if (socket.readyState === WebSocket.OPEN) socket.ping()
+    if (alive.get(socket) === false) {
+      socket.terminate()
+      continue
+    }
+    alive.set(socket, false)
+    socket.ping()
   }
 }, 30_000)
 

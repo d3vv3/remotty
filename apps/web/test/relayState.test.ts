@@ -1,0 +1,49 @@
+import { describe, expect, it } from "vitest"
+import { acceptsRelayPosition, aggregateRelaySlices, commandRelayId, type RelaySlice } from "../src/relayState"
+
+const slice = (id: string, sessionId: string, updatedAt: number): RelaySlice => ({
+  relay: { id, name: id, hostname: "host", platform: "linux", arch: "x64", workspace: `/${id}` },
+  sessions: [{
+    id: sessionId,
+    title: sessionId,
+    directory: `/${id}`,
+    status: "idle",
+    updatedAt,
+    additions: 0,
+    deletions: 0,
+    files: 0,
+  }],
+  agents: [{ name: "build", mode: "primary" }],
+  permissions: [],
+  questions: [],
+})
+
+describe("relay snapshot aggregation and routing", () => {
+  it("aggregates snapshots and associates sessions with workspace relays", () => {
+    const state = aggregateRelaySlices(new Map([
+      ["relay-a", slice("relay-a", "session-a", 1)],
+      ["relay-b", slice("relay-b", "session-b", 2)],
+    ]))
+    expect(state.relays.map((relay) => relay.id)).toEqual(["relay-a", "relay-b"])
+    expect(state.sessions.map((session) => [session.id, session.workspaceRelayId])).toEqual([
+      ["session-b", "relay-b"],
+      ["session-a", "relay-a"],
+    ])
+    expect(state.agents.map((agent) => agent.workspaceRelayId)).toEqual(["relay-a", "relay-b"])
+    expect(commandRelayId({ type: "session.messages", sessionId: "session-a" }, state.relays.map((relay) => relay.id), state.sessionRelays)).toBe("relay-a")
+  })
+
+  it("does not guess a relay for an unknown session in a multi-relay room", () => {
+    expect(commandRelayId({ type: "session.messages", sessionId: "missing" }, ["relay-a", "relay-b"], new Map())).toBeUndefined()
+  })
+
+  it("rejects rollback within a relay stream and from an older relay instance", () => {
+    const current = slice("relay-a", "session-a", 1)
+    current.relay.instanceId = "instance-2"
+    current.relay.instanceStartedAt = 20
+    current.sequence = 10
+    expect(acceptsRelayPosition(current, current.relay, 9)).toBe(false)
+    expect(acceptsRelayPosition(current, { ...current.relay, instanceId: "instance-1", instanceStartedAt: 10 }, 100)).toBe(false)
+    expect(acceptsRelayPosition(current, { ...current.relay, instanceId: "instance-3", instanceStartedAt: 30 }, 0)).toBe(true)
+  })
+})

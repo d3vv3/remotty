@@ -41,9 +41,10 @@ import {
 import type { IScannerControls } from "@zxing/browser"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import type { AgentSummary, PermissionRequest, QuestionRequest, SessionSummary } from "@remotty/protocol"
+import type { AgentSummary, PairingBundle, PermissionRequest, QuestionRequest, SessionSummary } from "@remotty/protocol"
 import { useRelay } from "./useRelay"
-import { pairingCredentialFrom } from "./pairing"
+import { pairingBundleFrom } from "./pairing"
+import type { RoutedSession } from "./relayState"
 
 type MessagePart = {
   type: string
@@ -63,20 +64,31 @@ type SessionMessage = { info: { id: string; role: string; parentID?: string; tim
 type FileDiff = { file: string; additions: number; deletions: number }
 type SessionTodo = { id: string; content: string; status: string; priority: string }
 
+let routePairingBundle = location.pathname === "/pair" && location.hash
+  ? pairingBundleFrom(location.href)
+  : undefined
+if (routePairingBundle) history.replaceState({}, "", "/app")
+
 export function App() {
-  const hasPairingCode = new URLSearchParams(location.search).has("code")
-  if (location.pathname === "/" && !hasPairingCode) return <LandingPage />
-  return <RelayApp />
+  const [pairingBundle] = useState(routePairingBundle)
+  useEffect(() => {
+    routePairingBundle = undefined
+  }, [])
+  if (location.pathname === "/") return <LandingPage />
+  return <RelayApp initialBundle={pairingBundle} />
 }
 
-function RelayApp() {
-  const relayState = useRelay()
-  const [selectedId, setSelectedId] = useState<string | undefined>(
+function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
+  const relayState = useRelay(initialBundle)
+  const [selectedKey, setSelectedKey] = useState<string | undefined>(
     () => new URLSearchParams(location.search).get("session") ?? undefined,
   )
-  const selected = relayState.sessions.find((session) => session.id === selectedId)
+  const sessionKey = (session: SessionSummary & { workspaceRelayId?: string }) => `${session.workspaceRelayId ?? ""}:${session.id}`
+  const selected = relayState.sessions.find((session) =>
+    sessionKey(session) === selectedKey || (!selectedKey?.includes(":") && session.id === selectedKey),
+  )
   const sessionGroups = useMemo(() => {
-    const groups = new Map<string, SessionSummary[]>()
+    const groups = new Map<string, RoutedSession[]>()
     for (const session of relayState.sessions) {
       groups.set(session.directory, [...(groups.get(session.directory) ?? []), session])
     }
@@ -84,10 +96,6 @@ function RelayApp() {
       ([, left], [, right]) => Math.max(...right.map((session) => session.updatedAt)) - Math.max(...left.map((session) => session.updatedAt)),
     )
   }, [relayState.sessions])
-
-  useEffect(() => {
-    if (new URLSearchParams(location.search).has("code")) history.replaceState({}, "", "/app")
-  }, [])
 
   useEffect(() => {
     if (!relayState.error) return
@@ -98,9 +106,9 @@ function RelayApp() {
   if (relayState.connection === "disconnected" && !relayState.relay) {
     return (
       <PairingScreen
-        onConnect={(code) => {
+        onConnect={(bundle) => {
           history.replaceState({}, "", "/app")
-          relayState.connect(code)
+          void relayState.connect(bundle)
         }}
         error={relayState.error}
       />
@@ -160,11 +168,12 @@ function RelayApp() {
                 </div>
                 {sessions.map((session) => (
                   <SessionRow
-                    key={session.id}
+                    key={sessionKey(session)}
                     session={session}
-                    selected={session.id === selectedId}
-                    needsInput={relayState.permissions.some((item) => item.sessionID === session.id) || relayState.questions.some((item) => item.sessionID === session.id)}
-                    onSelect={() => { relayState.setError(undefined); setSelectedId(session.id) }}
+                    selected={sessionKey(session) === selectedKey}
+                    needsInput={relayState.permissions.some((item) => item.sessionID === session.id && item.workspaceRelayId === session.workspaceRelayId) || relayState.questions.some((item) => item.sessionID === session.id && item.workspaceRelayId === session.workspaceRelayId)}
+                    offline={!relayState.isRelayConnected(session.workspaceRelayId)}
+                    onSelect={() => { relayState.setError(undefined); setSelectedKey(sessionKey(session)) }}
                   />
                 ))}
               </section>
@@ -185,14 +194,14 @@ function RelayApp() {
         <section className={`detail-panel ${!selected ? "mobile-hidden" : ""}`}>
           {selected ? (
             <SessionDetail
-              key={selected.id}
+              key={sessionKey(selected)}
               session={selected}
-              agents={relayState.agents}
-              revision={relayState.sessionRevisions[selected.id] ?? 0}
-              permission={relayState.permissions.find((permission) => permission.sessionID === selected.id)}
-              question={relayState.questions.find((question) => question.sessionID === selected.id)}
-              request={relayState.request}
-              onBack={() => setSelectedId(undefined)}
+              agents={relayState.agents.filter((agent) => agent.workspaceRelayId === selected.workspaceRelayId)}
+              revision={relayState.sessionRevisions[sessionKey(selected)] ?? 0}
+              permission={relayState.permissions.find((permission) => permission.sessionID === selected.id && permission.workspaceRelayId === selected.workspaceRelayId)}
+              question={relayState.questions.find((question) => question.sessionID === selected.id && question.workspaceRelayId === selected.workspaceRelayId)}
+              request={(command) => relayState.request(command, selected.workspaceRelayId)}
+              onBack={() => setSelectedKey(undefined)}
               onError={relayState.setError}
             />
           ) : (
@@ -223,7 +232,7 @@ const publicFeatures = [
   { icon: Folder, title: "Multi-workspace", copy: "Run one relay in each OpenCode process and group all open sessions by folder." },
   { icon: Smartphone, title: "Installable PWA", copy: "Use the full mobile interface from your home screen without an app-store install." },
   { icon: Unplug, title: "No inbound port", copy: "The local plugin opens an outbound WSS connection. You do not expose the OpenCode web server or change firewall rules." },
-  { icon: KeyRound, title: "No account", copy: "Generate a pairing key locally and connect directly. No hosted account or sign-in is required." },
+  { icon: KeyRound, title: "No account", copy: "Create a one-time encrypted invite locally. No hosted account or sign-in is required." },
   { icon: Database, title: "No chat storage", copy: "The broker keeps routing state in memory and does not persist your session messages." },
   { icon: Server, title: "Self-hostable", copy: "Run the broker and web application on infrastructure inside your own trust boundary." },
 ]
@@ -263,8 +272,14 @@ function PhonePreview() {
 
 function LandingPage() {
   useEffect(() => {
-    if (!location.hash) return
-    requestAnimationFrame(() => document.querySelector(location.hash)?.scrollIntoView())
+    let anchor = ""
+    try {
+      anchor = decodeURIComponent(location.hash.slice(1))
+    } catch {
+      return
+    }
+    if (!["features", "security"].includes(anchor)) return
+    requestAnimationFrame(() => document.getElementById(anchor)?.scrollIntoView())
   }, [])
 
   return (
@@ -316,28 +331,28 @@ function LandingPage() {
           <p className="font-mono text-[10px] font-bold uppercase text-[#42e8d4]">Three local steps</p>
           <h2 className="mt-3 font-mono text-3xl font-bold sm:text-5xl">Pair without an account.</h2>
           <div className="mt-10 grid border-y border-[#3a4140] md:grid-cols-3">
-            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:pr-8"><b className="font-mono text-xs text-[#ff635d]">01</b><h3 className="mt-4 font-mono text-sm font-bold">Install the plugin</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">"opencode-remotty@0.1.4"</code></div>
-            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:px-8"><b className="font-mono text-xs text-[#ff635d]">02</b><h3 className="mt-4 font-mono text-sm font-bold">Generate a local key</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">npx opencode-remotty pair</code></div>
-            <div className="py-7 md:pl-8"><b className="font-mono text-xs text-[#ff635d]">03</b><h3 className="mt-4 font-mono text-sm font-bold">Scan and continue</h3><p className="mt-4 text-xs leading-6 text-[#8d9692]">Restart OpenCode. Scan the QR code or paste the key into the pairing page.</p></div>
+            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:pr-8"><b className="font-mono text-xs text-[#ff635d]">01</b><h3 className="mt-4 font-mono text-sm font-bold">Install the plugin</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">"opencode-remotty@0.2.0"</code></div>
+            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:px-8"><b className="font-mono text-xs text-[#ff635d]">02</b><h3 className="mt-4 font-mono text-sm font-bold">Create an invite</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">npx opencode-remotty pair</code></div>
+            <div className="py-7 md:pl-8"><b className="font-mono text-xs text-[#ff635d]">03</b><h3 className="mt-4 font-mono text-sm font-bold">Scan and continue</h3><p className="mt-4 text-xs leading-6 text-[#8d9692]">Restart OpenCode. Scan the QR code or paste the encrypted invite into the pairing page.</p></div>
           </div>
         </div>
       </section>
 
-      <section className="border-b border-[#ffbd4a55] bg-[#151108] py-20" id="security">
+      <section className="border-b border-[#2b5551] bg-[#0b1514] py-20" id="security">
         <div className="mx-auto grid w-full max-w-7xl gap-12 px-5 sm:px-8 lg:grid-cols-[.75fr_1.25fr]">
-          <div><span className="inline-flex items-center gap-2 rounded-sm border border-[#ffbd4a66] bg-[#291c08] px-3 py-2 font-mono text-[9px] font-bold uppercase text-[#ffbd4a]"><ShieldAlert size={14} /> Security today</span><h2 className="mt-5 font-mono text-3xl font-bold sm:text-5xl">Know what the broker can see.</h2></div>
-          <div className="space-y-5 text-sm leading-7 text-[#d3c7ad]">
-            <p>The CLI generates a random 256-bit pairing key on your machine. Today, that key is a bearer credential. OpenCode and each browser send it to the broker over WSS to join the same relay room.</p>
-            <p>TLS protects traffic in transit. The broker forwards messages in memory and does not persist chat data. However, the broker can read relayed content and can send commands to connected OpenCode processes. Treat the hosted broker as a trusted operator.</p>
-            <p>Self-host the broker when this trust boundary is not acceptable. The pairing key grants control and must be protected like an API token.</p>
+          <div><span className="inline-flex items-center gap-2 rounded-sm border border-[#42e8d466] bg-[#071817] px-3 py-2 font-mono text-[9px] font-bold uppercase text-[#42e8d4]"><ShieldCheck size={14} /> End-to-end encrypted</span><h2 className="mt-5 font-mono text-3xl font-bold sm:text-5xl">The broker routes ciphertext.</h2></div>
+          <div className="space-y-5 text-sm leading-7 text-[#9eb8b4]">
+            <p>The relay and each browser use separate P-256 encryption and signing keys. AES-GCM protects session data, tool output, commands, and notification content before it leaves either endpoint.</p>
+            <p>Every command is signed by one enrolled device. The relay rejects stale messages, replays, changed ciphertext, unknown devices, and revoked devices before it calls OpenCode.</p>
+            <p>The broker sees opaque room and device identifiers, Push endpoints, message sizes, and delivery timing. It can delay or drop traffic, but it cannot read content or forge an approval.</p>
           </div>
         </div>
       </section>
 
       <section className="border-b border-[#292d2d] bg-[#0b1514] py-20">
         <div className="mx-auto grid w-full max-w-7xl gap-12 px-5 sm:px-8 lg:grid-cols-2">
-          <div><span className="inline-flex items-center gap-2 font-mono text-[10px] font-bold uppercase text-[#42e8d4]"><LockKeyhole size={15} /> Planned E2EE</span><h2 className="mt-4 font-mono text-3xl font-bold sm:text-5xl">Device keys, signed commands, opaque relay.</h2><p className="mt-5 max-w-xl text-sm leading-7 text-[#9eb8b4]">The next security model gives OpenCode and each client their own key pair. It enables encrypted payloads, command authentication, and individual device revocation.</p></div>
-          <div className="border-y border-[#2b5551] py-7"><h3 className="flex items-center gap-3 font-mono text-sm font-bold text-[#d8ff3e]"><Bell size={18} /> Private notification content</h3><p className="mt-4 text-sm leading-7 text-[#9eb8b4]">OpenCode can encrypt a notification envelope for each device. The broker forwards only ciphertext through Web Push. The service worker decrypts the title and body locally before it calls <code className="text-[#42e8d4]">showNotification</code>.</p><p className="mt-4 text-sm leading-7 text-[#9eb8b4]">Action responses can be signed and encrypted in the same way. The broker still sees delivery timing and device endpoints, but it cannot read notification text or forge approval commands.</p></div>
+          <div><span className="inline-flex items-center gap-2 font-mono text-[10px] font-bold uppercase text-[#42e8d4]"><LockKeyhole size={15} /> Per-device trust</span><h2 className="mt-4 font-mono text-3xl font-bold sm:text-5xl">One-time invites. Individual revocation.</h2><p className="mt-5 max-w-xl text-sm leading-7 text-[#9eb8b4]">A ten-minute invite enrolls keys generated inside the browser. The invite secret disappears after use. Revoke one device without rotating keys for every other device.</p></div>
+          <div className="border-y border-[#2b5551] py-7"><h3 className="flex items-center gap-3 font-mono text-sm font-bold text-[#d8ff3e]"><Bell size={18} /> Private notification content</h3><p className="mt-4 text-sm leading-7 text-[#9eb8b4]">OpenCode encrypts a notification envelope for each device. The broker forwards only ciphertext through Web Push. The service worker verifies and decrypts it before calling <code className="text-[#42e8d4]">showNotification</code>.</p><p className="mt-4 text-sm leading-7 text-[#9eb8b4]">Notification actions are signed and encrypted in the service worker. The broker cannot read the command or change its response.</p></div>
         </div>
       </section>
 
@@ -348,12 +363,18 @@ function LandingPage() {
   )
 }
 
-function PairingScreen({ onConnect, error }: { onConnect: (code: string) => void; error?: string }) {
+function PairingScreen({ onConnect, error }: { onConnect: (bundle: PairingBundle) => void; error?: string }) {
   const [code, setCode] = useState("")
   const [scannerOpen, setScannerOpen] = useState(false)
+  const [pairingError, setPairingError] = useState<string>()
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    onConnect(code)
+    const bundle = pairingBundleFrom(code)
+    if (!bundle) {
+      setPairingError("Enter a valid remotty v2 encrypted invite.")
+      return
+    }
+    onConnect(bundle)
   }
   return (
     <main className="h-dvh overflow-y-auto bg-[#090a0b] text-[#f4f2eb]">
@@ -364,31 +385,31 @@ function PairingScreen({ onConnect, error }: { onConnect: (code: string) => void
         <div>
           <p className="font-mono text-[10px] font-bold uppercase text-[#42e8d4]">Connect this browser</p>
           <h1 className="mt-4 font-mono text-4xl font-bold sm:text-6xl">Pair your device.</h1>
-          <p className="mt-5 max-w-xl text-sm leading-7 text-[#b5bdb9]">Paste the pairing key printed by the local CLI, or scan its QR code. The browser stores the key on this device.</p>
+          <p className="mt-5 max-w-xl text-sm leading-7 text-[#b5bdb9]">Paste the encrypted invite printed by the local CLI, or scan its QR code. The invite enrolls a device identity generated by this browser.</p>
           <form onSubmit={submit} className="mt-8 max-w-xl">
-            <label className="mb-2 flex items-center gap-2 font-mono text-[9px] font-bold uppercase text-[#d8ff3e]" htmlFor="pairing-code"><KeyRound size={14} /> Pairing key</label>
+            <label className="mb-2 flex items-center gap-2 font-mono text-[9px] font-bold uppercase text-[#d8ff3e]" htmlFor="pairing-code"><KeyRound size={14} /> Encrypted invite</label>
             <div className="grid grid-cols-[minmax(0,1fr)_48px_48px] gap-2">
-              <input className="h-12 min-w-0 rounded-sm border border-[#3a4140] bg-[#151819] px-4 font-mono text-xs text-[#f4f2eb] outline-none focus:border-[#d8ff3e] focus:ring-2 focus:ring-[#d8ff3e26]" id="pairing-code" value={code} onChange={(event) => setCode(event.target.value)} placeholder="Paste pairing key" autoCapitalize="none" autoComplete="one-time-code" maxLength={128} autoFocus />
+              <input className="h-12 min-w-0 rounded-sm border border-[#3a4140] bg-[#151819] px-4 font-mono text-xs text-[#f4f2eb] outline-none focus:border-[#d8ff3e] focus:ring-2 focus:ring-[#d8ff3e26]" id="pairing-code" value={code} onChange={(event) => { setCode(event.target.value); setPairingError(undefined) }} placeholder="Paste v2 encrypted invite" autoCapitalize="none" autoComplete="one-time-code" maxLength={4096} autoFocus />
               <button type="button" className="grid size-12 place-items-center rounded-sm border border-[#42e8d4] bg-[#071817] text-[#42e8d4] hover:bg-[#42e8d4] hover:text-[#071817]" title="Scan pairing QR code" aria-label="Scan pairing QR code" onClick={() => setScannerOpen(true)}><ScanLine size={20} /></button>
               <button type="submit" className="grid size-12 place-items-center rounded-sm border border-[#efff91] bg-[#d8ff3e] text-[#080909] shadow-[3px_3px_0_#42e8d4]" aria-label="Connect remotty"><ChevronRight size={20} /></button>
             </div>
-            {error && <p className="mt-3 font-mono text-[10px] text-[#ff635d]">{error}</p>}
+            {(pairingError ?? error) && <p className="mt-3 font-mono text-[10px] text-[#ff635d]">{pairingError ?? error}</p>}
           </form>
-          <div className="mt-8 flex gap-3 border-l-2 border-[#ffbd4a] bg-[#151108] p-4 text-xs leading-6 text-[#c9b98f]"><ShieldAlert className="mt-1 shrink-0 text-[#ffbd4a]" size={17} /><p>The current key is a bearer credential sent to the broker over WSS. Protect it like an API token. <a className="text-[#d8ff3e] underline underline-offset-4" href="/#security">Read the security model.</a></p></div>
+          <div className="mt-8 flex gap-3 border-l-2 border-[#ffbd4a] bg-[#151108] p-4 text-xs leading-6 text-[#c9b98f]"><ShieldAlert className="mt-1 shrink-0 text-[#ffbd4a]" size={17} /><p>The invite secret is removed after enrollment. Device private keys and relay trust material stay in this browser's IndexedDB.</p></div>
         </div>
         <div className="border-y border-[#3a4140] bg-[#0c0f10]">
           <div className="flex h-12 items-center gap-2 border-b border-[#292d2d] px-4 font-mono text-[10px] font-bold uppercase text-[#d8ff3e]"><Terminal size={18} /> Install and pair</div>
-          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">01</b><div><strong className="text-xs">Add the OpenCode plugin</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">{`"plugin": ["opencode-remotty@0.1.4"]`}</code></div></div>
-          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">02</b><div><strong className="text-xs">Create a 256-bit pairing key</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">npx opencode-remotty pair</code></div></div>
+          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">01</b><div><strong className="text-xs">Add the OpenCode plugin</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">{`"plugin": ["opencode-remotty@0.2.0"]`}</code></div></div>
+          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">02</b><div><strong className="text-xs">Create an encrypted device invite</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">npx opencode-remotty pair</code></div></div>
           <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 p-4"><b className="font-mono text-[10px] text-[#ff635d]">03</b><div><strong className="text-xs">Restart OpenCode</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">opencode --continue</code></div></div>
         </div>
       </section>
-      {scannerOpen && <PairingScanner onClose={() => setScannerOpen(false)} onScan={(credential) => { setCode(credential); setScannerOpen(false); onConnect(credential) }} />}
+      {scannerOpen && <PairingScanner onClose={() => setScannerOpen(false)} onScan={(bundle) => { setScannerOpen(false); onConnect(bundle) }} />}
     </main>
   )
 }
 
-function PairingScanner({ onScan, onClose }: { onScan: (credential: string) => void; onClose: () => void }) {
+function PairingScanner({ onScan, onClose }: { onScan: (bundle: PairingBundle) => void; onClose: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [error, setError] = useState<string>()
 
@@ -401,13 +422,13 @@ function PairingScanner({ onScan, onClose }: { onScan: (credential: string) => v
       return reader.decodeFromVideoDevice(undefined, videoRef.current ?? undefined, (result, _error, scannerControls) => {
         controls = scannerControls
         if (!result || cancelled) return
-        const credential = pairingCredentialFrom(result.getText())
-        if (!credential) {
-          setError("This QR code does not contain a remotty pairing key.")
+        const bundle = pairingBundleFrom(result.getText())
+        if (!bundle) {
+          setError("This QR code does not contain a remotty v2 encrypted invite.")
           return
         }
         scannerControls.stop()
-        onScan(credential)
+        onScan(bundle)
       })
     }).then((scannerControls) => {
       if (!scannerControls) return
@@ -432,10 +453,10 @@ function PairingScanner({ onScan, onClose }: { onScan: (credential: string) => v
   )
 }
 
-function SessionRow({ session, needsInput, selected, onSelect }: { session: SessionSummary; needsInput: boolean; selected: boolean; onSelect: () => void }) {
+function SessionRow({ session, needsInput, offline, selected, onSelect }: { session: SessionSummary; needsInput: boolean; offline: boolean; selected: boolean; onSelect: () => void }) {
   return (
     <button className={`session-row ${selected ? "selected" : ""}`} onClick={onSelect}>
-      <span className={`status-dot ${needsInput ? "needs-input" : session.status}`} />
+      <span className={`status-dot ${offline ? "error" : needsInput ? "needs-input" : session.status}`} title={offline ? "Workspace relay offline" : undefined} />
       <span className="session-copy">
         <strong>{session.title}</strong>
         <span><GitBranch size={13} /><i>{session.branch ?? "no branch"}</i></span>
@@ -514,8 +535,11 @@ function SessionDetail({
     setLoading(false)
   }
 
-  useEffect(() => () => {
-    mountedRef.current = false
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
   }, [])
 
   useEffect(() => {

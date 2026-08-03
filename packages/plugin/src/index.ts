@@ -1,17 +1,34 @@
-import { createHash } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import { arch, hostname, platform } from "node:os"
 import type { Plugin } from "@opencode-ai/plugin"
 import {
-  clientCommandSchema,
+  brokerTransportControlSchema,
+  deviceCertificatePayload,
+  e2eeFrameSchema,
+  sealJsonPayload,
+  signCanonicalJson,
+  transportProofPayload,
   type AgentSummary,
   type ClientCommand,
+  type E2eeChannel,
+  type JsonValue,
   type PermissionRequest,
   type QuestionRequest,
   type RelayInfo,
   type RelayMessage,
   type SessionSummary,
+  isSecureBrokerUrl,
 } from "@remotty/protocol"
-import { readConfig, type RelayConfig } from "./config.js"
+import { readConfig, type DeviceRecord, type RelayConfig } from "./config.js"
+import {
+  consumeEnrollment,
+  commandChangesState,
+  openCommandFrame,
+  recordMessageId,
+  updateV2ConfigLocked,
+  validateEnrollmentFrame,
+  workspaceRelayId,
+} from "./security.js"
 import { selectOpenSessions } from "./sessions.js"
 
 type JsonObject = Record<string, unknown>
@@ -39,26 +56,45 @@ const toWebSocketUrl = (brokerUrl: string) => {
   return url
 }
 
+const jsonValue = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue
+
 export const remottyPlugin: Plugin = async ({ client, directory }) => {
-  const config = await resolveConfig()
-  if (!config) {
+  const state = await readConfig()
+  if (!state || state.version === "legacy") {
     await client.app.log({
       body: {
         service: "remotty",
         level: "warn",
-        message: "remotty is not paired. Run remotty pair.",
+        message: state?.version === "legacy"
+          ? `Legacy remotty config found at ${state.path}. Strict E2EE v2 requires a new pairing; run 'remotty pair'.`
+          : "remotty is not paired. Run 'remotty pair'.",
       },
     })
     return {}
   }
 
+  const brokerUrl = process.env.REMOTTY_URL ?? state.brokerUrl
+  if (!isSecureBrokerUrl(brokerUrl)) {
+    await client.app.log({ body: { service: "remotty", level: "error", message: "REMOTTY_URL must use WSS outside loopback." } })
+    return {}
+  }
+  const config: RelayConfig = {
+    ...state,
+    brokerUrl,
+    name: process.env.REMOTTY_NAME ?? state.name,
+  }
+  const relayId = workspaceRelayId(config.authorityId, hostname(), directory)
+  const instanceId = randomUUID()
+  const instanceStartedAt = Date.now()
   const relay: RelayInfo = {
-    id: createHash("sha256").update(`${hostname()}:${directory}`).digest("hex").slice(0, 16),
+    id: relayId,
     name: config.name,
     hostname: hostname(),
     platform: platform(),
     arch: arch(),
     workspace: directory,
+    instanceId,
+    instanceStartedAt,
   }
 
   let socket: WebSocket | undefined
@@ -66,9 +102,66 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
   let sequence = 0
   let reconnectDelay = 1_000
   let activeSessionId: string | undefined
+  let transportReady = false
+  const recentReadFrames = new Set<string>()
+  const recentReadFrameQueue: string[] = []
 
-  const send = (message: RelayMessage) => {
-    if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message))
+  const log = (level: "warn" | "error", message: string, error?: unknown) => client.app.log({
+    body: {
+      service: "remotty",
+      level,
+      message,
+      ...(error === undefined ? {} : { extra: { error: String(error) } }),
+    },
+  })
+
+  const sendEncrypted = async (
+    payload: unknown,
+    recipient: Pick<DeviceRecord, "id" | "encryptionPublicKey">,
+    channel: E2eeChannel = "data",
+  ) => {
+    const target = socket
+    if (target?.readyState !== WebSocket.OPEN || !transportReady || channel === "enroll") return
+    const frame = await sealJsonPayload(jsonValue(payload), {
+      channel,
+      sender: relayId,
+      recipient: recipient.id,
+      messageId: randomUUID(),
+      issuedAt: Date.now(),
+      senderSigningPrivateKey: config.relaySigningPrivateKey,
+      senderEncryptionPrivateKey: config.relayEncryptionPrivateKey,
+      recipientEncryptionPublicKey: recipient.encryptionPublicKey,
+    })
+    if (socket === target && target.readyState === WebSocket.OPEN) target.send(JSON.stringify(frame))
+  }
+
+  const sendPayload = async (payload: unknown, device: DeviceRecord, channel: E2eeChannel = "data") => {
+    if (device.revokedAt) return
+    const latest = await readConfig()
+    const recipient = latest?.version === 2
+      ? latest.devices.find((candidate) => candidate.id === device.id && !candidate.revokedAt)
+      : undefined
+    if (recipient) await sendEncrypted(payload, recipient, channel)
+  }
+
+  const activeDevices = async () => {
+    const current = await readConfig()
+    if (current?.version !== 2) throw new Error("Relay v2 configuration is unavailable")
+    return current.devices.filter((device) => !device.revokedAt)
+  }
+
+  const broadcast = async (payload: unknown, channel: E2eeChannel = "data") => {
+    await Promise.all((await activeDevices()).map((device) => sendEncrypted(payload, device, channel)))
+  }
+  let stateSendQueue = Promise.resolve()
+  const sendOrderedState = (create: () => RelayMessage, target?: DeviceRecord) => {
+    const operation = stateSendQueue.then(async () => {
+      const message = create()
+      if (target) await sendPayload(message, target)
+      else await broadcast(message)
+    })
+    stateSendQueue = operation.catch(() => undefined)
+    return operation
   }
 
   const sdkData = async <T>(request: Promise<SdkResult<T>>): Promise<T> => {
@@ -86,7 +179,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
 
   const rawClient = (client as unknown as { _client: RawSdkClient })._client
 
-  const snapshot = async () => {
+  const snapshot = async (target?: DeviceRecord) => {
     const [sessions, statuses, vcs, agents, permissions, questions] = await Promise.all([
       sdkData(client.session.list()) as Promise<Array<JsonObject>>,
       sdkData(client.session.status()) as Promise<Record<string, { type: "idle" | "busy" | "retry" }>>,
@@ -97,8 +190,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
     ])
     const selected = selectOpenSessions(sessions, statuses, activeSessionId)
     activeSessionId = selected.activeSessionId
-    const openSessions = selected.sessions
-    const summaries: SessionSummary[] = openSessions.map((session) => {
+    const summaries: SessionSummary[] = selected.sessions.map((session) => {
       const summary = session.summary as JsonObject | undefined
       const time = session.time as JsonObject | undefined
       return {
@@ -114,7 +206,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
         files: Number(summary?.files ?? 0),
       }
     })
-    send({
+    const message: RelayMessage = {
       type: "relay.snapshot",
       relay,
       sessions: summaries,
@@ -130,52 +222,45 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
         ),
       permissions,
       questions,
-    })
+    }
+    await sendOrderedState(() => ({ ...message, sequence: sequence++ }), target)
   }
 
-  const reply = (requestId: string, result?: unknown, error?: unknown) => {
-    send({
+  const reply = async (device: DeviceRecord, requestId: string, result?: unknown, error?: unknown) => {
+    await sendPayload({
       type: "rpc.result",
       requestId,
-      result,
-      error: error instanceof Error ? error.message : error ? String(error) : undefined,
-    })
+      ...(error ? { error: error instanceof Error ? error.message : String(error) } : { result }),
+    }, device)
   }
 
-  const handleCommand = async (command: ClientCommand) => {
+  const handleCommand = async (command: ClientCommand, device: DeviceRecord) => {
     try {
       switch (command.type) {
         case "snapshot.request":
-          await snapshot()
-          reply(command.requestId, true)
+          await snapshot(device)
+          await reply(device, command.requestId, true)
           break
         case "session.messages":
-          reply(
-            command.requestId,
-            await sdkData(client.session.messages({ path: { id: command.sessionId }, query: { limit: 80 } })),
-          )
+          await reply(device, command.requestId, await sdkData(client.session.messages({ path: { id: command.sessionId }, query: { limit: 80 } })))
           break
         case "session.diff":
-          reply(command.requestId, await sdkData(client.session.diff({ path: { id: command.sessionId } })))
+          await reply(device, command.requestId, await sdkData(client.session.diff({ path: { id: command.sessionId } })))
           break
         case "session.todos":
-          reply(command.requestId, await sdkData(client.session.todo({ path: { id: command.sessionId } })))
+          await reply(device, command.requestId, await sdkData(client.session.todo({ path: { id: command.sessionId } })))
           break
-        case "session.prompt":
-          const session = (await sdkData(
-            client.session.get({ path: { id: command.sessionId } }),
-          )) as unknown as JsonObject
-          const promptRequest = sdkCall(
-            client.session.promptAsync({
-              path: { id: command.sessionId },
-              body: {
-                ...promptContext(session),
-                ...(command.agent ? { agent: command.agent } : {}),
-                parts: [{ type: "text", text: command.text }],
-              },
-            }),
-          )
-          reply(command.requestId, true)
+        case "session.prompt": {
+          const session = (await sdkData(client.session.get({ path: { id: command.sessionId } }))) as unknown as JsonObject
+          const promptRequest = sdkCall(client.session.promptAsync({
+            path: { id: command.sessionId },
+            body: {
+              ...promptContext(session),
+              ...(command.agent ? { agent: command.agent } : {}),
+              parts: [{ type: "text", text: command.text }],
+            },
+          }))
+          await reply(device, command.requestId, true)
           void promptRequest.catch((error) => client.app.log({
             body: {
               service: "remotty",
@@ -185,71 +270,159 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
             },
           }))
           break
+        }
         case "session.abort":
-          reply(
-            command.requestId,
-            await sdkData(client.session.abort({ path: { id: command.sessionId } })),
-          )
+          await reply(device, command.requestId, await sdkData(client.session.abort({ path: { id: command.sessionId } })))
           break
         case "permission.reply":
-          reply(
-            command.requestId,
-            await sdkData(
-              client.postSessionIdPermissionsPermissionId({
-                path: { id: command.sessionId, permissionID: command.permissionId },
-                body: { response: command.response },
-              }),
-            ),
-          )
+          await reply(device, command.requestId, await sdkData(client.postSessionIdPermissionsPermissionId({
+            path: { id: command.sessionId, permissionID: command.permissionId },
+            body: { response: command.response },
+          })))
           break
         case "question.reply":
-          reply(
-            command.requestId,
-            await sdkData(
-              rawClient.post({
-                url: `/question/${encodeURIComponent(command.questionId)}/reply`,
-                body: { answers: command.answers },
-              }),
-            ),
-          )
+          await reply(device, command.requestId, await sdkData(rawClient.post({
+            url: `/question/${encodeURIComponent(command.questionId)}/reply`,
+            body: { answers: command.answers },
+          })))
           break
         case "question.reject":
-          reply(
-            command.requestId,
-            await sdkData(rawClient.post({ url: `/question/${encodeURIComponent(command.questionId)}/reject` })),
-          )
+          await reply(device, command.requestId, await sdkData(rawClient.post({ url: `/question/${encodeURIComponent(command.questionId)}/reject` })))
           break
       }
     } catch (error) {
-      reply(command.requestId, undefined, error)
+      await reply(device, command.requestId, undefined, error).catch((replyError) => log("error", "Failed to send encrypted command error", replyError))
     }
+  }
+
+  const rememberReadFrame = (messageId: string) => {
+    if (recentReadFrames.has(messageId)) throw new Error("Duplicate message id")
+    recentReadFrames.add(messageId)
+    recentReadFrameQueue.push(messageId)
+    if (recentReadFrameQueue.length > 1_024) recentReadFrames.delete(recentReadFrameQueue.shift()!)
+  }
+
+  const handleEnrollment = async (frame: ReturnType<typeof e2eeFrameSchema.parse>) => {
+    const enrollmentConfig = await readConfig()
+    if (enrollmentConfig?.version !== 2) throw new Error("Relay v2 configuration is unavailable")
+    const enrollment = await validateEnrollmentFrame(frame, enrollmentConfig)
+    let accepted: ReturnType<typeof consumeEnrollment> | undefined
+    let current: RelayConfig
+    try {
+      current = await updateV2ConfigLocked((latest) => {
+        accepted = consumeEnrollment(latest, enrollment)
+        return accepted.config
+      })
+    } catch (error) {
+      await sendEncrypted({
+        type: "enrollment.rejected",
+        deviceId: enrollment.device.id,
+        message: error instanceof Error ? error.message : "Enrollment failed",
+      }, enrollment.device)
+      throw error
+    }
+    const device = current.devices.find((candidate) => candidate.id === enrollment.device.id)
+    if (!accepted || !device || device.revokedAt) throw new Error("Enrolled device is unavailable")
+    await sendPayload({
+      type: "enrollment.accepted",
+      deviceId: device.id,
+      relayId,
+      deviceCertificate: await signCanonicalJson(
+        deviceCertificatePayload(device.id, config.roomToken),
+        config.relaySigningPrivateKey,
+      ),
+    }, device)
+    await snapshot(device)
+  }
+
+  const handleFrame = async (frame: ReturnType<typeof e2eeFrameSchema.parse>) => {
+    if (frame.channel === "enroll") {
+      await handleEnrollment(frame)
+      return
+    }
+    if (frame.channel !== "data" || frame.recipient !== relayId) throw new Error("Rejected non-command relay frame")
+    const latest = await readConfig()
+    if (latest?.version !== 2) throw new Error("Relay v2 configuration is unavailable")
+    const opened = await openCommandFrame(frame, latest, relayId)
+    let device: DeviceRecord | undefined
+    try {
+      if (commandChangesState(opened.command)) {
+        const persisted = await updateV2ConfigLocked((current) =>
+          recordMessageId(current, opened.device.id, frame.messageId, frame.issuedAt),
+        )
+        device = persisted.devices.find((candidate) => candidate.id === opened.device.id && !candidate.revokedAt)
+      } else {
+        if (opened.device.recentMessages.some((message) => message.id === frame.messageId)) throw new Error("Duplicate message id")
+        rememberReadFrame(frame.messageId)
+        device = opened.device
+      }
+      if (!device) throw new Error("Device is not active")
+    } catch (error) {
+      await reply(opened.device, opened.command.requestId, undefined, error)
+      return
+    }
+    await handleCommand(opened.command, device)
   }
 
   const connect = () => {
     if (stopped) return
-    socket = new WebSocket(toWebSocketUrl(config.brokerUrl), ["remotty", config.code])
-    socket.addEventListener("open", async () => {
-      reconnectDelay = 1_000
-      send({ type: "relay.hello", relay })
-      await snapshot().catch((error) => reply("snapshot", undefined, error))
-    })
-    socket.addEventListener("message", (message) => {
-      try {
-        const command = clientCommandSchema.parse(JSON.parse(String(message.data)))
-        void handleCommand(command)
-      } catch (error) {
-        void client.app.log({
-          body: {
-            service: "remotty",
-            level: "warn",
-            message: "Rejected invalid relay command",
-            extra: { error: String(error) },
-          },
-        })
+    const connection = new WebSocket(toWebSocketUrl(config.brokerUrl), ["remotty", config.roomToken])
+    let helloStarted = false
+    socket = connection
+    connection.addEventListener("open", () => {
+      if (socket !== connection) {
+        connection.close(1000, "Superseded connection")
+        return
       }
+      reconnectDelay = 1_000
+      transportReady = false
     })
-    socket.addEventListener("close", () => {
-      if (stopped) return
+    connection.addEventListener("message", (message) => {
+      if (socket !== connection) return
+      let decoded: unknown
+      try {
+        decoded = JSON.parse(String(message.data))
+      } catch (error) {
+        void log("warn", "Rejected invalid broker JSON", error)
+        return
+      }
+      const control = brokerTransportControlSchema.safeParse(decoded)
+      if (control.success) {
+        if (control.data.type === "broker.challenge" && !helloStarted) {
+          helloStarted = true
+          const challenge = control.data.nonce
+          void (async () => {
+            const signature = await signCanonicalJson(
+              transportProofPayload("relay", relayId, config.roomToken, challenge),
+              config.relaySigningPrivateKey,
+            )
+            if (socket !== connection || connection.readyState !== WebSocket.OPEN) return
+            connection.send(JSON.stringify({
+              type: "transport.hello",
+              version: 2,
+              role: "relay",
+              relayId,
+              publicKey: config.relaySigningPublicKey,
+              signature,
+            }))
+            transportReady = true
+            await sendOrderedState(() => ({ type: "relay.hello", relay, sequence: sequence++ }))
+            await snapshot()
+          })().catch((error) => log("error", "Failed to send initial encrypted relay state", error))
+        }
+        if (control.data.type === "broker.error") void log("warn", `Broker rejected relay message: ${control.data.code}: ${control.data.message}`)
+        return
+      }
+      const frame = e2eeFrameSchema.safeParse(decoded)
+      if (!frame.success) {
+        void log("warn", "Rejected invalid encrypted relay frame", frame.error)
+        return
+      }
+      void handleFrame(frame.data).catch((error) => log("warn", "Rejected encrypted relay frame", error))
+    })
+    connection.addEventListener("close", () => {
+      if (stopped || socket !== connection) return
+      transportReady = false
       setTimeout(connect, reconnectDelay)
       reconnectDelay = Math.min(reconnectDelay * 2, 30_000)
     })
@@ -257,15 +430,69 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
 
   connect()
 
+  const sendPushForEvent = async (eventType: string, properties: JsonObject) => {
+    if (["permission.updated", "permission.asked"].includes(eventType)) {
+      const permissionId = String(properties.id ?? properties.requestID ?? "")
+      const sessionId = String(properties.sessionID ?? "")
+      if (!permissionId || !sessionId) return
+      const patterns = Array.isArray(properties.patterns) ? properties.patterns.map(String) : []
+      await broadcast({
+        type: "notification.show",
+        title: "Permission required",
+        body: patterns[0] ?? String(properties.permission ?? "OpenCode is waiting for approval"),
+        tag: `${relayId}:permission-${permissionId}`,
+        actions: [
+          { action: "reject", title: "Reject" },
+          { action: "once", title: "Allow once" },
+          { action: "always", title: "Always allow" },
+        ],
+        data: { sessionId, permissionId, workspaceRelayId: relayId },
+      }, "push")
+    } else if (eventType === "permission.replied") {
+      const permissionId = String(properties.requestID ?? properties.permissionID ?? "")
+      const sessionId = String(properties.sessionID ?? "")
+      if (permissionId) await broadcast({
+        type: "notification.close",
+        tag: `${relayId}:permission-${permissionId}`,
+        data: { sessionId, permissionId, workspaceRelayId: relayId },
+      }, "push")
+    } else if (eventType === "question.asked") {
+      const questionId = String(properties.id ?? properties.requestID ?? "")
+      const sessionId = String(properties.sessionID ?? "")
+      if (!questionId || !sessionId) return
+      const questions = Array.isArray(properties.questions) ? properties.questions : []
+      const first = questions[0] as JsonObject | undefined
+      await broadcast({
+        type: "notification.show",
+        title: "OpenCode has a question",
+        body: typeof first?.question === "string" ? first.question : "Open the app to answer",
+        tag: `${relayId}:question-${questionId}`,
+        actions: [],
+        openApp: true,
+        data: { sessionId, questionId, workspaceRelayId: relayId },
+      }, "push")
+    } else if (["question.replied", "question.rejected"].includes(eventType)) {
+      const questionId = String(properties.requestID ?? properties.questionID ?? "")
+      const sessionId = String(properties.sessionID ?? "")
+      if (questionId) await broadcast({
+        type: "notification.close",
+        tag: `${relayId}:question-${questionId}`,
+        data: { sessionId, questionId, workspaceRelayId: relayId },
+      }, "push")
+    }
+  }
+
   return {
     event: async ({ event }) => {
       const eventType = String(event.type)
-      send({
-        type: "relay.event",
-        sequence: sequence++,
-        event: { type: eventType, properties: event.properties },
-      })
-      const properties = event.properties as JsonObject
+      const properties = (event.properties ?? {}) as JsonObject
+      await sendOrderedState(() => ({
+          type: "relay.event",
+          sequence: sequence++,
+          instanceId,
+          event: { type: eventType, properties },
+        }))
+      await sendPushForEvent(eventType, properties)
       if (eventType === "tui.session.select") activeSessionId = String(properties.sessionID)
       if (eventType === "session.created") {
         const info = properties.info as JsonObject | undefined
@@ -282,18 +509,6 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
       stopped = true
       socket?.close(1000, "OpenCode stopped")
     },
-  }
-}
-
-async function resolveConfig(): Promise<RelayConfig | undefined> {
-  const file = await readConfig()
-  const brokerUrl = process.env.REMOTTY_URL ?? process.env.OPENCODE_RELAY_URL ?? file?.brokerUrl
-  const code = process.env.REMOTTY_KEY ?? process.env.OPENCODE_RELAY_CODE ?? file?.code
-  if (!brokerUrl || !code) return undefined
-  return {
-    brokerUrl,
-    code,
-    name: process.env.REMOTTY_NAME ?? process.env.OPENCODE_RELAY_NAME ?? file?.name ?? hostname(),
   }
 }
 

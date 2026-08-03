@@ -12,13 +12,13 @@ Add the npm package to `~/.config/opencode/opencode.json`:
 }
 ```
 
-Create a pairing key:
+Create the relay identity and an encrypted device invite:
 
 ```sh
 npx opencode-remotty pair
 ```
 
-The CLI prints the key, a pairing deep link, and a terminal QR code. Scan the QR with your phone camera or the scanner in the remotty pairing screen.
+The CLI prints a fragment-only pairing link and a terminal QR code. The one-time invite expires after ten minutes.
 
 Restart OpenCode after installation.
 
@@ -26,7 +26,10 @@ Restart OpenCode after installation.
 
 ```sh
 npx opencode-remotty pair
+npx opencode-remotty invite
+npx opencode-remotty devices
+npx opencode-remotty revoke <device-id>
 npx opencode-remotty status
 ```
 
-The plugin keeps its credential in `~/.config/remotty/config.json` with mode `0600`.
+The plugin keeps relay authority keys, invitation hashes, device keys, revocation state, and replay records in `~/.config/remotty/config.json` with mode `0600`. The broker routes only opaque encrypted frames.
