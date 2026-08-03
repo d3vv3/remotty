@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: "autoUpdate",
+      registerType: "prompt",
       devOptions: { enabled: true },
       workbox: { importScripts: ["/notification-sw.js"] },
       manifest: {

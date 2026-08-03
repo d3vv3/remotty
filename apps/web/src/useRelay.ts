@@ -63,6 +63,13 @@ const registerPush = async (code: string) => {
   if (!response.ok) throw new Error("The broker rejected the Push subscription.")
 }
 
+const closeNotification = (tag: string) => {
+  if (!("serviceWorker" in navigator)) return
+  void navigator.serviceWorker.ready.then((registration) => {
+    registration.active?.postMessage({ type: "notification.close", tag })
+  })
+}
+
 export function useRelay() {
   const storedCredential = () => {
     const current = localStorage.getItem("remotty-credential")
@@ -160,12 +167,16 @@ export function useRelay() {
           setConnection(brokerMessage.data.connected ? "online" : "offline")
         } else if (brokerMessage.data.type === "broker.snapshot") {
           setRelays(brokerMessage.data.relays)
-          setRelay(brokerMessage.data.relays[0])
-          setSessions(brokerMessage.data.sessions)
-          setAgents(brokerMessage.data.agents)
-          setPermissions(brokerMessage.data.permissions)
-          setQuestions(brokerMessage.data.questions)
-          setConnection(brokerMessage.data.relays.length > 0 ? "online" : "offline")
+          if (brokerMessage.data.relays.length > 0) {
+            setRelay(brokerMessage.data.relays[0])
+            setSessions(brokerMessage.data.sessions)
+            setAgents(brokerMessage.data.agents)
+            setPermissions(brokerMessage.data.permissions)
+            setQuestions(brokerMessage.data.questions)
+            setConnection("online")
+          } else {
+            setConnection("offline")
+          }
         } else {
           setError(brokerMessage.data.message)
         }
@@ -246,16 +257,20 @@ export function useRelay() {
       }
     }
     if (event.type === "permission.replied") {
+      const permissionId = String(properties.requestID ?? properties.permissionID ?? "")
       setPermissions((current) =>
-        current.filter((item) => item.id !== (properties.requestID ?? properties.permissionID)),
+        current.filter((item) => item.id !== permissionId),
       )
+      if (permissionId) closeNotification(`permission-${permissionId}`)
     }
     if (event.type === "question.asked") {
       const question = properties as QuestionRequest
       setQuestions((current) => [...current.filter((item) => item.id !== question.id), question])
     }
     if (["question.replied", "question.rejected"].includes(event.type)) {
-      setQuestions((current) => current.filter((item) => item.id !== properties.requestID))
+      const questionId = String(properties.requestID ?? "")
+      setQuestions((current) => current.filter((item) => item.id !== questionId))
+      if (questionId) closeNotification(`question-${questionId}`)
     }
   }
 
@@ -268,7 +283,7 @@ export function useRelay() {
       const timeout = window.setTimeout(() => {
         pendingRef.current.delete(requestId)
         reject(new Error("The relay did not respond."))
-      }, 15_000)
+      }, 30_000)
       pendingRef.current.set(requestId, { resolve, reject, timeout })
     })
   }, [])

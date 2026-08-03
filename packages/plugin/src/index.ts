@@ -165,7 +165,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
           const session = (await sdkData(
             client.session.get({ path: { id: command.sessionId } }),
           )) as unknown as JsonObject
-          await sdkCall(
+          const promptRequest = sdkCall(
             client.session.promptAsync({
               path: { id: command.sessionId },
               body: {
@@ -176,6 +176,14 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
             }),
           )
           reply(command.requestId, true)
+          void promptRequest.catch((error) => client.app.log({
+            body: {
+              service: "remotty",
+              level: "error",
+              message: "Remote prompt failed after dispatch",
+              extra: { error: String(error), sessionId: command.sessionId },
+            },
+          }))
           break
         case "session.abort":
           reply(

@@ -1,6 +1,14 @@
 self.addEventListener("push", (event) => {
   const payload = event.data?.json()
   if (!payload) return
+  if (payload.closeTag) {
+    event.waitUntil(
+      self.registration.getNotifications({ tag: payload.closeTag }).then((notifications) => {
+        for (const notification of notifications) notification.close()
+      }),
+    )
+    return
+  }
   event.waitUntil(
     self.registration.showNotification(payload.title, {
       body: payload.body,
@@ -10,6 +18,15 @@ self.addEventListener("push", (event) => {
       data: payload.data,
       icon: "/icon.svg",
       badge: "/icon.svg",
+    }),
+  )
+})
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type !== "notification.close" || !event.data.tag) return
+  event.waitUntil(
+    self.registration.getNotifications({ tag: event.data.tag }).then((notifications) => {
+      for (const notification of notifications) notification.close()
     }),
   )
 })

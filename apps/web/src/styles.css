@@ -170,9 +170,28 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .message.user .message-sigil { grid-column: 2; grid-row: 1; color: #180b0b; background: var(--coral); }
 .message.user .message-body { grid-column: 1; grid-row: 1; }
 .message.user p { color: #ffecea; font-weight: 620; }
+.queued-flag { display: inline-flex; align-items: center; gap: 5px; margin: 0 0 8px; padding: 3px 6px; color: var(--amber); border: 1px solid #ffbd4a55; border-radius: 3px; background: #291c08; font-family: var(--mono); font-size: 8px; text-transform: uppercase; }
 .tool-line { min-height: 38px; display: flex; align-items: center; gap: 10px; margin: 8px 0; padding: 9px 11px; color: var(--cyan); border: 1px solid #42e8d440; border-left: 2px solid var(--cyan); background: #071817; font-family: var(--mono); font-size: 10px; }
 .tool-line span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-line small { color: var(--muted); text-transform: uppercase; }
+.tool-details { margin: 8px 0; }
+.tool-details > summary { cursor: pointer; list-style: none; }
+.tool-details > summary::-webkit-details-marker { display: none; }
+.tool-details[open] > summary { margin-bottom: 0; border-color: var(--cyan); }
+.tool-chevron { flex: 0 0 auto; transition: transform .15s ease; }
+.tool-details[open] .tool-chevron { transform: rotate(180deg); }
+.tool-line .diff-available { padding: 2px 5px; color: #080909; border-radius: 3px; background: var(--acid); }
+.tool-content { overflow: hidden; border: 1px solid #42e8d440; border-top: 0; background: #090d0e; }
+.tool-content section { padding: 11px; border-bottom: 1px solid var(--line); }
+.tool-content section:last-child { border-bottom: 0; }
+.tool-content section > strong { display: block; margin-bottom: 8px; color: var(--acid); font-family: var(--mono); font-size: 9px; text-transform: uppercase; }
+.tool-content pre { max-height: 360px; overflow: auto; margin: 0; padding: 10px; color: #cbd7d2; border-radius: 3px; background: #050809; font-family: var(--mono); font-size: 10px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-content code { font: inherit; }
+.tool-diff pre { white-space: pre; }
+.tool-diff code > span { display: block; min-height: 1.55em; }
+.tool-diff .added { color: #b7f8c5; background: #17351f; }
+.tool-diff .removed { color: #ffb6b1; background: #3b191a; }
+.tool-diff .hunk { color: #9ceee5; background: #0b2927; }
 
 .change-list { max-width: 920px; margin: 0 auto; padding: 16px 24px 40px; }
 .change-row { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 0 13px; border-bottom: 1px solid var(--line); background: #111415c9; }
@@ -221,7 +240,9 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .question-actions button.confirm { color: #07100f; border-color: var(--cyan); background: var(--cyan); }
 
 .empty-state { min-height: 170px; display: grid; place-content: center; justify-items: center; padding: 30px; color: var(--muted); font-family: var(--mono); font-size: 10px; text-align: center; }
-.toast { position: fixed; right: 18px; bottom: 18px; z-index: 10; max-width: min(420px, calc(100vw - 36px)); display: flex; align-items: center; gap: 10px; padding: 13px 15px; color: #fff; border: 1px solid var(--coral); border-radius: 4px; background: #2c1213; box-shadow: 6px 6px 0 #000; font-size: 12px; }
+.toast { position: fixed; top: 80px; right: 18px; z-index: 30; max-width: min(420px, calc(100vw - 36px)); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 11px 11px 11px 14px; color: #fff; border: 1px solid var(--coral); border-radius: 4px; background: #2c1213; box-shadow: 6px 6px 0 #000; font-size: 12px; }
+.toast > span { overflow-wrap: anywhere; }
+.toast > button { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; color: var(--coral); border: 0; background: transparent; }
 
 .pairing-screen { height: 100vh; overflow: auto; color: var(--ink); background-color: var(--void); background-image: linear-gradient(#29302f40 1px, transparent 1px), linear-gradient(90deg, #29302f40 1px, transparent 1px); background-size: 36px 36px; }
 .landing-nav { height: 66px; display: flex; align-items: center; justify-content: space-between; padding: 0 max(22px, calc((100vw - 1180px) / 2)); border-bottom: 2px solid var(--acid); background: #0b0d0ef2; }

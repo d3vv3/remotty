@@ -242,6 +242,10 @@ webSockets.on("connection", (socket: WebSocket, request: IncomingMessage) => {
             },
           })
         }
+        if (event.type === "permission.replied" && event.properties) {
+          const permissionId = String(event.properties.requestID ?? event.properties.permissionID ?? "")
+          if (permissionId) void sendPush(room, { closeTag: `permission-${permissionId}`, data: {} })
+        }
         if (event.type === "question.asked" && event.properties) {
           const questions = event.properties.questions as Array<{ question?: string }> | undefined
           void sendPush(room, {
@@ -254,6 +258,10 @@ webSockets.on("connection", (socket: WebSocket, request: IncomingMessage) => {
               sessionId: String(event.properties.sessionID),
             },
           })
+        }
+        if (["question.replied", "question.rejected"].includes(event.type ?? "") && event.properties) {
+          const questionId = String(event.properties.requestID ?? "")
+          if (questionId) void sendPush(room, { closeTag: `question-${questionId}`, data: {} })
         }
       }
       for (const client of room.clients) {

@@ -8,6 +8,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Clock3,
   CircleStop,
   CircleHelp,
   Code2,
@@ -37,8 +38,20 @@ import type { AgentSummary, PermissionRequest, QuestionRequest, SessionSummary }
 import { useRelay } from "./useRelay"
 import { pairingCredentialFrom } from "./pairing"
 
-type MessagePart = { type: string; text?: string; tool?: string; state?: { status?: string; title?: string; output?: string } }
-type SessionMessage = { info: { id: string; role: string; time?: { created?: number } }; parts: MessagePart[] }
+type MessagePart = {
+  type: string
+  text?: string
+  tool?: string
+  state?: {
+    status?: string
+    title?: string
+    input?: Record<string, unknown>
+    output?: string
+    error?: string
+    metadata?: Record<string, unknown>
+  }
+}
+type SessionMessage = { info: { id: string; role: string; parentID?: string; time?: { created?: number } }; parts: MessagePart[] }
 type FileDiff = { file: string; additions: number; deletions: number }
 type SessionTodo = { id: string; content: string; status: string; priority: string }
 
@@ -57,6 +70,12 @@ export function App() {
       ([, left], [, right]) => Math.max(...right.map((session) => session.updatedAt)) - Math.max(...left.map((session) => session.updatedAt)),
     )
   }, [relayState.sessions])
+
+  useEffect(() => {
+    if (!relayState.error) return
+    const timeout = window.setTimeout(() => relayState.setError(undefined), 6_000)
+    return () => window.clearTimeout(timeout)
+  }, [relayState.error])
 
   if (relayState.connection === "disconnected" && !relayState.relay) {
     return <PairingScreen onConnect={relayState.connect} error={relayState.error} />
@@ -119,7 +138,7 @@ export function App() {
                     session={session}
                     selected={session.id === selectedId}
                     needsInput={relayState.permissions.some((item) => item.sessionID === session.id) || relayState.questions.some((item) => item.sessionID === session.id)}
-                    onSelect={() => setSelectedId(session.id)}
+                    onSelect={() => { relayState.setError(undefined); setSelectedId(session.id) }}
                   />
                 ))}
               </section>
@@ -161,7 +180,7 @@ export function App() {
       </div>
 
       {relayState.error && (
-        <div className="toast" role="alert"><AlertTriangle size={17} />{relayState.error}</div>
+        <div className="toast" role="alert"><AlertTriangle size={17} /><span>{relayState.error}</span><button title="Dismiss error" onClick={() => relayState.setError(undefined)}><X size={16} /></button></div>
       )}
     </main>
   )
@@ -326,23 +345,30 @@ function SessionDetail({
   const [loading, setLoading] = useState(true)
   const promptRef = useRef<HTMLTextAreaElement>(null)
   const detailContentRef = useRef<HTMLDivElement>(null)
+  const mountedRef = useRef(true)
+  const followOutputRef = useRef(true)
 
   const refresh = async () => {
-    try {
-      const [messageResult, todoResult, diffResult] = await Promise.all([
-        request({ type: "session.messages", sessionId: session.id }),
-        request({ type: "session.todos", sessionId: session.id }),
-        request({ type: "session.diff", sessionId: session.id }),
-      ])
-      setMessages(Array.isArray(messageResult) ? (messageResult as SessionMessage[]) : [])
-      setTodos(Array.isArray(todoResult) ? (todoResult as SessionTodo[]) : [])
-      setDiffs(Array.isArray(diffResult) ? (diffResult as FileDiff[]) : [])
-    } catch (error) {
-      onError((error as Error).message)
-    } finally {
-      setLoading(false)
+    const load = async <T,>(command: Record<string, unknown>, update: (value: T[]) => void) => {
+      try {
+        const result = await request(command)
+        if (mountedRef.current) update(Array.isArray(result) ? result as T[] : [])
+      } catch {
+        return
+      }
     }
+    await Promise.all([
+      load<SessionMessage>({ type: "session.messages", sessionId: session.id }, setMessages),
+      load<SessionTodo>({ type: "session.todos", sessionId: session.id }, setTodos),
+      load<FileDiff>({ type: "session.diff", sessionId: session.id }, setDiffs),
+    ])
+    if (!mountedRef.current) return
+    setLoading(false)
   }
+
+  useEffect(() => () => {
+    mountedRef.current = false
+  }, [])
 
   useEffect(() => {
     setAgent(session.agent ?? agents[0]?.name ?? "")
@@ -355,6 +381,10 @@ function SessionDetail({
 
   const visibleMessages = useMemo(
     () => messages.filter((message) => message.parts.some((part) => part.type === "text" || part.type === "tool")),
+    [messages],
+  )
+  const processedUserMessages = useMemo(
+    () => new Set(messages.flatMap((message) => message.info.role === "assistant" && message.info.parentID ? [message.info.parentID] : [])),
     [messages],
   )
   const activeTool = useMemo(
@@ -370,7 +400,7 @@ function SessionDetail({
   )
 
   useLayoutEffect(() => {
-    if (tab !== "activity") return
+    if (tab !== "activity" || !followOutputRef.current || document.activeElement === promptRef.current) return
     const frame = requestAnimationFrame(() => {
       if (detailContentRef.current) detailContentRef.current.scrollTop = detailContentRef.current.scrollHeight
     })
@@ -471,14 +501,21 @@ function SessionDetail({
         <button type="button" role="tab" aria-selected={tab === "changes"} className={tab === "changes" ? "active" : ""} onClick={() => { setTab("changes"); void refresh() }}>Changes <span>{diffs.length}</span></button>
       </div>
 
-      <div className="detail-content" ref={detailContentRef}>
+      <div
+        className="detail-content"
+        ref={detailContentRef}
+        onScroll={(event) => {
+          const element = event.currentTarget
+          followOutputRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80
+        }}
+      >
         {tab === "activity" ? (
           <div className="message-list">
             {loading ? (
               <div className="empty-state"><LoaderCircle className="spin" size={22} /></div>
             ) : (
               <>
-                {visibleMessages.map((message) => <Message key={message.info.id} message={message} />)}
+                {visibleMessages.map((message) => <Message key={message.info.id} message={message} queued={message.info.role === "user" && !processedUserMessages.has(message.info.id)} />)}
                 {visibleMessages.length === 0 && <div className="empty-state"><p>No message activity yet.</p></div>}
               </>
             )}
@@ -621,7 +658,7 @@ function PermissionPanel({ permission, request, onError }: { permission: Permiss
   )
 }
 
-function Message({ message }: { message: SessionMessage }) {
+function Message({ message, queued }: { message: SessionMessage; queued?: boolean }) {
   const isUser = message.info.role === "user"
   return (
     <article className={`message ${message.info.role}`} aria-label={isUser ? "Your message" : "OpenCode response"}>
@@ -630,6 +667,7 @@ function Message({ message }: { message: SessionMessage }) {
           {isUser ? <UserRound size={15} /> : <Code2 size={16} />}
         </span>
         <div className="message-body">
+          {queued && <span className="queued-flag"><Clock3 size={12} /> Queued</span>}
           {message.parts.map((part, index) => {
             if (part.type === "text" && part.text) {
               if (isUser) return <p key={index}>{part.text}</p>
@@ -647,7 +685,28 @@ function Message({ message }: { message: SessionMessage }) {
               )
             }
             if (part.type === "tool") {
-              return <div className="tool-line" key={index}><Code2 size={15} /><span>{part.state?.title ?? part.tool}</span><small>{part.state?.status}</small></div>
+              const diff = typeof part.state?.metadata?.diff === "string" ? part.state.metadata.diff : undefined
+              const output = part.state?.output ?? part.state?.error
+              return (
+                <details className="tool-details" key={index}>
+                  <summary className="tool-line">
+                    <Code2 size={15} />
+                    <span>{part.state?.title ?? part.tool}</span>
+                    {diff && <small className="diff-available">Diff</small>}
+                    <small>{part.state?.status}</small>
+                    <ChevronDown size={14} className="tool-chevron" />
+                  </summary>
+                  <div className="tool-content">
+                    {diff && <DiffBlock diff={diff} />}
+                    {part.state?.input && Object.keys(part.state.input).length > 0 && (
+                      <section><strong>Input</strong><pre><code>{limited(JSON.stringify(part.state.input, null, 2), 20_000)}</code></pre></section>
+                    )}
+                    {output && (
+                      <section><strong>{part.state?.error ? "Error" : "Output"}</strong><pre><code>{limited(output, 30_000)}</code></pre></section>
+                    )}
+                  </div>
+                </details>
+              )
             }
             return null
           })}
@@ -656,6 +715,19 @@ function Message({ message }: { message: SessionMessage }) {
     </article>
   )
 }
+
+function DiffBlock({ diff }: { diff: string }) {
+  return (
+    <section className="tool-diff">
+      <strong>Diff</strong>
+      <pre><code>{limited(diff, 50_000).split("\n").map((line, index) => (
+        <span className={line.startsWith("+") && !line.startsWith("+++") ? "added" : line.startsWith("-") && !line.startsWith("---") ? "removed" : line.startsWith("@@") ? "hunk" : ""} key={index}>{line}{"\n"}</span>
+      ))}</code></pre>
+    </section>
+  )
+}
+
+const limited = (value: string, limit: number) => value.length > limit ? `${value.slice(0, limit)}\n\n[output truncated]` : value
 
 const relativeTime = (time: number) => {
   const seconds = Math.max(0, Math.floor((Date.now() - time) / 1_000))
