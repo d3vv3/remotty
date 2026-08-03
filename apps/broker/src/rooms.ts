@@ -13,6 +13,7 @@ export type RelayConnection = {
 export type PushRegistration = {
   subscription: PushSubscription
   brokerUrl: string
+  closeNotifications: boolean
 }
 
 export type Room = {

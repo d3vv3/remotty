@@ -16,6 +16,7 @@ describe("RelayRooms", () => {
     const rooms = new RelayRooms()
     rooms.get("ABC123").pushSubscriptions.set("https://push.example/1", {
       brokerUrl: "https://relay.example",
+      closeNotifications: false,
       subscription: {
         endpoint: "https://push.example/1",
         keys: { auth: "auth", p256dh: "key" },

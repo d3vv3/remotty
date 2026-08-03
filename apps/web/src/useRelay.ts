@@ -38,6 +38,24 @@ const applicationServerKey = (value: string) => {
   return Uint8Array.from(bytes, (character) => character.charCodeAt(0))
 }
 
+const supportsNotificationClose = (registration: ServiceWorkerRegistration) =>
+  new Promise<boolean>((resolve) => {
+    if (!registration.active) {
+      resolve(false)
+      return
+    }
+    const channel = new MessageChannel()
+    let complete = false
+    const finish = (supported: boolean) => {
+      if (complete) return
+      complete = true
+      resolve(supported)
+    }
+    channel.port1.onmessage = (event) => finish(event.data?.closeNotifications === true)
+    registration.active.postMessage({ type: "notification.capabilities" }, [channel.port2])
+    window.setTimeout(() => finish(false), 500)
+  })
+
 const registerPush = async (code: string) => {
   const registration = await navigator.serviceWorker.ready
   const { publicKey } = (await fetch(new URL("push/public-key", brokerHttpUrl())).then((response) =>
@@ -58,7 +76,12 @@ const registerPush = async (code: string) => {
   const response = await fetch(new URL("push/subscribe", brokerHttpUrl()), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ code, brokerUrl: brokerHttpUrl().origin, subscription: subscription.toJSON() }),
+    body: JSON.stringify({
+      code,
+      brokerUrl: brokerHttpUrl().origin,
+      closeNotifications: await supportsNotificationClose(registration),
+      subscription: subscription.toJSON(),
+    }),
   })
   if (!response.ok) throw new Error("The broker rejected the Push subscription.")
 }

@@ -67,6 +67,7 @@ const readJson = async (request: IncomingMessage) => {
 const sendPush = async (room: Room, payload: Record<string, unknown>) => {
   await Promise.all(
     [...room.pushSubscriptions.entries()].map(async ([endpoint, registration]) => {
+      if (payload.closeTag && !registration.closeNotifications) return
       try {
         await webpush.sendNotification(
           registration.subscription,
@@ -107,6 +108,7 @@ const server = createServer(async (request, response) => {
       const body = (await readJson(request)) as {
         code?: string
         brokerUrl?: string
+        closeNotifications?: boolean
         subscription?: PushSubscription
       }
       const code = body.code
@@ -116,6 +118,7 @@ const server = createServer(async (request, response) => {
       rooms.get(code).pushSubscriptions.set(body.subscription.endpoint, {
         subscription: body.subscription,
         brokerUrl: body.brokerUrl,
+        closeNotifications: body.closeNotifications === true,
       })
       response.writeHead(204, corsHeaders)
       response.end()

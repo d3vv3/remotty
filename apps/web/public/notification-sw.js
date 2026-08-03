@@ -9,6 +9,7 @@ self.addEventListener("push", (event) => {
     )
     return
   }
+  if (!payload.title) return
   event.waitUntil(
     self.registration.showNotification(payload.title, {
       body: payload.body,
@@ -23,6 +24,10 @@ self.addEventListener("push", (event) => {
 })
 
 self.addEventListener("message", (event) => {
+  if (event.data?.type === "notification.capabilities") {
+    event.ports[0]?.postMessage({ closeNotifications: true })
+    return
+  }
   if (event.data?.type !== "notification.close" || !event.data.tag) return
   event.waitUntil(
     self.registration.getNotifications({ tag: event.data.tag }).then((notifications) => {
