@@ -23,7 +23,7 @@ export const selectOpenSessions = <T extends SessionLike>(
     .sort((left, right) => sessionTime(right) - sessionTime(left))
   const active = activeSessionId && ordered.some((session) => session.id === activeSessionId)
     ? activeSessionId
-    : String(ordered[0]?.id ?? "") || undefined
+    : undefined
   return {
     activeSessionId: active,
     sessions: ordered.filter((session) => {

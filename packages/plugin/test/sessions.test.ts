@@ -15,10 +15,16 @@ describe("selectOpenSessions", () => {
     ])
   })
 
-  it("drops historical sessions and selects the newest session by default", () => {
+  it("does not present historical sessions before OpenCode selects one", () => {
     const result = selectOpenSessions(sessions, {})
-    expect(result.activeSessionId).toBe("current")
-    expect(result.sessions).toEqual([sessions[0]])
+    expect(result.activeSessionId).toBeUndefined()
+    expect(result.sessions).toEqual([])
+  })
+
+  it("shows work that starts before a session selection event", () => {
+    const result = selectOpenSessions(sessions, { background: { type: "busy" } })
+    expect(result.activeSessionId).toBeUndefined()
+    expect(result.sessions).toEqual([sessions[1]])
   })
 
   it("excludes subagent sessions even while they are busy", () => {
@@ -29,8 +35,8 @@ describe("selectOpenSessions", () => {
       "subagent",
     )
 
-    expect(result.activeSessionId).toBe("current")
-    expect(result.sessions).toEqual([sessions[0], sessions[1]])
+    expect(result.activeSessionId).toBeUndefined()
+    expect(result.sessions).toEqual([sessions[1]])
   })
 
   it("routes nested subagent input to its root without losing the reply target", () => {
