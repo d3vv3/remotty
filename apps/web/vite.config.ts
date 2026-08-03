@@ -1,9 +1,11 @@
 import react from "@vitejs/plugin-react"
+import tailwindcss from "@tailwindcss/vite"
 import { defineConfig } from "vite"
 import { VitePWA } from "vite-plugin-pwa"
 
 export default defineConfig({
   plugins: [
+    tailwindcss(),
     react(),
     VitePWA({
       registerType: "prompt",
@@ -16,7 +18,7 @@ export default defineConfig({
         theme_color: "#111412",
         background_color: "#090a0b",
         display: "standalone",
-        start_url: "/",
+        start_url: "/app",
         icons: [
           {
             src: "/icon.svg",

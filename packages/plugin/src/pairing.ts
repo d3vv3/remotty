@@ -7,7 +7,7 @@ export const pairingUrl = (brokerUrl: string, code: string, appUrl?: string) => 
   if (!appUrl && ["localhost", "127.0.0.1"].includes(target.hostname) && target.port === "8787") {
     target.port = "5173"
   }
-  target.pathname = "/"
+  target.pathname = "/pair"
   target.search = ""
   target.hash = ""
   target.searchParams.set("code", code)

@@ -2,6 +2,7 @@ import { FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, 
 import {
   AlertTriangle,
   ArrowLeft,
+  ArrowRight,
   Bell,
   BellOff,
   Bot,
@@ -14,19 +15,25 @@ import {
   Code2,
   Database,
   Folder,
+  Github,
   GitBranch,
   KeyRound,
   Laptop,
+  ListTodo,
+  LockKeyhole,
   LoaderCircle,
   LogOut,
   ShieldCheck,
-  Smartphone,
   Terminal,
+  Unplug,
   RefreshCw,
   ScanLine,
   Send,
+  Server,
   ShieldAlert,
+  Smartphone,
   UserRound,
+  Workflow,
   Wifi,
   WifiOff,
   X,
@@ -57,6 +64,12 @@ type FileDiff = { file: string; additions: number; deletions: number }
 type SessionTodo = { id: string; content: string; status: string; priority: string }
 
 export function App() {
+  const hasPairingCode = new URLSearchParams(location.search).has("code")
+  if (location.pathname === "/" && !hasPairingCode) return <LandingPage />
+  return <RelayApp />
+}
+
+function RelayApp() {
   const relayState = useRelay()
   const [selectedId, setSelectedId] = useState<string | undefined>(
     () => new URLSearchParams(location.search).get("session") ?? undefined,
@@ -73,13 +86,25 @@ export function App() {
   }, [relayState.sessions])
 
   useEffect(() => {
+    if (new URLSearchParams(location.search).has("code")) history.replaceState({}, "", "/app")
+  }, [])
+
+  useEffect(() => {
     if (!relayState.error) return
     const timeout = window.setTimeout(() => relayState.setError(undefined), 6_000)
     return () => window.clearTimeout(timeout)
   }, [relayState.error])
 
   if (relayState.connection === "disconnected" && !relayState.relay) {
-    return <PairingScreen onConnect={relayState.connect} error={relayState.error} />
+    return (
+      <PairingScreen
+        onConnect={(code) => {
+          history.replaceState({}, "", "/app")
+          relayState.connect(code)
+        }}
+        error={relayState.error}
+      />
+    )
   }
 
   return (
@@ -110,7 +135,7 @@ export function App() {
               <h1>{relayState.relays.length > 1 ? `${relayState.relays.length} workspaces` : relayState.relay?.name ?? "Connecting"}</h1>
               <p>{relayState.relays.length > 1 ? "OpenCode sessions grouped by folder" : relayState.relay?.workspace ?? "Waiting for your OpenCode relay"}</p>
             </div>
-            <button className="icon-button" title="Disconnect" onClick={relayState.disconnect}><LogOut size={18} /></button>
+            <button className="icon-button" title="Disconnect" onClick={() => { history.replaceState({}, "", "/pair"); relayState.disconnect() }}><LogOut size={18} /></button>
           </section>
 
           <div className="section-heading">
@@ -187,6 +212,142 @@ export function App() {
   )
 }
 
+const publicFeatures = [
+  { icon: Workflow, title: "Live sessions", copy: "Follow every active OpenCode session and switch between workspaces from one screen." },
+  { icon: Send, title: "Remote prompts", copy: "Send the next instruction, select an agent, queue work, or stop a run from your phone." },
+  { icon: Bell, title: "Actionable Push", copy: "Get permission and question alerts. Approve once, always, or reject without opening the PWA." },
+  { icon: ShieldCheck, title: "Approval controls", copy: "Read the requested command and its patterns before you grant access." },
+  { icon: CircleHelp, title: "Agent questions", copy: "Answer choices and free-form questions without returning to your development machine." },
+  { icon: Terminal, title: "Tool details", copy: "Expand tool calls to inspect inputs, outputs, errors, and readable edit diffs." },
+  { icon: ListTodo, title: "Todos and changes", copy: "Track the current plan and see file-level additions and deletions as work progresses." },
+  { icon: Folder, title: "Multi-workspace", copy: "Run one relay in each OpenCode process and group all open sessions by folder." },
+  { icon: Smartphone, title: "Installable PWA", copy: "Use the full mobile interface from your home screen without an app-store install." },
+  { icon: Unplug, title: "No inbound port", copy: "The local plugin opens an outbound WSS connection. You do not expose the OpenCode web server or change firewall rules." },
+  { icon: KeyRound, title: "No account", copy: "Generate a pairing key locally and connect directly. No hosted account or sign-in is required." },
+  { icon: Database, title: "No chat storage", copy: "The broker keeps routing state in memory and does not persist your session messages." },
+  { icon: Server, title: "Self-hostable", copy: "Run the broker and web application on infrastructure inside your own trust boundary." },
+]
+
+function PublicBrand() {
+  return (
+    <a className="flex items-center gap-3 font-mono text-sm font-bold text-[#f4f2eb] no-underline" href="/">
+      <span className="grid size-9 -rotate-3 place-items-center rounded-sm border border-[#efff91] bg-[#d8ff3e] text-[#080909] shadow-[4px_4px_0_#42e8d4]"><Code2 size={18} /></span>
+      remotty
+    </a>
+  )
+}
+
+function PhonePreview() {
+  return (
+    <div className="relative h-[570px] w-[292px] rounded-[38px] border-[10px] border-[#202526] bg-[#090a0b] p-1 shadow-[18px_22px_0_#00000080]" aria-label="remotty mobile application preview">
+      <span className="absolute left-1/2 top-2 z-10 h-5 w-24 -translate-x-1/2 rounded-b-xl bg-[#202526]" />
+      <div className="flex h-full flex-col overflow-hidden rounded-[25px] border border-[#3a4140] bg-[#090a0b]">
+        <div className="flex h-8 shrink-0 items-center justify-between bg-[#111415] px-4 pt-1 font-mono text-[8px] text-[#8d9692]"><span>9:41</span><span className="text-[#73e08c]">● live</span></div>
+        <div className="flex h-12 shrink-0 items-center justify-between border-b border-[#3a4140] bg-[#0b0d0e] px-3"><PublicBrand /><Bell size={14} className="text-[#d8ff3e]" /></div>
+        <div className="border-b border-[#292d2d] bg-[#101213] p-3">
+          <div className="flex items-center justify-between"><div><strong className="font-mono text-[11px]">Ship pairing routes</strong><p className="mt-1 font-mono text-[7px] text-[#8d9692]">/projects/remotty</p></div><span className="size-2 rounded-full bg-[#ffbd4a]" /></div>
+        </div>
+        <div className="flex h-9 shrink-0 items-end gap-1 border-b border-[#292d2d] bg-[#0e1011] px-3"><span className="border-b-2 border-[#d8ff3e] px-2 pb-2 font-mono text-[8px] uppercase text-[#d8ff3e]">Activity</span><span className="px-2 pb-2 font-mono text-[8px] uppercase text-[#8d9692]">Todos 3</span><span className="px-2 pb-2 font-mono text-[8px] uppercase text-[#8d9692]">Changes 4</span></div>
+        <div className="min-h-0 flex-1 space-y-3 overflow-hidden p-3">
+          <div className="ml-auto max-w-[80%] border-r-2 border-[#ff635d] bg-[#181415] p-3 text-[9px] leading-4 text-[#ffecea]">Split the landing from pairing and show the full feature set.</div>
+          <div className="border-l-[3px] border-[#d8ff3e] bg-[#131617] p-3 text-[9px] leading-4 text-[#dfe6e2]">I updated the routes and kept the installed PWA focused on active sessions.</div>
+          <div className="flex items-center gap-2 border border-[#42e8d455] bg-[#071817] p-2 font-mono text-[8px] text-[#42e8d4]"><Terminal size={12} /><span className="min-w-0 flex-1 truncate">Update app routing</span><span className="text-[#73e08c]">done</span></div>
+          <div className="flex items-center gap-2 border border-[#42e8d455] bg-[#071817] p-2 font-mono text-[8px] text-[#42e8d4]"><Code2 size={12} /><span className="min-w-0 flex-1 truncate">Build responsive landing</span><span className="text-[#ffbd4a]">running</span></div>
+        </div>
+        <div className="flex h-8 shrink-0 items-center gap-2 border-t border-[#d8ff3e33] bg-[#121609] px-3 font-mono text-[8px] uppercase text-[#d8ff3e]"><span className="size-2 animate-pulse rounded-full bg-[#d8ff3e]" /> Working</div>
+        <div className="grid shrink-0 grid-cols-[1fr_34px] gap-2 border-t border-[#3a4140] bg-[#0d0f10] p-2"><span className="flex h-9 items-center border border-[#3a4140] bg-[#171a1b] px-2 font-mono text-[8px] text-[#68706d]">Send another instruction...</span><span className="grid size-9 place-items-center rounded-sm bg-[#d8ff3e] text-[#080909]"><Send size={14} /></span></div>
+      </div>
+    </div>
+  )
+}
+
+function LandingPage() {
+  useEffect(() => {
+    if (!location.hash) return
+    requestAnimationFrame(() => document.querySelector(location.hash)?.scrollIntoView())
+  }, [])
+
+  return (
+    <main className="h-dvh overflow-y-auto bg-[#090a0b] text-[#f4f2eb] selection:bg-[#d8ff3e] selection:text-[#090a0b]">
+      <header className="sticky top-0 z-30 border-b border-[#292d2d] bg-[#090a0bf2]">
+        <nav className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-5 sm:px-8">
+          <PublicBrand />
+          <div className="flex items-center gap-2 sm:gap-4">
+            <a className="grid size-10 place-items-center rounded-sm border border-[#3a4140] text-[#8d9692] hover:border-[#42e8d4] hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer" title="View remotty on GitHub"><Github size={18} /></a>
+            <a className="inline-flex h-10 items-center gap-2 rounded-sm border border-[#efff91] bg-[#d8ff3e] px-4 font-mono text-xs font-bold uppercase text-[#080909] shadow-[3px_3px_0_#42e8d4] hover:translate-x-px hover:translate-y-px hover:shadow-[2px_2px_0_#42e8d4]" href="/pair">Pair <ArrowRight size={15} /></a>
+          </div>
+        </nav>
+      </header>
+
+      <section className="overflow-hidden border-b border-[#292d2d] bg-[#0c0e0f]">
+        <div className="relative mx-auto min-h-[calc(100svh-96px)] w-full max-w-7xl px-5 py-16 sm:px-8 sm:py-20 lg:flex lg:min-h-[760px] lg:items-center lg:pr-[410px]">
+          <div className="relative z-10 max-w-3xl text-center lg:text-left">
+            <p className="mb-5 font-mono text-[10px] font-bold uppercase text-[#42e8d4]">OpenCode, away from your desk</p>
+            <h1 className="m-0 font-mono text-6xl font-bold leading-none text-[#d8ff3e] sm:text-8xl xl:text-9xl">remotty</h1>
+            <h2 className="mt-6 font-mono text-2xl font-bold leading-tight sm:text-4xl">Keep your coding agents moving from anywhere.</h2>
+            <p className="mt-5 max-w-2xl text-sm leading-7 text-[#b5bdb9] sm:text-base">Watch OpenCode work, answer questions, approve commands, inspect diffs, and send the next instruction from an installable mobile PWA.</p>
+            <div className="mt-8 flex flex-wrap justify-center gap-3 lg:justify-start">
+            <a className="inline-flex h-12 items-center gap-2 rounded-sm border border-[#efff91] bg-[#d8ff3e] px-6 font-mono text-xs font-bold uppercase text-[#080909] shadow-[4px_4px_0_#42e8d4]" href="/pair">Pair a device <ArrowRight size={16} /></a>
+            <a className="inline-flex h-12 items-center gap-2 rounded-sm border border-[#3a4140] bg-[#141718] px-6 font-mono text-xs font-bold uppercase text-[#f4f2eb] hover:border-[#42e8d4] hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer"><Github size={16} /> GitHub</a>
+            </div>
+          </div>
+          <div className="mt-12 flex justify-center lg:absolute lg:bottom-7 lg:right-16 lg:mt-0 xl:right-24"><PhonePreview /></div>
+        </div>
+      </section>
+
+      <section className="border-b border-[#292d2d] bg-[#111415] py-20" id="features">
+        <div className="mx-auto w-full max-w-7xl px-5 sm:px-8">
+          <p className="font-mono text-[10px] font-bold uppercase text-[#ff635d]">Full remote control surface</p>
+          <h2 className="mt-3 max-w-3xl font-mono text-3xl font-bold sm:text-5xl">Everything you need to leave the desk.</h2>
+          <div className="mt-10 grid gap-px overflow-hidden rounded-md border border-[#292d2d] bg-[#292d2d] sm:grid-cols-2 lg:grid-cols-4">
+            {publicFeatures.map(({ icon: Icon, title, copy }) => (
+              <article className="min-h-52 bg-[#0e1011] p-6" key={title}>
+                <span className="grid size-10 place-items-center rounded-sm border border-[#3a4140] bg-[#171a1b] text-[#d8ff3e]"><Icon size={19} /></span>
+                <h3 className="mt-7 font-mono text-sm font-bold">{title}</h3>
+                <p className="mt-3 text-xs leading-6 text-[#8d9692]">{copy}</p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="border-b border-[#292d2d] bg-[#090a0b] py-20">
+        <div className="mx-auto w-full max-w-7xl px-5 sm:px-8">
+          <p className="font-mono text-[10px] font-bold uppercase text-[#42e8d4]">Three local steps</p>
+          <h2 className="mt-3 font-mono text-3xl font-bold sm:text-5xl">Pair without an account.</h2>
+          <div className="mt-10 grid border-y border-[#3a4140] md:grid-cols-3">
+            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:pr-8"><b className="font-mono text-xs text-[#ff635d]">01</b><h3 className="mt-4 font-mono text-sm font-bold">Install the plugin</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">"opencode-remotty@0.1.4"</code></div>
+            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:px-8"><b className="font-mono text-xs text-[#ff635d]">02</b><h3 className="mt-4 font-mono text-sm font-bold">Generate a local key</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">npx opencode-remotty pair</code></div>
+            <div className="py-7 md:pl-8"><b className="font-mono text-xs text-[#ff635d]">03</b><h3 className="mt-4 font-mono text-sm font-bold">Scan and continue</h3><p className="mt-4 text-xs leading-6 text-[#8d9692]">Restart OpenCode. Scan the QR code or paste the key into the pairing page.</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section className="border-b border-[#ffbd4a55] bg-[#151108] py-20" id="security">
+        <div className="mx-auto grid w-full max-w-7xl gap-12 px-5 sm:px-8 lg:grid-cols-[.75fr_1.25fr]">
+          <div><span className="inline-flex items-center gap-2 rounded-sm border border-[#ffbd4a66] bg-[#291c08] px-3 py-2 font-mono text-[9px] font-bold uppercase text-[#ffbd4a]"><ShieldAlert size={14} /> Security today</span><h2 className="mt-5 font-mono text-3xl font-bold sm:text-5xl">Know what the broker can see.</h2></div>
+          <div className="space-y-5 text-sm leading-7 text-[#d3c7ad]">
+            <p>The CLI generates a random 256-bit pairing key on your machine. Today, that key is a bearer credential. OpenCode and each browser send it to the broker over WSS to join the same relay room.</p>
+            <p>TLS protects traffic in transit. The broker forwards messages in memory and does not persist chat data. However, the broker can read relayed content and can send commands to connected OpenCode processes. Treat the hosted broker as a trusted operator.</p>
+            <p>Self-host the broker when this trust boundary is not acceptable. The pairing key grants control and must be protected like an API token.</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="border-b border-[#292d2d] bg-[#0b1514] py-20">
+        <div className="mx-auto grid w-full max-w-7xl gap-12 px-5 sm:px-8 lg:grid-cols-2">
+          <div><span className="inline-flex items-center gap-2 font-mono text-[10px] font-bold uppercase text-[#42e8d4]"><LockKeyhole size={15} /> Planned E2EE</span><h2 className="mt-4 font-mono text-3xl font-bold sm:text-5xl">Device keys, signed commands, opaque relay.</h2><p className="mt-5 max-w-xl text-sm leading-7 text-[#9eb8b4]">The next security model gives OpenCode and each client their own key pair. It enables encrypted payloads, command authentication, and individual device revocation.</p></div>
+          <div className="border-y border-[#2b5551] py-7"><h3 className="flex items-center gap-3 font-mono text-sm font-bold text-[#d8ff3e]"><Bell size={18} /> Private notification content</h3><p className="mt-4 text-sm leading-7 text-[#9eb8b4]">OpenCode can encrypt a notification envelope for each device. The broker forwards only ciphertext through Web Push. The service worker decrypts the title and body locally before it calls <code className="text-[#42e8d4]">showNotification</code>.</p><p className="mt-4 text-sm leading-7 text-[#9eb8b4]">Action responses can be signed and encrypted in the same way. The broker still sees delivery timing and device endpoints, but it cannot read notification text or forge approval commands.</p></div>
+        </div>
+      </section>
+
+      <footer className="bg-[#090a0b] py-10">
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 sm:flex-row sm:items-center sm:justify-between sm:px-8"><PublicBrand /><div className="flex flex-wrap gap-5 font-mono text-[10px] uppercase text-[#8d9692]"><a className="hover:text-[#42e8d4]" href="/pair">Pair</a><a className="hover:text-[#42e8d4]" href="#security">Security</a><a className="hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer">GitHub</a></div></div>
+      </footer>
+    </main>
+  )
+}
+
 function PairingScreen({ onConnect, error }: { onConnect: (code: string) => void; error?: string }) {
   const [code, setCode] = useState("")
   const [scannerOpen, setScannerOpen] = useState(false)
@@ -195,61 +356,34 @@ function PairingScreen({ onConnect, error }: { onConnect: (code: string) => void
     onConnect(code)
   }
   return (
-    <main className="pairing-screen">
-      <header className="landing-nav">
-        <div className="brand-lockup"><span className="brand-mark"><Code2 size={18} /></span><strong>remotty</strong></div>
-        <span>Remote TTY for OpenCode</span>
+    <main className="h-dvh overflow-y-auto bg-[#090a0b] text-[#f4f2eb]">
+      <header className="border-b-2 border-[#d8ff3e] bg-[#0b0d0e]">
+        <nav className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-5 sm:px-8"><PublicBrand /><a className="inline-flex items-center gap-2 font-mono text-[10px] uppercase text-[#8d9692] hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer"><Github size={15} /> GitHub</a></nav>
       </header>
-
-      <section className="landing-hero">
-        <div className="landing-intro">
-          <p className="eyebrow">OpenCode, away from your desk</p>
-          <h1>remotty</h1>
-          <h2>Your agents can leave the desk.</h2>
-          <p className="pairing-copy">Watch agents work, answer questions, approve commands, and send the next instruction from any installed PWA.</p>
-          <form onSubmit={submit} className="pairing-form">
-            <label htmlFor="pairing-code"><KeyRound size={14} /> Pairing key</label>
-            <div className="code-input-row">
-              <input
-                id="pairing-code"
-                value={code}
-                onChange={(event) => setCode(event.target.value)}
-                placeholder="Paste the key from remotty pair"
-                autoCapitalize="none"
-                autoComplete="one-time-code"
-                maxLength={128}
-                autoFocus
-              />
-              <button type="button" className="scan-button" title="Scan pairing QR code" aria-label="Scan pairing QR code" onClick={() => setScannerOpen(true)}><ScanLine size={20} /></button>
-              <button type="submit" className="primary-button" aria-label="Connect remotty"><ChevronRight size={20} /></button>
+      <section className="mx-auto grid min-h-[calc(100svh-64px)] w-full max-w-6xl items-center gap-12 px-5 py-12 sm:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(400px,.85fr)]">
+        <div>
+          <p className="font-mono text-[10px] font-bold uppercase text-[#42e8d4]">Connect this browser</p>
+          <h1 className="mt-4 font-mono text-4xl font-bold sm:text-6xl">Pair your device.</h1>
+          <p className="mt-5 max-w-xl text-sm leading-7 text-[#b5bdb9]">Paste the pairing key printed by the local CLI, or scan its QR code. The browser stores the key on this device.</p>
+          <form onSubmit={submit} className="mt-8 max-w-xl">
+            <label className="mb-2 flex items-center gap-2 font-mono text-[9px] font-bold uppercase text-[#d8ff3e]" htmlFor="pairing-code"><KeyRound size={14} /> Pairing key</label>
+            <div className="grid grid-cols-[minmax(0,1fr)_48px_48px] gap-2">
+              <input className="h-12 min-w-0 rounded-sm border border-[#3a4140] bg-[#151819] px-4 font-mono text-xs text-[#f4f2eb] outline-none focus:border-[#d8ff3e] focus:ring-2 focus:ring-[#d8ff3e26]" id="pairing-code" value={code} onChange={(event) => setCode(event.target.value)} placeholder="Paste pairing key" autoCapitalize="none" autoComplete="one-time-code" maxLength={128} autoFocus />
+              <button type="button" className="grid size-12 place-items-center rounded-sm border border-[#42e8d4] bg-[#071817] text-[#42e8d4] hover:bg-[#42e8d4] hover:text-[#071817]" title="Scan pairing QR code" aria-label="Scan pairing QR code" onClick={() => setScannerOpen(true)}><ScanLine size={20} /></button>
+              <button type="submit" className="grid size-12 place-items-center rounded-sm border border-[#efff91] bg-[#d8ff3e] text-[#080909] shadow-[3px_3px_0_#42e8d4]" aria-label="Connect remotty"><ChevronRight size={20} /></button>
             </div>
-            {error && <p className="form-error">{error}</p>}
+            {error && <p className="mt-3 font-mono text-[10px] text-[#ff635d]">{error}</p>}
           </form>
+          <div className="mt-8 flex gap-3 border-l-2 border-[#ffbd4a] bg-[#151108] p-4 text-xs leading-6 text-[#c9b98f]"><ShieldAlert className="mt-1 shrink-0 text-[#ffbd4a]" size={17} /><p>The current key is a bearer credential sent to the broker over WSS. Protect it like an API token. <a className="text-[#d8ff3e] underline underline-offset-4" href="/#security">Read the security model.</a></p></div>
         </div>
-
-        <div className="install-sequence">
-          <div className="install-heading"><Terminal size={18} /><span>Install and pair</span></div>
-          <div className="install-step"><b>01</b><div><span>Add the OpenCode plugin</span><code>{`"plugin": ["opencode-remotty"]`}</code><small>~/.config/opencode/opencode.json</small></div></div>
-          <div className="install-step"><b>02</b><div><span>Create a 256-bit pairing key</span><code>npx opencode-remotty pair</code></div></div>
-          <div className="install-step"><b>03</b><div><span>Restart OpenCode, then paste the key here</span><code>opencode --continue</code></div></div>
+        <div className="border-y border-[#3a4140] bg-[#0c0f10]">
+          <div className="flex h-12 items-center gap-2 border-b border-[#292d2d] px-4 font-mono text-[10px] font-bold uppercase text-[#d8ff3e]"><Terminal size={18} /> Install and pair</div>
+          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">01</b><div><strong className="text-xs">Add the OpenCode plugin</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">{`"plugin": ["opencode-remotty@0.1.4"]`}</code></div></div>
+          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">02</b><div><strong className="text-xs">Create a 256-bit pairing key</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">npx opencode-remotty pair</code></div></div>
+          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 p-4"><b className="font-mono text-[10px] text-[#ff635d]">03</b><div><strong className="text-xs">Restart OpenCode</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">opencode --continue</code></div></div>
         </div>
       </section>
-
-      <section className="feature-band">
-        <div><Database size={18} /><strong>No chat storage</strong><span>Messages pass through the broker and are discarded.</span></div>
-        <div><Smartphone size={18} /><strong>Native Push</strong><span>Receive questions and permission actions while the PWA is closed.</span></div>
-        <div><ShieldCheck size={18} /><strong>Approval controls</strong><span>Review the exact command before Reject, Once, or Always.</span></div>
-      </section>
-      {scannerOpen && (
-        <PairingScanner
-          onClose={() => setScannerOpen(false)}
-          onScan={(credential) => {
-            setCode(credential)
-            setScannerOpen(false)
-            onConnect(credential)
-          }}
-        />
-      )}
+      {scannerOpen && <PairingScanner onClose={() => setScannerOpen(false)} onScan={(credential) => { setCode(credential); setScannerOpen(false); onConnect(credential) }} />}
     </main>
   )
 }
