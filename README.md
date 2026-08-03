@@ -52,7 +52,15 @@ Open `http://localhost:5173` and enter the pairing key.
 
 ## Deploy
 
-The web app expects the browser-facing broker URL in `VITE_REMOTTY_URL`. Use `wss://` outside localhost.
+Copy `.env.production.example` to `.env`, set the hostname and stable VAPID keys, then build both containers:
+
+```sh
+docker compose up -d --build
+```
+
+The Compose file expects an external `traefik` network. It routes `/ws`, `/push/*`, and `/health` to the broker. It routes all other paths to the PWA.
+
+The web build uses `wss://${REMOTTY_HOST}/ws` as its broker URL.
 
 Set stable VAPID keys on the broker so Push subscriptions survive deployment:
 

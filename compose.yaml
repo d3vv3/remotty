@@ -1,0 +1,69 @@
+x-lockdown: &lockdown
+  read_only: true
+  security_opt:
+    - no-new-privileges=true
+  cap_drop:
+    - ALL
+  tty: false
+  stdin_open: false
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=64m
+
+services:
+  web:
+    image: remotty-web:latest
+    container_name: remotty-web
+    restart: unless-stopped
+    <<: *lockdown
+    build:
+      context: .
+      target: web
+      args:
+        VITE_REMOTTY_URL: wss://${REMOTTY_HOST}/ws
+    networks:
+      - traefik
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 128m
+          pids: 64
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.remotty-web.entrypoints: websecure
+      traefik.http.routers.remotty-web.rule: Host(`${REMOTTY_HOST}`)
+      traefik.http.routers.remotty-web.priority: "10"
+      traefik.http.services.remotty-web.loadbalancer.server.port: "8080"
+
+  broker:
+    image: remotty-broker:latest
+    container_name: remotty-broker
+    restart: unless-stopped
+    <<: *lockdown
+    build:
+      context: .
+      target: broker
+    environment:
+      PORT: "8787"
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:?Set VAPID_PUBLIC_KEY in .env}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:?Set VAPID_PRIVATE_KEY in .env}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:?Set VAPID_SUBJECT in .env}
+    networks:
+      - traefik
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 256m
+          pids: 128
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.remotty-broker.entrypoints: websecure
+      traefik.http.routers.remotty-broker.rule: Host(`${REMOTTY_HOST}`) && (Path(`/health`) || PathPrefix(`/push/`) || PathPrefix(`/ws`))
+      traefik.http.routers.remotty-broker.priority: "100"
+      traefik.http.services.remotty-broker.loadbalancer.server.port: "8787"
+
+networks:
+  traefik:
+    name: ${TRAEFIK_NETWORK:-traefik}
+    external: true

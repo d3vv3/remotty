@@ -103,8 +103,12 @@ export function App() {
             ))}
             {relayState.sessions.length === 0 && (
               <div className="empty-state">
-                <LoaderCircle size={22} className={relayState.connection === "connecting" ? "spin" : ""} />
-                <p>{relayState.connection === "online" ? "No OpenCode sessions yet." : "Waiting for the local relay."}</p>
+                <LoaderCircle size={22} className={relayState.connection === "online" ? "" : "spin"} />
+                <p>
+                  {relayState.connection === "online"
+                    ? "Open a new OpenCode session to get started."
+                    : "Waiting for the local relay."}
+                </p>
               </div>
             )}
           </div>
