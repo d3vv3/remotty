@@ -286,8 +286,8 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .scanner-panel > header > span { display: flex; align-items: center; gap: 9px; color: var(--cyan); font-family: var(--mono); font-size: 11px; text-transform: uppercase; }
 .scanner-panel > .form-error { padding: 0 16px 16px; }
 .scanner-view { position: relative; width: 100%; aspect-ratio: 4 / 3; overflow: hidden; background: #050607; }
-.scanner-view video { width: 100%; height: 100%; display: block; object-fit: cover; }
-.scanner-frame { position: absolute; top: 50%; left: 50%; width: min(66%, 360px); aspect-ratio: 1; border: 2px solid var(--acid); box-shadow: 0 0 0 999px #00000055, 0 0 24px #d8ff3e55; transform: translate(-50%, -50%); }
+.scanner-view video { width: 100%; height: 100%; display: block; object-fit: contain; }
+.scanner-frame { position: absolute; inset: 0; border: 2px solid var(--acid); box-shadow: inset 0 0 24px #d8ff3e33; pointer-events: none; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -328,5 +328,4 @@ button:disabled { cursor: not-allowed; opacity: .38; }
   .scanner-panel { width: 100%; height: 100dvh; display: flex; flex-direction: column; border: 0; border-radius: 0; box-shadow: none; }
   .scanner-panel > header { flex: 0 0 58px; padding-right: 12px; padding-left: 18px; }
   .scanner-view { min-height: 0; flex: 1; aspect-ratio: auto; }
-  .scanner-frame { width: min(82vw, 440px); }
 }

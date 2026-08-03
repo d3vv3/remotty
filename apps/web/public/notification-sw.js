@@ -175,8 +175,8 @@ const handlePush = async (frame) => {
     requireInteraction: payload.requireInteraction === true,
     actions,
     data: notificationData(payload.data, identity.key),
-    icon: "/icon.svg",
-    badge: "/icon.svg",
+    icon: "/icon-192.png",
+    badge: "/notification-badge.png",
   })
 }
 
@@ -255,9 +255,19 @@ const sendPermissionAction = async (action, data) => {
   })
 }
 
-const openApplication = async (data) => {
+const applicationUrl = (data) => {
   const url = new URL("/app", self.location.origin)
-  if (typeof data?.sessionId === "string") url.searchParams.set("session", data.sessionId)
+  if (typeof data?.sessionId === "string") {
+    const sessionKey = typeof data.workspaceRelayId === "string"
+      ? `${data.workspaceRelayId}:${data.sessionId}`
+      : data.sessionId
+    url.searchParams.set("session", sessionKey)
+  }
+  return url
+}
+
+const openApplication = async (data) => {
+  const url = applicationUrl(data)
   const windows = await clients.matchAll({ type: "window", includeUncontrolled: true })
   const client = windows[0]
   if (client) {
@@ -267,18 +277,17 @@ const openApplication = async (data) => {
   return clients.openWindow(url.href)
 }
 
-const notificationClickMode = (action, data) => action ? "action" : typeof data?.permissionId === "string" ? "ignore" : "open"
+const notificationClickMode = (action) => action ? "action" : "open"
 
 self.addEventListener("notificationclick", (event) => {
   event.preventDefault?.()
   event.stopImmediatePropagation?.()
   event.notification.close()
   const data = event.notification.data
-  const mode = notificationClickMode(event.action, data)
+  const mode = notificationClickMode(event.action)
   if (mode === "action") {
     event.waitUntil(sendPermissionAction(event.action, data).catch(() => undefined))
     return
   }
-  if (mode === "ignore") return
   event.waitUntil(openApplication(data))
 })

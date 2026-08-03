@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import { copyPairingToken, terminalHyperlink } from "../src/cli-core"
+import { copyPairingToken, terminalHyperlink, terminalQrCode } from "../src/cli-core"
 
 describe("terminalHyperlink", () => {
   it("keeps redirected output plain", () => {
@@ -22,5 +22,24 @@ describe("copyPairingToken", () => {
   it("reports an unavailable clipboard without throwing", async () => {
     const write = vi.fn(async () => { throw new Error("unavailable") })
     await expect(copyPairingToken("remotty:v2:invite", write)).resolves.toBe(false)
+  })
+})
+
+describe("terminalQrCode", () => {
+  it("renders a compact high-density QR code", () => {
+    const output = terminalQrCode("https://example.test/pair#invite")
+    const lines = output.split("\n")
+    const visibleLines = lines.map((line) => line.replace(/\u001B\[[0-9;]*m/g, ""))
+
+    expect(lines.length).toBeGreaterThan(10)
+    expect(new Set(visibleLines.map((line) => Array.from(line).length))).toEqual(new Set([visibleLines[0]!.length]))
+    expect(visibleLines.some((line) => /[^ ]/.test(line))).toBe(true)
+    expect(Math.max(...visibleLines.map((line) => Array.from(line).length))).toBeLessThan(30)
+
+    const longInvite = terminalQrCode(`https://example.test/pair#${"x".repeat(500)}`)
+      .replace(/\u001B\[[0-9;]*m/g, "")
+      .split("\n")
+    expect(longInvite.length).toBeLessThan(70)
+    expect(Math.max(...longInvite.map((line) => Array.from(line).length))).toBeLessThan(70)
   })
 })

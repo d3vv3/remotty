@@ -29,11 +29,12 @@ const workerCrypto = () => {
       registration: {},
     },
   } as Record<string, unknown>
-  runInNewContext(`${source}\nglobalThis.workerCrypto = { verifyAndOpen, sealCommand, notificationClickMode }`, context)
+  runInNewContext(`${source}\nglobalThis.workerCrypto = { verifyAndOpen, sealCommand, applicationUrl, notificationClickMode }`, context)
   return context.workerCrypto as {
     verifyAndOpen: (frame: unknown, identity: unknown) => Promise<unknown>
     sealCommand: (command: unknown, identity: unknown, relayId: string) => Promise<unknown>
-    notificationClickMode: (action: string, data: unknown) => "action" | "ignore" | "open"
+    applicationUrl: (data: unknown) => URL
+    notificationClickMode: (action: string) => "action" | "open"
   }
 }
 
@@ -45,13 +46,16 @@ describe("notification service worker security boundary", () => {
     expect(source).toContain("event.preventDefault?.()")
     expect(source).toContain("event.stopImmediatePropagation?.()")
     expect(source).toContain('typeof data.targetSessionId === "string" ? data.targetSessionId : data.sessionId')
+    expect(source).toContain('icon: "/icon-192.png"')
+    expect(source).toContain('badge: "/notification-badge.png"')
   })
 
-  it("does not open the app for permission actions with a missing action value", () => {
+  it("opens the source session for notification body clicks", () => {
     const worker = workerCrypto()
-    expect(worker.notificationClickMode("once", { permissionId: "permission-1" })).toBe("action")
-    expect(worker.notificationClickMode("", { permissionId: "permission-1" })).toBe("ignore")
-    expect(worker.notificationClickMode("", { sessionId: "session-1" })).toBe("open")
+    expect(worker.notificationClickMode("once")).toBe("action")
+    expect(worker.notificationClickMode("")).toBe("open")
+    expect(worker.applicationUrl({ workspaceRelayId: "relay-1", sessionId: "session-1" }).href)
+      .toBe("https://app.example/app?session=relay-1%3Asession-1")
   })
 
   it("verifies, decrypts, and rejects stale Push frames", () => {
