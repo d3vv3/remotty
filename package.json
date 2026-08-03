@@ -1,0 +1,17 @@
+{
+  "name": "remotty-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@11.6.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --parallel --filter @remotty/broker --filter @remotty/web dev",
+    "pack:plugin": "pnpm --filter opencode-remotty pack",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

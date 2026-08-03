@@ -1,0 +1,47 @@
+{
+  "name": "opencode-remotty",
+  "version": "0.1.0",
+  "description": "Remote PWA control surface for local OpenCode sessions",
+  "type": "module",
+  "bin": {
+    "remotty": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "sideEffects": false,
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm build && pnpm test"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "latest",
+    "@remotty/protocol": "workspace:*",
+    "@types/node": "^24.3.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.0.0"
+  },
+  "keywords": ["opencode", "plugin", "remote", "pwa", "push-notifications"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/d3vv3/remotty.git"
+  },
+  "homepage": "https://github.com/d3vv3/remotty#readme",
+  "bugs": { "url": "https://github.com/d3vv3/remotty/issues" },
+  "engines": { "node": ">=22" },
+  "publishConfig": { "access": "public" }
+}

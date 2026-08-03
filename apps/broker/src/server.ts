@@ -1,0 +1,258 @@
+import { createServer, type IncomingMessage } from "node:http"
+import { URL } from "node:url"
+import { clientCommandSchema } from "@remotty/protocol"
+import { WebSocket, WebSocketServer, type RawData } from "ws"
+import webpush, { type PushSubscription } from "web-push"
+import { RelayRooms, type Room } from "./rooms.js"
+
+const port = Number(process.env.PORT ?? 8787)
+const rooms = new RelayRooms()
+const maxClientFrameBytes = 100_000
+const maxRelayFrameBytes = 8_000_000
+const credentialPattern = /^[A-Za-z0-9_-]{32,128}$/
+const generatedVapidKeys = webpush.generateVAPIDKeys()
+const vapidPublicKey = process.env.VAPID_PUBLIC_KEY ?? generatedVapidKeys.publicKey
+const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY ?? generatedVapidKeys.privateKey
+webpush.setVapidDetails(process.env.VAPID_SUBJECT ?? "mailto:admin@example.com", vapidPublicKey, vapidPrivateKey)
+
+const send = (socket: WebSocket, message: unknown) => {
+  if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message))
+}
+
+const corsHeaders = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-headers": "content-type",
+  "access-control-allow-methods": "GET, POST, OPTIONS",
+}
+
+const readJson = async (request: IncomingMessage) => {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of request) {
+    const buffer = Buffer.from(chunk)
+    size += buffer.byteLength
+    if (size > maxClientFrameBytes) throw new Error("Request body is too large")
+    chunks.push(buffer)
+  }
+  return JSON.parse(Buffer.concat(chunks).toString()) as unknown
+}
+
+const sendPush = async (room: Room, payload: Record<string, unknown>) => {
+  await Promise.all(
+    [...room.pushSubscriptions.entries()].map(async ([endpoint, registration]) => {
+      try {
+        await webpush.sendNotification(
+          registration.subscription,
+          JSON.stringify({
+            ...payload,
+            data: {
+              ...(payload.data as Record<string, unknown>),
+              brokerUrl: registration.brokerUrl,
+            },
+          }),
+        )
+      } catch (error) {
+        const statusCode = (error as { statusCode?: number }).statusCode
+        if (statusCode === 404 || statusCode === 410) room.pushSubscriptions.delete(endpoint)
+      }
+    }),
+  )
+}
+
+const server = createServer(async (request, response) => {
+  if (request.method === "OPTIONS") {
+    response.writeHead(204, corsHeaders)
+    response.end()
+    return
+  }
+  if (request.url === "/health") {
+    response.writeHead(200, { "content-type": "application/json", ...corsHeaders })
+    response.end(JSON.stringify({ healthy: true, push: true, rooms: rooms.size }))
+    return
+  }
+  if (request.method === "GET" && request.url === "/push/public-key") {
+    response.writeHead(200, { "content-type": "application/json", ...corsHeaders })
+    response.end(JSON.stringify({ publicKey: vapidPublicKey }))
+    return
+  }
+  if (request.method === "POST" && request.url === "/push/subscribe") {
+    try {
+      const body = (await readJson(request)) as {
+        code?: string
+        brokerUrl?: string
+        subscription?: PushSubscription
+      }
+      const code = body.code
+      if (!code?.match(credentialPattern) || !body.subscription?.endpoint || !body.brokerUrl) {
+        throw new Error("Invalid Push subscription")
+      }
+      rooms.get(code).pushSubscriptions.set(body.subscription.endpoint, {
+        subscription: body.subscription,
+        brokerUrl: body.brokerUrl,
+      })
+      response.writeHead(204, corsHeaders)
+      response.end()
+    } catch (error) {
+      response.writeHead(400, { "content-type": "application/json", ...corsHeaders })
+      response.end(JSON.stringify({ error: (error as Error).message }))
+    }
+    return
+  }
+  if (request.method === "POST" && request.url === "/push/action") {
+    try {
+      const body = (await readJson(request)) as { code?: string; command?: unknown }
+      const code = body.code
+      if (!code?.match(credentialPattern)) throw new Error("Invalid pairing credential")
+      const room = rooms.get(code)
+      if (!room.relay || room.relay.readyState !== WebSocket.OPEN) throw new Error("Relay is offline")
+      room.relay.send(JSON.stringify(clientCommandSchema.parse(body.command)))
+      response.writeHead(202, corsHeaders)
+      response.end()
+    } catch (error) {
+      response.writeHead(400, { "content-type": "application/json", ...corsHeaders })
+      response.end(JSON.stringify({ error: (error as Error).message }))
+    }
+    return
+  }
+  response.writeHead(404, corsHeaders)
+  response.end("Not found")
+})
+
+const webSockets = new WebSocketServer({
+  noServer: true,
+  handleProtocols: (protocols) => (protocols.has("remotty") ? "remotty" : false),
+})
+
+const credentialFrom = (request: IncomingMessage) => {
+  const protocols = request.headers["sec-websocket-protocol"]?.split(",").map((protocol) => protocol.trim()) ?? []
+  return protocols[0] === "remotty" ? protocols[1] : undefined
+}
+
+server.on("upgrade", (request, socket, head) => {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host}`)
+  const role = url.searchParams.get("role")
+  const code = credentialFrom(request)
+
+  if (url.pathname !== "/ws" || !code?.match(credentialPattern) || !["relay", "client"].includes(role ?? "")) {
+    socket.write("HTTP/1.1 400 Bad Request\r\n\r\n")
+    socket.destroy()
+    return
+  }
+
+  webSockets.handleUpgrade(request, socket, head, (webSocket) => {
+    webSockets.emit("connection", webSocket, request)
+  })
+})
+
+webSockets.on("connection", (socket: WebSocket, request: IncomingMessage) => {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host}`)
+  const code = credentialFrom(request)!
+  const role = url.searchParams.get("role")!
+  const room = rooms.get(code)
+
+  if (role === "relay") {
+    room.relay?.close(4001, "Relay replaced")
+    room.relay = socket
+    for (const client of room.clients) send(client, { type: "broker.relay-status", connected: true })
+  } else {
+    room.clients.add(socket)
+  }
+
+  send(socket, { type: "broker.ready", relayConnected: Boolean(room.relay) })
+  if (role === "client" && room.latestSnapshot) socket.send(room.latestSnapshot)
+
+  socket.on("message", (data: RawData, isBinary: boolean) => {
+    const payload = data.toString()
+    const maxFrameBytes = role === "relay" ? maxRelayFrameBytes : maxClientFrameBytes
+    if (isBinary || Buffer.byteLength(payload) > maxFrameBytes) {
+      socket.close(1009, "Unsupported message")
+      return
+    }
+
+    if (role === "relay") {
+      let message: Record<string, unknown>
+      try {
+        message = JSON.parse(payload) as Record<string, unknown>
+        if (message.type === "relay.snapshot") room.latestSnapshot = payload
+      } catch {
+        send(socket, { type: "broker.error", message: "Relay sent invalid JSON" })
+        return
+      }
+      if (message.type === "relay.event") {
+        const event = message.event as { type?: string; properties?: Record<string, unknown> }
+        if (event.type === "permission.asked" && event.properties) {
+          const patterns = Array.isArray(event.properties.patterns) ? event.properties.patterns.map(String) : []
+          void sendPush(room, {
+            title: "OpenCode needs permission",
+            body: `${String(event.properties.permission ?? "Action")}: ${patterns.join(", ")}`,
+            tag: `permission-${String(event.properties.id)}`,
+            requireInteraction: true,
+            actions: [
+              { action: "reject", title: "Reject" },
+              { action: "once", title: "Once" },
+              { action: "always", title: "Always" },
+            ],
+            data: {
+              code,
+              type: "permission",
+              permissionId: String(event.properties.id),
+              sessionId: String(event.properties.sessionID),
+            },
+          })
+        }
+        if (event.type === "question.asked" && event.properties) {
+          const questions = event.properties.questions as Array<{ question?: string }> | undefined
+          void sendPush(room, {
+            title: "OpenCode has a question",
+            body: questions?.[0]?.question ?? "Open the relay to answer.",
+            tag: `question-${String(event.properties.id)}`,
+            data: {
+              code,
+              type: "question",
+              sessionId: String(event.properties.sessionID),
+            },
+          })
+        }
+      }
+      for (const client of room.clients) {
+        if (client !== socket) client.send(payload)
+      }
+      return
+    }
+
+    if (!room.relay || room.relay.readyState !== WebSocket.OPEN) {
+      send(socket, { type: "broker.error", message: "Relay is offline" })
+      return
+    }
+    room.relay.send(payload)
+  })
+
+  socket.on("close", () => {
+    if (role === "relay" && room.relay === socket) {
+      room.relay = undefined
+      for (const client of room.clients) send(client, { type: "broker.relay-status", connected: false })
+    } else {
+      room.clients.delete(socket)
+    }
+    rooms.removeIfEmpty(code)
+  })
+})
+
+const heartbeat = setInterval(() => {
+  for (const socket of webSockets.clients) {
+    if (socket.readyState === WebSocket.OPEN) socket.ping()
+  }
+}, 30_000)
+
+server.listen(port, "0.0.0.0", () => {
+  console.log(`remotty broker listening on http://localhost:${port}`)
+})
+
+const shutdown = () => {
+  clearInterval(heartbeat)
+  webSockets.close()
+  server.close()
+}
+
+process.on("SIGINT", shutdown)
+process.on("SIGTERM", shutdown)
