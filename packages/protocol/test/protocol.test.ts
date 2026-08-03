@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { clientCommandSchema, relayMessageSchema } from "../src/index"
+import { brokerMessageSchema, clientCommandSchema, relayMessageSchema } from "../src/index"
 
 describe("relay protocol", () => {
   it("accepts a valid prompt command", () => {
@@ -107,5 +107,39 @@ describe("relay protocol", () => {
       agents: [{ name: "build" }],
       permissions: [{ permission: "bash", patterns: ["git status"] }],
     })
+  })
+
+  it("accepts a combined broker snapshot", () => {
+    expect(
+      brokerMessageSchema.parse({
+        type: "broker.snapshot",
+        relays: [
+          {
+            id: "relay-1",
+            name: "Laptop",
+            hostname: "devbox",
+            platform: "linux",
+            arch: "x64",
+            workspace: "/work/app",
+          },
+        ],
+        sessions: [],
+        agents: [],
+        permissions: [],
+        questions: [],
+      }),
+    ).toMatchObject({ type: "broker.snapshot", relays: [{ workspace: "/work/app" }] })
+  })
+
+  it("routes question replies with their session", () => {
+    expect(
+      clientCommandSchema.parse({
+        type: "question.reply",
+        requestId: "request-1",
+        sessionId: "session-1",
+        questionId: "question-1",
+        answers: [["Yes"]],
+      }),
+    ).toMatchObject({ sessionId: "session-1" })
   })
 })

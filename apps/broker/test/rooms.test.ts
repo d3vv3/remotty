@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { RelayRooms } from "../src/rooms"
+import type { WebSocket } from "ws"
 
 describe("RelayRooms", () => {
   it("reuses rooms and removes empty rooms", () => {
@@ -21,6 +22,25 @@ describe("RelayRooms", () => {
       },
     })
     rooms.removeIfEmpty("ABC123")
+    expect(rooms.size).toBe(1)
+  })
+
+  it("keeps independent workspace relays in one room", () => {
+    const rooms = new RelayRooms()
+    const room = rooms.get("ABC123")
+    const relay = {
+      name: "Laptop",
+      hostname: "devbox",
+      platform: "linux",
+      arch: "x64",
+      workspace: "/work/app",
+    }
+    room.relays.set("relay-1", { socket: {} as WebSocket, relay: { ...relay, id: "relay-1" } })
+    room.relays.set("relay-2", { socket: {} as WebSocket, relay: { ...relay, id: "relay-2", workspace: "/work/docs" } })
+
+    rooms.removeIfEmpty("ABC123")
+
+    expect(room.relays.size).toBe(2)
     expect(rooms.size).toBe(1)
   })
 })

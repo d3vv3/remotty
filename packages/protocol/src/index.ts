@@ -124,12 +124,14 @@ export const clientCommandSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("question.reply"),
     requestId: z.string(),
+    sessionId: z.string(),
     questionId: z.string(),
     answers: z.array(z.array(z.string())),
   }),
   z.object({
     type: z.literal("question.reject"),
     requestId: z.string(),
+    sessionId: z.string(),
     questionId: z.string(),
   }),
 ])
@@ -139,5 +141,13 @@ export const brokerMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("broker.ready"), relayConnected: z.boolean() }),
   z.object({ type: z.literal("broker.relay-status"), connected: z.boolean() }),
   z.object({ type: z.literal("broker.error"), message: z.string() }),
+  z.object({
+    type: z.literal("broker.snapshot"),
+    relays: z.array(relayInfoSchema),
+    sessions: z.array(sessionSummarySchema),
+    agents: z.array(agentSummarySchema),
+    permissions: z.array(permissionRequestSchema),
+    questions: z.array(questionRequestSchema),
+  }),
 ])
 export type BrokerMessage = z.infer<typeof brokerMessageSchema>

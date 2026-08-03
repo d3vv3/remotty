@@ -75,6 +75,7 @@ export function useRelay() {
     "disconnected",
   )
   const [relay, setRelay] = useState<RelayInfo>()
+  const [relays, setRelays] = useState<RelayInfo[]>([])
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [agents, setAgents] = useState<AgentSummary[]>([])
   const [permissions, setPermissions] = useState<PermissionRequest[]>([])
@@ -95,6 +96,7 @@ export function useRelay() {
     socketRef.current = undefined
     setConnection("disconnected")
     setRelay(undefined)
+    setRelays([])
     setSessions([])
     setAgents([])
     setPermissions([])
@@ -111,6 +113,7 @@ export function useRelay() {
       localStorage.removeItem("opencode-relay-code")
       setConnection("disconnected")
       setRelay(undefined)
+      setRelays([])
       setSessions([])
       return
     }
@@ -155,6 +158,14 @@ export function useRelay() {
           setConnection(brokerMessage.data.relayConnected ? "online" : "offline")
         } else if (brokerMessage.data.type === "broker.relay-status") {
           setConnection(brokerMessage.data.connected ? "online" : "offline")
+        } else if (brokerMessage.data.type === "broker.snapshot") {
+          setRelays(brokerMessage.data.relays)
+          setRelay(brokerMessage.data.relays[0])
+          setSessions(brokerMessage.data.sessions)
+          setAgents(brokerMessage.data.agents)
+          setPermissions(brokerMessage.data.permissions)
+          setQuestions(brokerMessage.data.questions)
+          setConnection(brokerMessage.data.relays.length > 0 ? "online" : "offline")
         } else {
           setError(brokerMessage.data.message)
         }
@@ -169,9 +180,11 @@ export function useRelay() {
       const data = relayMessage.data
       if (data.type === "relay.hello") {
         setRelay(data.relay)
+        setRelays([data.relay])
         setConnection("online")
       } else if (data.type === "relay.snapshot") {
         setRelay(data.relay)
+        setRelays([data.relay])
         setSessions(data.sessions.sort((a, b) => b.updatedAt - a.updatedAt))
         setAgents(data.agents)
         setPermissions(data.permissions)
@@ -307,6 +320,7 @@ export function useRelay() {
   return {
     connection,
     relay,
+    relays,
     sessions,
     agents,
     permissions,

@@ -29,6 +29,8 @@ import {
   WifiOff,
   X,
 } from "lucide-react"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 import type { AgentSummary, PermissionRequest, QuestionRequest, SessionSummary } from "@remotty/protocol"
 import { useRelay } from "./useRelay"
 
@@ -43,6 +45,15 @@ export function App() {
     () => new URLSearchParams(location.search).get("session") ?? undefined,
   )
   const selected = relayState.sessions.find((session) => session.id === selectedId)
+  const sessionGroups = useMemo(() => {
+    const groups = new Map<string, SessionSummary[]>()
+    for (const session of relayState.sessions) {
+      groups.set(session.directory, [...(groups.get(session.directory) ?? []), session])
+    }
+    return [...groups.entries()].sort(
+      ([, left], [, right]) => Math.max(...right.map((session) => session.updatedAt)) - Math.max(...left.map((session) => session.updatedAt)),
+    )
+  }, [relayState.sessions])
 
   if (relayState.connection === "disconnected" && !relayState.relay) {
     return <PairingScreen onConnect={relayState.connect} error={relayState.error} />
@@ -73,8 +84,8 @@ export function App() {
           <section className="relay-summary">
             <div className="machine-icon"><Laptop size={20} /></div>
             <div>
-              <h1>{relayState.relay?.name ?? "Connecting"}</h1>
-              <p>{relayState.relay?.workspace ?? "Waiting for your OpenCode relay"}</p>
+              <h1>{relayState.relays.length > 1 ? `${relayState.relays.length} workspaces` : relayState.relay?.name ?? "Connecting"}</h1>
+              <p>{relayState.relays.length > 1 ? "OpenCode sessions grouped by folder" : relayState.relay?.workspace ?? "Waiting for your OpenCode relay"}</p>
             </div>
             <button className="icon-button" title="Disconnect" onClick={relayState.disconnect}><LogOut size={18} /></button>
           </section>
@@ -92,14 +103,23 @@ export function App() {
           </div>
 
           <div className="session-list">
-            {relayState.sessions.map((session) => (
-              <SessionRow
-                key={session.id}
-                session={session}
-                selected={session.id === selectedId}
-                needsInput={relayState.permissions.some((item) => item.sessionID === session.id) || relayState.questions.some((item) => item.sessionID === session.id)}
-                onSelect={() => setSelectedId(session.id)}
-              />
+            {sessionGroups.map(([directory, sessions]) => (
+              <section className="workspace-group" key={directory}>
+                <div className="workspace-heading" title={directory}>
+                  <Folder size={14} />
+                  <span><strong>{folderName(directory)}</strong><small>{directory}</small></span>
+                  <b>{sessions.length}</b>
+                </div>
+                {sessions.map((session) => (
+                  <SessionRow
+                    key={session.id}
+                    session={session}
+                    selected={session.id === selectedId}
+                    needsInput={relayState.permissions.some((item) => item.sessionID === session.id) || relayState.questions.some((item) => item.sessionID === session.id)}
+                    onSelect={() => setSelectedId(session.id)}
+                  />
+                ))}
+              </section>
             ))}
             {relayState.sessions.length === 0 && (
               <div className="empty-state">
@@ -464,7 +484,7 @@ function QuestionPanel({ requestInfo, request, onError }: { requestInfo: Questio
       onError("Answer each question before you continue.")
       return
     }
-    void request({ type: "question.reply", questionId: requestInfo.id, answers }).catch((error) => onError(error.message))
+    void request({ type: "question.reply", sessionId: requestInfo.sessionID, questionId: requestInfo.id, answers }).catch((error) => onError(error.message))
   }
 
   return (
@@ -497,7 +517,7 @@ function QuestionPanel({ requestInfo, request, onError }: { requestInfo: Questio
         </div>
       ))}
       <div className="question-actions">
-        <button onClick={() => void request({ type: "question.reject", questionId: requestInfo.id }).catch((error) => onError(error.message))}>Dismiss</button>
+        <button onClick={() => void request({ type: "question.reject", sessionId: requestInfo.sessionID, questionId: requestInfo.id }).catch((error) => onError(error.message))}>Dismiss</button>
         <button className="confirm" onClick={submit}>Continue <ChevronRight size={16} /></button>
       </div>
     </section>
@@ -544,7 +564,21 @@ function Message({ message }: { message: SessionMessage }) {
         </span>
         <div className="message-body">
           {message.parts.map((part, index) => {
-            if (part.type === "text" && part.text) return <p key={index}>{part.text}</p>
+            if (part.type === "text" && part.text) {
+              if (isUser) return <p key={index}>{part.text}</p>
+              return (
+                <div className="markdown" key={index}>
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      a: ({ children, href }) => <a href={href} target="_blank" rel="noreferrer">{children}</a>,
+                    }}
+                  >
+                    {part.text}
+                  </ReactMarkdown>
+                </div>
+              )
+            }
             if (part.type === "tool") {
               return <div className="tool-line" key={index}><Code2 size={15} /><span>{part.state?.title ?? part.tool}</span><small>{part.state?.status}</small></div>
             }
@@ -563,3 +597,5 @@ const relativeTime = (time: number) => {
   if (seconds < 86_400) return `${Math.floor(seconds / 3_600)}h`
   return `${Math.floor(seconds / 86_400)}d`
 }
+
+const folderName = (directory: string) => directory.split(/[\\/]/).filter(Boolean).at(-1) ?? directory

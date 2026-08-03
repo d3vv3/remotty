@@ -1,5 +1,14 @@
 import type { WebSocket } from "ws"
 import type { PushSubscription } from "web-push"
+import type { RelayInfo, RelayMessage } from "@remotty/protocol"
+
+export type RelaySnapshot = Extract<RelayMessage, { type: "relay.snapshot" }>
+
+export type RelayConnection = {
+  socket: WebSocket
+  relay: RelayInfo
+  snapshot?: RelaySnapshot
+}
 
 export type PushRegistration = {
   subscription: PushSubscription
@@ -7,9 +16,8 @@ export type PushRegistration = {
 }
 
 export type Room = {
-  relay?: WebSocket
+  relays: Map<string, RelayConnection>
   clients: Set<WebSocket>
-  latestSnapshot?: string
   pushSubscriptions: Map<string, PushRegistration>
 }
 
@@ -19,7 +27,7 @@ export class RelayRooms {
   get(code: string): Room {
     let room = this.rooms.get(code)
     if (!room) {
-      room = { clients: new Set(), pushSubscriptions: new Map() }
+      room = { relays: new Map(), clients: new Set(), pushSubscriptions: new Map() }
       this.rooms.set(code, room)
     }
     return room
@@ -27,7 +35,7 @@ export class RelayRooms {
 
   removeIfEmpty(code: string): void {
     const room = this.rooms.get(code)
-    if (room && !room.relay && room.clients.size === 0 && room.pushSubscriptions.size === 0) {
+    if (room && room.relays.size === 0 && room.clients.size === 0 && room.pushSubscriptions.size === 0) {
       this.rooms.delete(code)
     }
   }

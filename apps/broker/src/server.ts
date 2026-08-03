@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage } from "node:http"
 import { URL } from "node:url"
-import { clientCommandSchema } from "@remotty/protocol"
+import { clientCommandSchema, relayMessageSchema, type ClientCommand } from "@remotty/protocol"
 import { WebSocket, WebSocketServer, type RawData } from "ws"
 import webpush, { type PushSubscription } from "web-push"
 import { RelayRooms, type Room } from "./rooms.js"
@@ -18,6 +18,33 @@ webpush.setVapidDetails(process.env.VAPID_SUBJECT ?? "mailto:admin@example.com",
 const send = (socket: WebSocket, message: unknown) => {
   if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message))
 }
+
+const uniqueBy = <T>(items: T[], key: (item: T) => string) =>
+  [...new Map(items.map((item) => [key(item), item])).values()]
+
+const combinedSnapshot = (room: Room) => {
+  const connections = [...room.relays.values()]
+  const snapshots = connections.flatMap((connection) => connection.snapshot ? [connection.snapshot] : [])
+  return {
+    type: "broker.snapshot" as const,
+    relays: connections.map((connection) => connection.relay),
+    sessions: uniqueBy(snapshots.flatMap((snapshot) => snapshot.sessions), (session) => session.id)
+      .sort((a, b) => b.updatedAt - a.updatedAt),
+    agents: uniqueBy(snapshots.flatMap((snapshot) => snapshot.agents), (agent) => agent.name),
+    permissions: uniqueBy(snapshots.flatMap((snapshot) => snapshot.permissions), (permission) => permission.id),
+    questions: uniqueBy(snapshots.flatMap((snapshot) => snapshot.questions), (question) => question.id),
+  }
+}
+
+const broadcastSnapshot = (room: Room) => {
+  const snapshot = combinedSnapshot(room)
+  for (const client of room.clients) send(client, snapshot)
+}
+
+const connectionForSession = (room: Room, sessionId: string) =>
+  [...room.relays.values()].find((connection) =>
+    connection.snapshot?.sessions.some((session) => session.id === sessionId),
+  )
 
 const corsHeaders = {
   "access-control-allow-origin": "*",
@@ -104,8 +131,10 @@ const server = createServer(async (request, response) => {
       const code = body.code
       if (!code?.match(credentialPattern)) throw new Error("Invalid pairing credential")
       const room = rooms.get(code)
-      if (!room.relay || room.relay.readyState !== WebSocket.OPEN) throw new Error("Relay is offline")
-      room.relay.send(JSON.stringify(clientCommandSchema.parse(body.command)))
+      const command = clientCommandSchema.parse(body.command)
+      const connection = "sessionId" in command ? connectionForSession(room, command.sessionId) : undefined
+      if (!connection || connection.socket.readyState !== WebSocket.OPEN) throw new Error("Session relay is offline")
+      connection.socket.send(JSON.stringify(command))
       response.writeHead(202, corsHeaders)
       response.end()
     } catch (error) {
@@ -149,17 +178,14 @@ webSockets.on("connection", (socket: WebSocket, request: IncomingMessage) => {
   const code = credentialFrom(request)!
   const role = url.searchParams.get("role")!
   const room = rooms.get(code)
+  let relayId: string | undefined
 
-  if (role === "relay") {
-    room.relay?.close(4001, "Relay replaced")
-    room.relay = socket
-    for (const client of room.clients) send(client, { type: "broker.relay-status", connected: true })
-  } else {
+  if (role === "client") {
     room.clients.add(socket)
   }
 
-  send(socket, { type: "broker.ready", relayConnected: Boolean(room.relay) })
-  if (role === "client" && room.latestSnapshot) socket.send(room.latestSnapshot)
+  send(socket, { type: "broker.ready", relayConnected: room.relays.size > 0 })
+  if (role === "client") send(socket, combinedSnapshot(room))
 
   socket.on("message", (data: RawData, isBinary: boolean) => {
     const payload = data.toString()
@@ -170,12 +196,28 @@ webSockets.on("connection", (socket: WebSocket, request: IncomingMessage) => {
     }
 
     if (role === "relay") {
-      let message: Record<string, unknown>
+      let message
       try {
-        message = JSON.parse(payload) as Record<string, unknown>
-        if (message.type === "relay.snapshot") room.latestSnapshot = payload
+        message = relayMessageSchema.parse(JSON.parse(payload))
       } catch {
         send(socket, { type: "broker.error", message: "Relay sent invalid JSON" })
+        return
+      }
+      if (message.type === "relay.hello") {
+        relayId = message.relay.id
+        const existing = room.relays.get(relayId)
+        room.relays.set(relayId, { socket, relay: message.relay, snapshot: existing?.snapshot })
+        if (existing && existing.socket !== socket) existing.socket.close(4001, "Workspace relay replaced")
+        for (const client of room.clients) send(client, { type: "broker.relay-status", connected: true })
+        broadcastSnapshot(room)
+        return
+      }
+      if (message.type === "relay.snapshot") {
+        relayId = message.relay.id
+        const existing = room.relays.get(relayId)
+        if (existing && existing.socket !== socket) existing.socket.close(4001, "Workspace relay replaced")
+        room.relays.set(relayId, { socket, relay: message.relay, snapshot: message })
+        broadcastSnapshot(room)
         return
       }
       if (message.type === "relay.event") {
@@ -215,22 +257,45 @@ webSockets.on("connection", (socket: WebSocket, request: IncomingMessage) => {
         }
       }
       for (const client of room.clients) {
-        if (client !== socket) client.send(payload)
+        client.send(payload)
       }
       return
     }
 
-    if (!room.relay || room.relay.readyState !== WebSocket.OPEN) {
-      send(socket, { type: "broker.error", message: "Relay is offline" })
+    let command: ClientCommand
+    try {
+      command = clientCommandSchema.parse(JSON.parse(payload))
+    } catch {
+      send(socket, { type: "broker.error", message: "Client sent an invalid command" })
       return
     }
-    room.relay.send(payload)
+    if (command.type === "snapshot.request") {
+      if (room.relays.size === 0) {
+        send(socket, { type: "rpc.result", requestId: command.requestId, error: "Relay is offline" })
+        return
+      }
+      for (const connection of room.relays.values()) connection.socket.send(payload)
+      return
+    }
+    const connection = connectionForSession(room, command.sessionId)
+    if (!connection || connection.socket.readyState !== WebSocket.OPEN) {
+      send(socket, {
+        type: "rpc.result",
+        requestId: command.requestId,
+        error: "The OpenCode relay for this session is offline.",
+      })
+      return
+    }
+    connection.socket.send(payload)
   })
 
   socket.on("close", () => {
-    if (role === "relay" && room.relay === socket) {
-      room.relay = undefined
-      for (const client of room.clients) send(client, { type: "broker.relay-status", connected: false })
+    if (role === "relay" && relayId && room.relays.get(relayId)?.socket === socket) {
+      room.relays.delete(relayId)
+      for (const client of room.clients) {
+        send(client, { type: "broker.relay-status", connected: room.relays.size > 0 })
+      }
+      broadcastSnapshot(room)
     } else {
       room.clients.delete(socket)
     }
