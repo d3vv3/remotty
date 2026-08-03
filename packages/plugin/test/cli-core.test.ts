@@ -16,13 +16,20 @@ describe("terminalHyperlink", () => {
 describe("copyPairingToken", () => {
   it("copies the raw invite token", async () => {
     const write = vi.fn(async () => undefined)
-    await expect(copyPairingToken("remotty:v2:invite", write)).resolves.toBe(true)
+    const read = vi.fn(async () => "remotty:v2:invite")
+    await expect(copyPairingToken("remotty:v2:invite", write, read)).resolves.toBe(true)
     expect(write).toHaveBeenCalledWith("remotty:v2:invite")
   })
 
   it("reports an unavailable clipboard without throwing", async () => {
     const write = vi.fn(async () => { throw new Error("unavailable") })
-    await expect(copyPairingToken("remotty:v2:invite", write)).resolves.toBe(false)
+    await expect(copyPairingToken("remotty:v2:invite", write, vi.fn())).resolves.toBe(false)
+  })
+
+  it("reports success only when the clipboard contains the token", async () => {
+    const write = vi.fn(async () => undefined)
+    const read = vi.fn(async () => "previous clipboard value")
+    await expect(copyPairingToken("remotty:v2:invite", write, read)).resolves.toBe(false)
   })
 })
 

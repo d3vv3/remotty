@@ -124,6 +124,7 @@ const signedPushRequest = async (
 
 export function useRelay(initialBundle?: PairingBundle) {
   const [connection, setConnection] = useState<"disconnected" | "connecting" | "online" | "offline">("connecting")
+  const [enrolled, setEnrolled] = useState<boolean>()
   const [relay, setRelay] = useState<ReturnType<typeof aggregateRelaySlices>["relay"]>()
   const [relays, setRelays] = useState<ReturnType<typeof aggregateRelaySlices>["relays"]>([])
   const [sessions, setSessions] = useState<ReturnType<typeof aggregateRelaySlices>["sessions"]>([])
@@ -282,6 +283,7 @@ export function useRelay(initialBundle?: PairingBundle) {
           return
         }
         identityRef.current = enrolled
+        setEnrolled(true)
         await requestSnapshots(enrolled, connectedRelaysRef.current)
         if (localStorage.getItem("remotty-notifications") === "enabled") await registerPush(enrolled)
         return
@@ -349,6 +351,7 @@ export function useRelay(initialBundle?: PairingBundle) {
   const connectIdentity = useCallback((identity: DeviceIdentity) => {
     const epoch = ++connectionEpochRef.current
     identityRef.current = identity
+    setEnrolled(identity.enrolled)
     socketRef.current?.close(1000, "Connection replaced")
     setConnection("connecting")
     setError(undefined)
@@ -471,6 +474,7 @@ export function useRelay(initialBundle?: PairingBundle) {
       connectIdentity(identity)
     } catch (cause) {
       setConnection("disconnected")
+      setEnrolled(false)
       setError((cause as Error).message)
     }
   }, [connectIdentity])
@@ -491,6 +495,7 @@ export function useRelay(initialBundle?: PairingBundle) {
     sessionRelaysRef.current.clear()
     publishSlices()
     setConnection("disconnected")
+    setEnrolled(false)
     setNotificationsEnabled(false)
     localStorage.removeItem("remotty-notifications")
     cleanupRef.current = (async () => {
@@ -550,10 +555,14 @@ export function useRelay(initialBundle?: PairingBundle) {
       const identity = await loadCurrentIdentity()
       if (cancelled) return
       if (identity) connectIdentity(identity)
-      else setConnection("disconnected")
+      else {
+        setConnection("disconnected")
+        setEnrolled(false)
+      }
     })().catch((cause) => {
       if (!cancelled) {
         setConnection("disconnected")
+        setEnrolled(false)
         setError((cause as Error).message)
       }
     })
@@ -568,6 +577,7 @@ export function useRelay(initialBundle?: PairingBundle) {
 
   return {
     connection,
+    enrolled,
     relay,
     relays,
     sessions,

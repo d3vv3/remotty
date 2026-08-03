@@ -5,6 +5,7 @@ import {
   signingKeyFingerprint,
   type PairingBundle,
 } from "@remotty/protocol"
+import { spawn } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
 import { hostname } from "node:os"
 import clipboard from "clipboardy"
@@ -143,13 +144,44 @@ export const terminalHyperlink = (url: string, interactive = process.stdout.isTT
 export const terminalQrCode = (value: string) =>
   QRCode.toString(value, { type: "terminal", small: true, errorCorrectionLevel: "Q" })
 
+const runClipboardCommand = (command: string, args: string[], input?: string) =>
+  new Promise<string>((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] })
+    let stdout = ""
+    let stderr = ""
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk })
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk })
+    child.on("error", reject)
+    child.on("close", (code) => code === 0 ? resolve(stdout) : reject(new Error(stderr || `${command} exited with ${code}`)))
+    child.stdin.end(input)
+  })
+
+const writeWaylandClipboard = (value: string) =>
+  new Promise<void>((resolve, reject) => {
+    const child = spawn("wl-copy", ["--type", "text/plain;charset=utf-8"], { stdio: ["pipe", "ignore", "ignore"] })
+    child.on("error", reject)
+    child.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`wl-copy exited with ${code}`)))
+    child.stdin.end(value)
+  })
+
+const systemClipboard = process.platform === "linux" && process.env.WAYLAND_DISPLAY
+  ? {
+      write: writeWaylandClipboard,
+      read: () => runClipboardCommand("wl-paste", ["--no-newline", "--type", "text/plain;charset=utf-8"]),
+    }
+  : {
+      write: (value: string) => clipboard.write(value),
+      read: () => clipboard.read(),
+    }
+
 export const copyPairingToken = async (
   token: string,
-  write: (value: string) => Promise<void> = (value) => clipboard.write(value),
+  write: (value: string) => Promise<void> = systemClipboard.write,
+  read: () => Promise<string> = systemClipboard.read,
 ) => {
   try {
     await write(token)
-    return true
+    return (await read()) === token
   } catch {
     return false
   }

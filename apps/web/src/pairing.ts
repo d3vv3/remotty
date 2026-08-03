@@ -21,3 +21,6 @@ export const pairingBundleFrom = (value: string): PairingBundle | undefined => {
     return undefined
   }
 }
+
+export const routeForEnrollment = (enrolled: boolean | undefined) =>
+  enrolled === undefined ? undefined : enrolled ? "/app" : "/pair"

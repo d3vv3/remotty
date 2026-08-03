@@ -40,7 +40,7 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import type { AgentSummary, PairingBundle, PermissionRequest, QuestionRequest, SessionSummary } from "@remotty/protocol"
 import { useRelay } from "./useRelay"
-import { pairingBundleFrom } from "./pairing"
+import { pairingBundleFrom, routeForEnrollment } from "./pairing"
 import { NOTIFICATION_PROMPT_SEEN, shouldOfferPushNotifications } from "./notificationPrompt"
 import type { RoutedSession } from "./relayState"
 
@@ -65,7 +65,7 @@ type SessionTodo = { id: string; content: string; status: string; priority: stri
 let routePairingBundle = location.pathname === "/pair" && location.hash
   ? pairingBundleFrom(location.href)
   : undefined
-if (routePairingBundle) history.replaceState({}, "", "/app")
+if (routePairingBundle) history.replaceState({}, "", "/pair")
 
 export function App() {
   const [pairingBundle] = useState(routePairingBundle)
@@ -136,12 +136,17 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
     return next
   })
 
-  if (relayState.connection === "disconnected" && !relayState.relay) {
+  useEffect(() => {
+    const route = routeForEnrollment(relayState.enrolled)
+    if (route && location.pathname !== route) history.replaceState({}, "", route)
+  }, [relayState.enrolled])
+
+  if (relayState.enrolled !== true &&
+    (location.pathname === "/pair" || (relayState.connection === "disconnected" && !relayState.relay))) {
     return (
       <PairingScreen
         onConnect={(bundle) => {
           localStorage.removeItem(NOTIFICATION_PROMPT_SEEN)
-          history.replaceState({}, "", "/app")
           void relayState.connect(bundle)
         }}
         error={relayState.error}
@@ -454,7 +459,7 @@ function LandingPage() {
           <p className="font-mono text-[10px] font-bold uppercase text-[#42e8d4]">Three local steps</p>
           <h2 className="mt-3 font-mono text-3xl font-bold sm:text-5xl">Pair without an account.</h2>
           <div className="mt-10 grid border-y border-[#3a4140] md:grid-cols-3">
-            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:pr-8"><b className="font-mono text-xs text-[#ff635d]">01</b><h3 className="mt-4 font-mono text-sm font-bold">Install the plugin</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">"opencode-remotty@0.2.6"</code></div>
+            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:pr-8"><b className="font-mono text-xs text-[#ff635d]">01</b><h3 className="mt-4 font-mono text-sm font-bold">Install the plugin</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">"opencode-remotty@0.2.7"</code></div>
             <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:px-8"><b className="font-mono text-xs text-[#ff635d]">02</b><h3 className="mt-4 font-mono text-sm font-bold">Create an invite</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">npx opencode-remotty pair</code></div>
             <div className="py-7 md:pl-8"><b className="font-mono text-xs text-[#ff635d]">03</b><h3 className="mt-4 font-mono text-sm font-bold">Scan and continue</h3><p className="mt-4 text-xs leading-6 text-[#8d9692]">Restart OpenCode. Scan the QR code or paste the encrypted invite into the pairing page.</p></div>
           </div>
@@ -503,7 +508,7 @@ function PairingScreen({ onConnect, error }: { onConnect: (bundle: PairingBundle
         </div>
         <div className="border-y border-[#3a4140] bg-[#0c0f10]">
           <div className="flex h-12 items-center gap-2 border-b border-[#292d2d] px-4 font-mono text-[10px] font-bold uppercase text-[#d8ff3e]"><Terminal size={18} /> Install and pair</div>
-          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">01</b><div><strong className="text-xs">Add the OpenCode plugin</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">{`"plugin": ["opencode-remotty@0.2.6"]`}</code></div></div>
+          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">01</b><div><strong className="text-xs">Add the OpenCode plugin</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">{`"plugin": ["opencode-remotty@0.2.7"]`}</code></div></div>
           <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">02</b><div><strong className="text-xs">Create an encrypted device invite</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">npx opencode-remotty pair</code></div></div>
           <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 p-4"><b className="font-mono text-[10px] text-[#ff635d]">03</b><div><strong className="text-xs">Restart OpenCode</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">opencode --continue</code></div></div>
         </div>

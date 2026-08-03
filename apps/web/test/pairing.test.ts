@@ -6,7 +6,7 @@ import {
   type PairingBundle,
 } from "@remotty/protocol"
 import { beforeAll, describe, expect, it } from "vitest"
-import { pairingBundleFrom } from "../src/pairing"
+import { pairingBundleFrom, routeForEnrollment } from "../src/pairing"
 
 let bundle: PairingBundle
 let token: string
@@ -40,5 +40,13 @@ describe("pairingBundleFrom", () => {
     expect(pairingBundleFrom(`https://remotty.example/pair?code=${encodeURIComponent(token)}`)).toBeUndefined()
     expect(pairingBundleFrom(`https://remotty.example/pair?source=mail#${token}`)).toBeUndefined()
     expect(pairingBundleFrom("https://example.com/#unrelated")).toBeUndefined()
+  })
+})
+
+describe("routeForEnrollment", () => {
+  it("stays on pairing until enrollment succeeds", () => {
+    expect(routeForEnrollment(undefined)).toBeUndefined()
+    expect(routeForEnrollment(false)).toBe("/pair")
+    expect(routeForEnrollment(true)).toBe("/app")
   })
 })
