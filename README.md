@@ -94,3 +94,7 @@ pnpm pack:plugin
 ## Release
 
 Increment `packages/plugin/package.json`. A push to `main` creates `vX.Y.Z`, creates a GitHub release, verifies the monorepo, and publishes `opencode-remotty` through npm trusted publishing.
+
+## License
+
+remotty is licensed under the GNU Affero General Public License v3.0 only. See `LICENSE`.

@@ -46,7 +46,7 @@
     "pwa",
     "push-notifications"
   ],
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/d3vv3/remotty.git"

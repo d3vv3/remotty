@@ -125,6 +125,7 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
         <div className={`connection-state ${relayState.connection}`}>
           {relayState.connection === "online" ? <Wifi size={15} /> : <WifiOff size={15} />}
           {relayState.connection === "online" ? "Live" : "Relay offline"}
+          <a className="notification-button" title="View source" aria-label="View source" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer"><Github size={15} /></a>
           <button
             className={`notification-button ${relayState.notificationsEnabled ? "enabled" : ""}`}
             title={relayState.notificationsEnabled ? "Disable notifications" : "Enable notifications"}
@@ -357,7 +358,7 @@ function LandingPage() {
       </section>
 
       <footer className="bg-[#090a0b] py-10">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 sm:flex-row sm:items-center sm:justify-between sm:px-8"><PublicBrand /><div className="flex flex-wrap gap-5 font-mono text-[10px] uppercase text-[#8d9692]"><a className="hover:text-[#42e8d4]" href="/pair">Pair</a><a className="hover:text-[#42e8d4]" href="#security">Security</a><a className="hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer">GitHub</a></div></div>
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 sm:flex-row sm:items-center sm:justify-between sm:px-8"><PublicBrand /><div className="flex flex-wrap gap-5 font-mono text-[10px] uppercase text-[#8d9692]"><a className="hover:text-[#42e8d4]" href="/pair">Pair</a><a className="hover:text-[#42e8d4]" href="#security">Security</a><a className="hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer">Source</a><a className="hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty/blob/main/LICENSE" target="_blank" rel="noreferrer">AGPL-3.0</a></div></div>
       </footer>
     </main>
   )
