@@ -27,6 +27,12 @@ describe("selectOpenSessions", () => {
     expect(result.sessions).toEqual([sessions[1]])
   })
 
+  it("keeps an observed session visible after it becomes idle", () => {
+    const visible = new Set(["background"])
+    const result = selectOpenSessions(sessions, {}, undefined, visible)
+    expect(result.sessions).toEqual([sessions[1]])
+  })
+
   it("excludes subagent sessions even while they are busy", () => {
     const subagent = { id: "subagent", parentID: "current", time: { updated: 4 } }
     const result = selectOpenSessions(

@@ -23,6 +23,7 @@ export const selectOpenSessions = <T extends SessionLike>(
   sessions: T[],
   statuses: Record<string, SessionState>,
   activeSessionId?: string,
+  visibleSessionIds: ReadonlySet<string> = new Set(),
 ) => {
   const ordered = sessions
     .filter((session) => typeof session.parentID !== "string" || !session.parentID)
@@ -34,7 +35,7 @@ export const selectOpenSessions = <T extends SessionLike>(
     activeSessionId: active,
     sessions: ordered.filter((session) => {
       const status = statuses[String(session.id)]?.type
-      return session.id === active || status === "busy" || status === "retry"
+      return session.id === active || visibleSessionIds.has(String(session.id)) || status === "busy" || status === "retry"
     }),
   }
 }

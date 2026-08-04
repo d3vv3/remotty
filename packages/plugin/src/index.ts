@@ -103,6 +103,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
   let sequence = 0
   let reconnectDelay = 1_000
   let activeSessionId: string | undefined
+  const visibleSessionIds = new Set<string>()
   let transportReady = false
   const recentReadFrames = new Set<string>()
   const recentReadFrameQueue: string[] = []
@@ -192,7 +193,8 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
       sdkData(rawClient.get<QuestionRequest[]>({ url: "/question" })).catch(() => []),
     ])
     const sessions = includeActiveSession(listedSessions, knownSessions, activeSessionId)
-    const selected = selectOpenSessions(sessions, statuses, activeSessionId)
+    const selected = selectOpenSessions(sessions, statuses, activeSessionId, visibleSessionIds)
+    for (const session of selected.sessions) visibleSessionIds.add(String(session.id))
     knownSessions = sessions
     activeSessionId = selected.activeSessionId
     const summaries: SessionSummary[] = selected.sessions.map((session) => {
@@ -511,6 +513,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
         knownSessions = [...knownSessions.filter((session) => session.id !== info.id), info]
       } else if (eventType === "session.deleted" && info?.id) {
         knownSessions = knownSessions.filter((session) => session.id !== info.id)
+        visibleSessionIds.delete(String(info.id))
       }
       const routedProperties = ["permission.updated", "permission.asked", "question.asked"].includes(eventType) &&
         typeof properties.sessionID === "string"
