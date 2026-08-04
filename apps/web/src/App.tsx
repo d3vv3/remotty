@@ -198,10 +198,10 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
             </button>
           </div>
           <div className="session-legend" aria-label="Session status colors">
-            <span><i className="status-dot idle" />Ready/finished</span>
-            <span><i className="status-dot busy" />Working/retrying</span>
+            <span><i className="status-dot idle" />Finished</span>
+            <span><i className="status-dot busy" />Working</span>
             <span><i className="status-dot needs-input" />Needs attention</span>
-            <span><i className="status-dot error" />Offline/error</span>
+            <span><i className="status-dot error" />Offline</span>
           </div>
 
           <div className="session-list">
@@ -426,7 +426,7 @@ function LandingPage() {
         <div className="relative mx-auto min-h-[calc(100svh-96px)] w-full max-w-7xl px-5 py-16 sm:px-8 sm:py-20 lg:flex lg:min-h-[760px] lg:items-center lg:pr-[410px]">
           <div className="relative z-10 max-w-3xl text-center lg:text-left">
             <p className="mb-5 font-mono text-[10px] font-bold uppercase text-[#42e8d4]">OpenCode, away from your desk</p>
-            <h1 className="m-0 font-mono text-6xl font-bold leading-none text-[#d8ff3e] sm:text-8xl xl:text-9xl">remotty</h1>
+            <h1 className="m-0 font-mono text-6xl font-bold leading-none text-[#d8ff3e] [text-shadow:4px_4px_0_#42e8d4] sm:text-8xl xl:text-9xl">remotty</h1>
             <h2 className="mt-6 font-mono text-2xl font-bold leading-tight sm:text-4xl">Keep your coding agents moving from anywhere.</h2>
             <p className="mt-5 max-w-2xl text-sm leading-7 text-[#b5bdb9] sm:text-base">Watch OpenCode work, answer questions, approve commands, inspect diffs, and send the next instruction from an installable mobile PWA.</p>
             <div className="mt-8 flex flex-wrap justify-center gap-3 lg:justify-start">
@@ -459,7 +459,7 @@ function LandingPage() {
           <p className="font-mono text-[10px] font-bold uppercase text-[#42e8d4]">Three local steps</p>
           <h2 className="mt-3 font-mono text-3xl font-bold sm:text-5xl">Pair without an account.</h2>
           <div className="mt-10 grid border-y border-[#3a4140] md:grid-cols-3">
-            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:pr-8"><b className="font-mono text-xs text-[#ff635d]">01</b><h3 className="mt-4 font-mono text-sm font-bold">Install the plugin</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">"opencode-remotty@0.2.8"</code></div>
+            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:pr-8"><b className="font-mono text-xs text-[#ff635d]">01</b><h3 className="mt-4 font-mono text-sm font-bold">Install the plugin</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">opencode plugin opencode-remotty@0.2.9 --global --force</code></div>
             <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:px-8"><b className="font-mono text-xs text-[#ff635d]">02</b><h3 className="mt-4 font-mono text-sm font-bold">Create an invite</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">npx opencode-remotty pair</code></div>
             <div className="py-7 md:pl-8"><b className="font-mono text-xs text-[#ff635d]">03</b><h3 className="mt-4 font-mono text-sm font-bold">Scan and continue</h3><p className="mt-4 text-xs leading-6 text-[#8d9692]">Restart OpenCode. Scan the QR code or paste the encrypted invite into the pairing page.</p></div>
           </div>
@@ -508,7 +508,7 @@ function PairingScreen({ onConnect, error }: { onConnect: (bundle: PairingBundle
         </div>
         <div className="border-y border-[#3a4140] bg-[#0c0f10]">
           <div className="flex h-12 items-center gap-2 border-b border-[#292d2d] px-4 font-mono text-[10px] font-bold uppercase text-[#d8ff3e]"><Terminal size={18} /> Install and pair</div>
-          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">01</b><div><strong className="text-xs">Add the OpenCode plugin</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">{`"plugin": ["opencode-remotty@0.2.8"]`}</code></div></div>
+          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">01</b><div><strong className="text-xs">Add the OpenCode plugin</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">opencode plugin opencode-remotty@0.2.9 --global --force</code></div></div>
           <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">02</b><div><strong className="text-xs">Create an encrypted device invite</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">npx opencode-remotty pair</code></div></div>
           <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 p-4"><b className="font-mono text-[10px] text-[#ff635d]">03</b><div><strong className="text-xs">Restart OpenCode</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">opencode --continue</code></div></div>
         </div>

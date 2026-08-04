@@ -4,12 +4,10 @@ remotty is a remote PWA control surface for OpenCode sessions.
 
 ## Install
 
-Add the npm package to `~/.config/opencode/opencode.json`:
+Install both the server and TUI plugin entries:
 
-```json
-{
-  "plugin": ["opencode-remotty"]
-}
+```sh
+opencode plugin opencode-remotty --global --force
 ```
 
 Create the relay identity and an encrypted device invite:

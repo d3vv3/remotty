@@ -1,6 +1,6 @@
 {
   "name": "opencode-remotty",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "Remote PWA control surface for local OpenCode sessions",
   "type": "module",
   "bin": {
@@ -13,6 +13,14 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./server": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./tui": {
+      "import": "./dist/tui.js",
+      "types": "./dist/tui.d.ts"
     }
   },
   "sideEffects": false,

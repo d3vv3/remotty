@@ -13,12 +13,10 @@ The local OpenCode plugin makes an outbound WebSocket connection to the broker. 
 
 ## Install the OpenCode plugin
 
-Add the package to `~/.config/opencode/opencode.json`:
+Install both the server and TUI plugin entries:
 
-```json
-{
-  "plugin": ["opencode-remotty"]
-}
+```sh
+opencode plugin opencode-remotty --global --force
 ```
 
 Create the relay identity and a ten-minute encrypted device invite:

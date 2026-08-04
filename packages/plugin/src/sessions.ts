@@ -13,6 +13,12 @@ const sessionTime = (session: SessionLike) => {
   return Number(time?.updated ?? time?.created ?? 0)
 }
 
+export const includeActiveSession = <T extends SessionLike>(sessions: T[], knownSessions: T[], activeSessionId?: string) => {
+  if (!activeSessionId || sessions.some((session) => session.id === activeSessionId)) return sessions
+  const active = knownSessions.find((session) => session.id === activeSessionId)
+  return active ? [active, ...sessions] : sessions
+}
+
 export const selectOpenSessions = <T extends SessionLike>(
   sessions: T[],
   statuses: Record<string, SessionState>,

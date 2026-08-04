@@ -30,7 +30,7 @@ import {
   validateEnrollmentFrame,
   workspaceRelayId,
 } from "./security.js"
-import { routeSessionRequests, selectOpenSessions } from "./sessions.js"
+import { includeActiveSession, routeSessionRequests, selectOpenSessions } from "./sessions.js"
 
 type JsonObject = Record<string, unknown>
 type SdkResult<T> = { data?: T; error?: unknown }
@@ -183,7 +183,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
   const rawClient = (client as unknown as { _client: RawSdkClient })._client
 
   const snapshot = async (target?: DeviceRecord) => {
-    const [sessions, statuses, vcs, agents, permissions, questions] = await Promise.all([
+    const [listedSessions, statuses, vcs, agents, permissions, questions] = await Promise.all([
       sdkData(client.session.list()) as Promise<Array<JsonObject>>,
       sdkData(client.session.status()) as Promise<Record<string, { type: "idle" | "busy" | "retry" }>>,
       (sdkData(client.vcs.get()) as Promise<{ branch?: string | null }>).catch((): { branch?: string } => ({})),
@@ -191,6 +191,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
       sdkData(rawClient.get<PermissionRequest[]>({ url: "/permission" })).catch(() => []),
       sdkData(rawClient.get<QuestionRequest[]>({ url: "/question" })).catch(() => []),
     ])
+    const sessions = includeActiveSession(listedSessions, knownSessions, activeSessionId)
     const selected = selectOpenSessions(sessions, statuses, activeSessionId)
     knownSessions = sessions
     activeSessionId = selected.activeSessionId

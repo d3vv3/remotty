@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { rootSessionId, routeSessionRequests, selectOpenSessions } from "../src/sessions"
+import { includeActiveSession, rootSessionId, routeSessionRequests, selectOpenSessions } from "../src/sessions"
 
 describe("selectOpenSessions", () => {
   const sessions = [
@@ -37,6 +37,12 @@ describe("selectOpenSessions", () => {
 
     expect(result.activeSessionId).toBeUndefined()
     expect(result.sessions).toEqual([sessions[1]])
+  })
+
+  it("retains a newly selected session until the API list catches up", () => {
+    const created = { id: "created", time: { created: 4 } }
+    expect(includeActiveSession(sessions, [...sessions, created], "created")).toEqual([created, ...sessions])
+    expect(includeActiveSession([created, ...sessions], [...sessions, created], "created")).toEqual([created, ...sessions])
   })
 
   it("routes nested subagent input to its root without losing the reply target", () => {
