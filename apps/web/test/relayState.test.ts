@@ -33,6 +33,13 @@ describe("relay snapshot aggregation and routing", () => {
     expect(commandRelayId({ type: "session.messages", sessionId: "session-a" }, state.relays.map((relay) => relay.id), state.sessionRelays)).toBe("relay-a")
   })
 
+  it("does not expose subagent-capable agents from older relays", () => {
+    const current = slice("relay-a", "session-a", 1)
+    current.agents.push({ name: "explore", mode: "all" })
+
+    expect(aggregateRelaySlices(new Map([["relay-a", current]])).agents.map((agent) => agent.name)).toEqual(["build"])
+  })
+
   it("does not guess a relay for an unknown session in a multi-relay room", () => {
     expect(commandRelayId({ type: "session.messages", sessionId: "missing" }, ["relay-a", "relay-b"], new Map())).toBeUndefined()
   })

@@ -8,7 +8,6 @@ import {
   sealJsonPayload,
   signCanonicalJson,
   transportProofPayload,
-  type AgentSummary,
   type ClientCommand,
   type E2eeChannel,
   type JsonValue,
@@ -19,6 +18,7 @@ import {
   type SessionSummary,
   isSecureBrokerUrl,
 } from "@remotty/protocol"
+import { primaryAgentSummaries } from "./agents.js"
 import { readConfig, type DeviceRecord, type RelayConfig } from "./config.js"
 import { completionNotification, completionSessionForEvent, shouldNotifySessionCompletion, type CompletionState } from "./notifications.js"
 import {
@@ -217,16 +217,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
       type: "relay.snapshot",
       relay,
       sessions: summaries,
-      agents: agents
-        .filter((agent) => agent.mode === "primary" || agent.mode === "all")
-        .map(
-          (agent): AgentSummary => ({
-            name: String(agent.name),
-            description: typeof agent.description === "string" ? agent.description : undefined,
-            mode: agent.mode === "all" ? "all" : "primary",
-            color: typeof agent.color === "string" ? agent.color : undefined,
-          }),
-        ),
+      agents: primaryAgentSummaries(agents),
       permissions: routeSessionRequests(permissions, sessions),
       questions: routeSessionRequests(questions, sessions),
     }

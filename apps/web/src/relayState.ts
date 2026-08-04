@@ -56,7 +56,9 @@ export const aggregateRelaySlices = (slices: Iterable<[string, RelaySlice]>): Ag
     if (!sessionRelays.has(session.id)) sessionRelays.set(session.id, session.workspaceRelayId)
   }
   const agents = entries.flatMap(([relayId, slice]) =>
-    slice.agents.map((agent) => ({ ...agent, workspaceRelayId: relayId })))
+    slice.agents
+      .filter((agent) => agent.mode === "primary")
+      .map((agent) => ({ ...agent, workspaceRelayId: relayId })))
   return {
     relay: relays[0],
     relays,

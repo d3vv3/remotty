@@ -38,6 +38,7 @@ import {
 import type { IScannerControls } from "@zxing/browser"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import { useRegisterSW } from "virtual:pwa-register/react"
 import type { AgentSummary, PairingBundle, PermissionRequest, QuestionRequest, SessionSummary } from "@remotty/protocol"
 import { useRelay } from "./useRelay"
 import { pairingBundleFrom, routeForEnrollment } from "./pairing"
@@ -72,15 +73,45 @@ export function App() {
   useEffect(() => {
     routePairingBundle = undefined
   }, [])
-  useEffect(() => {
-    if (!("serviceWorker" in navigator) || !navigator.serviceWorker.controller) return
-    const reload = () => location.reload()
-    navigator.serviceWorker.addEventListener("controllerchange", reload, { once: true })
-    return () => navigator.serviceWorker.removeEventListener("controllerchange", reload)
-  }, [])
-  if (location.pathname === "/") return <LandingPage />
-  if (location.pathname === "/privacy") return <PrivacyPage />
-  return <RelayApp initialBundle={pairingBundle} />
+  const page = location.pathname === "/" ? <LandingPage />
+    : location.pathname === "/privacy" ? <PrivacyPage />
+    : <RelayApp initialBundle={pairingBundle} />
+  return <>{page}<PwaUpdatePrompt /></>
+}
+
+function PwaUpdatePrompt() {
+  const {
+    needRefresh: [needRefresh, setNeedRefresh],
+    updateServiceWorker,
+  } = useRegisterSW()
+  const [updating, setUpdating] = useState(false)
+  if (!needRefresh) return null
+
+  const update = async () => {
+    setUpdating(true)
+    try {
+      await updateServiceWorker(true)
+    } finally {
+      setUpdating(false)
+    }
+  }
+
+  return (
+    <div className="notification-prompt-overlay" role="presentation">
+      <section className="notification-prompt update-prompt" role="dialog" aria-modal="true" aria-labelledby="pwa-update-title">
+        <span className="notification-prompt-icon"><RefreshCw size={24} /></span>
+        <p>Update available</p>
+        <h2 id="pwa-update-title">A new Remotty version is ready.</h2>
+        <span>Update now to reload the PWA. To update later, close every Remotty tab and installed app window, then reopen it.</span>
+        <strong>Update the desktop plugin too:</strong>
+        <code>opencode plugin opencode-remotty --global --force</code>
+        <div>
+          <button className="notification-secondary" disabled={updating} onClick={() => setNeedRefresh(false)}>Later</button>
+          <button className="notification-primary" disabled={updating} onClick={() => void update()}>{updating ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />} Update now</button>
+        </div>
+      </section>
+    </div>
+  )
 }
 
 function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
@@ -459,7 +490,7 @@ function LandingPage() {
           <p className="font-mono text-[10px] font-bold uppercase text-[#42e8d4]">Three local steps</p>
           <h2 className="mt-3 font-mono text-3xl font-bold sm:text-5xl">Pair without an account.</h2>
           <div className="mt-10 grid border-y border-[#3a4140] md:grid-cols-3">
-            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:pr-8"><b className="font-mono text-xs text-[#ff635d]">01</b><h3 className="mt-4 font-mono text-sm font-bold">Install the plugin</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">opencode plugin opencode-remotty@0.2.10 --global --force</code></div>
+            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:pr-8"><b className="font-mono text-xs text-[#ff635d]">01</b><h3 className="mt-4 font-mono text-sm font-bold">Install the plugin</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">opencode plugin opencode-remotty --global --force</code></div>
             <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:px-8"><b className="font-mono text-xs text-[#ff635d]">02</b><h3 className="mt-4 font-mono text-sm font-bold">Create an invite</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">npx opencode-remotty pair</code></div>
             <div className="py-7 md:pl-8"><b className="font-mono text-xs text-[#ff635d]">03</b><h3 className="mt-4 font-mono text-sm font-bold">Scan and continue</h3><p className="mt-4 text-xs leading-6 text-[#8d9692]">Restart OpenCode. Scan the QR code or paste the encrypted invite into the pairing page.</p></div>
           </div>
@@ -508,7 +539,7 @@ function PairingScreen({ onConnect, error }: { onConnect: (bundle: PairingBundle
         </div>
         <div className="border-y border-[#3a4140] bg-[#0c0f10]">
           <div className="flex h-12 items-center gap-2 border-b border-[#292d2d] px-4 font-mono text-[10px] font-bold uppercase text-[#d8ff3e]"><Terminal size={18} /> Install and pair</div>
-          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">01</b><div><strong className="text-xs">Add the OpenCode plugin</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">opencode plugin opencode-remotty@0.2.10 --global --force</code></div></div>
+          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">01</b><div><strong className="text-xs">Add the OpenCode plugin</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">opencode plugin opencode-remotty --global --force</code></div></div>
           <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">02</b><div><strong className="text-xs">Create an encrypted device invite</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">npx opencode-remotty pair</code></div></div>
           <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 p-4"><b className="font-mono text-[10px] text-[#ff635d]">03</b><div><strong className="text-xs">Restart OpenCode</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">opencode --continue</code></div></div>
         </div>
