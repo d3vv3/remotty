@@ -6,7 +6,7 @@ import {
   type PairingBundle,
 } from "@remotty/protocol"
 import { beforeAll, describe, expect, it } from "vitest"
-import { pairingBundleFrom, routeForEnrollment } from "../src/pairing"
+import { pairingBundleFrom, routeForEnrollment, routeForStoredIdentity } from "../src/pairing"
 
 let bundle: PairingBundle
 let token: string
@@ -48,5 +48,14 @@ describe("routeForEnrollment", () => {
     expect(routeForEnrollment(undefined)).toBeUndefined()
     expect(routeForEnrollment(false)).toBe("/pair")
     expect(routeForEnrollment(true)).toBe("/app")
+  })
+})
+
+describe("routeForStoredIdentity", () => {
+  it("opens the app from home only for an enrolled identity", () => {
+    expect(routeForStoredIdentity("/", true)).toBe("/app")
+    expect(routeForStoredIdentity("/", false)).toBe("/")
+    expect(routeForStoredIdentity("/privacy", true)).toBe("/privacy")
+    expect(routeForStoredIdentity("/pair", true)).toBe("/pair")
   })
 })

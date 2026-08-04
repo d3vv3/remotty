@@ -24,3 +24,6 @@ export const pairingBundleFrom = (value: string): PairingBundle | undefined => {
 
 export const routeForEnrollment = (enrolled: boolean | undefined) =>
   enrolled === undefined ? undefined : enrolled ? "/app" : "/pair"
+
+export const routeForStoredIdentity = (pathname: string, enrolled: boolean) =>
+  pathname === "/" && enrolled ? "/app" : pathname

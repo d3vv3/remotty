@@ -40,8 +40,9 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { useRegisterSW } from "virtual:pwa-register/react"
 import type { AgentSummary, PairingBundle, PermissionRequest, QuestionRequest, SessionSummary } from "@remotty/protocol"
+import { CURRENT_IDENTITY_MARKER, loadCurrentIdentity } from "./deviceStore"
 import { useRelay } from "./useRelay"
-import { pairingBundleFrom, routeForEnrollment } from "./pairing"
+import { pairingBundleFrom, routeForEnrollment, routeForStoredIdentity } from "./pairing"
 import { NOTIFICATION_PROMPT_SEEN, shouldOfferPushNotifications } from "./notificationPrompt"
 import type { RoutedSession } from "./relayState"
 
@@ -70,9 +71,26 @@ if (routePairingBundle) history.replaceState({}, "", "/pair")
 
 export function App() {
   const [pairingBundle] = useState(routePairingBundle)
+  const [homeReady, setHomeReady] = useState(
+    () => location.pathname !== "/" || !localStorage.getItem(CURRENT_IDENTITY_MARKER),
+  )
   useEffect(() => {
     routePairingBundle = undefined
   }, [])
+  useEffect(() => {
+    if (homeReady || location.pathname !== "/") return
+    let active = true
+    void loadCurrentIdentity().then((identity) => {
+      if (!active) return
+      const route = routeForStoredIdentity(location.pathname, identity?.enrolled === true)
+      if (route !== location.pathname) history.replaceState({}, "", route)
+      setHomeReady(true)
+    }).catch(() => {
+      if (active) setHomeReady(true)
+    })
+    return () => { active = false }
+  }, [homeReady])
+  if (!homeReady) return <PwaUpdatePrompt />
   const page = location.pathname === "/" ? <LandingPage />
     : location.pathname === "/privacy" ? <PrivacyPage />
     : <RelayApp initialBundle={pairingBundle} />
