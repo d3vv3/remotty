@@ -81,7 +81,7 @@ The room identifier is the relay authority fingerprint and grants no command aut
 Use `remotty invite`, `remotty devices`, and `remotty revoke <device-id>` to manage browser access.
 The device ID is the SHA-256 fingerprint of its signing public key, not a random UUID. The device list also shows a browser, operating-system, and short-fingerprint label. Active devices refresh old labels when they connect.
 
-A revoked device stays in the list as a tombstone until it connects once more. The relay then tells the device it was revoked and deletes the record. Use `remotty remove <device-id>` or `remotty remove --revoked` to delete records that never reconnect.
+A running relay pushes the revocation to the device within seconds, and the device unpairs itself. A revoked device that is offline stays in the list as a tombstone until it connects once more. Use `remotty remove <device-id>` or `remotty remove --revoked` to delete records that never reconnect.
 
 The hosted service privacy design is available at `https://remotty.devve.space/privacy`.
 

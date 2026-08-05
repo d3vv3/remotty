@@ -310,6 +310,10 @@ export function useRelay(initialBundle?: PairingBundle) {
       const data = relayMessage.data
       if (data.type === "device.revoked") {
         if (data.deviceId !== identity.deviceId) return
+        await sendCommandFrame(identity, frame.sender, {
+          type: "snapshot.request",
+          requestId: crypto.randomUUID(),
+        }).catch(() => undefined)
         ++connectionEpochRef.current
         const socket = socketRef.current
         socketRef.current = undefined
@@ -374,7 +378,7 @@ export function useRelay(initialBundle?: PairingBundle) {
       console.warn("Rejected encrypted relay frame", cause)
       return
     }
-  }, [applyEvent, publishSlices, rememberMessage, requestSnapshots])
+  }, [applyEvent, publishSlices, rememberMessage, requestSnapshots, sendCommandFrame])
 
   const connectIdentity = useCallback((identity: DeviceIdentity) => {
     const epoch = ++connectionEpochRef.current
@@ -455,6 +459,13 @@ export function useRelay(initialBundle?: PairingBundle) {
               void requestSnapshots(current, connectedRelaysRef.current).catch(() => undefined)
               if (localStorage.getItem("remotty-notifications") === "enabled") {
                 void registerPush(current).catch((cause) => setError((cause as Error).message))
+              }
+              if (control.data.connectedRelayIds.length) {
+                window.setTimeout(() => {
+                  if (connectionEpochRef.current !== epoch || !identityRef.current?.enrolled) return
+                  if (!connectedRelaysRef.current.size || slicesRef.current.size) return
+                  setError("No workspace answered this device. If it was revoked, disconnect and pair it again.")
+                }, 15_000)
               }
             }
             else if (control.data.connectedRelayIds.length) void enroll().catch((cause) => setError((cause as Error).message))

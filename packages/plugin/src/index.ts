@@ -455,6 +455,19 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
 
   connect()
 
+  const notifiedRevocations = new Set<string>()
+  const pushRevocations = async () => {
+    if (socket?.readyState !== WebSocket.OPEN || !transportReady) return
+    const current = await readConfig()
+    if (current?.version !== 2) return
+    for (const device of current.devices) {
+      if (!device.revokedAt || notifiedRevocations.has(device.id)) continue
+      notifiedRevocations.add(device.id)
+      await sendEncrypted({ type: "device.revoked", deviceId: device.id }, device)
+    }
+  }
+  const revocationTimer = setInterval(() => { void pushRevocations().catch(() => undefined) }, 5_000)
+
   const sendPushForEvent = async (eventType: string, properties: JsonObject) => {
     const completedSessionId = completionSessionForEvent(eventType, properties, completionState)
     if (completedSessionId) {
@@ -558,6 +571,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
     },
     dispose: async () => {
       stopped = true
+      clearInterval(revocationTimer)
       socket?.close(1000, "OpenCode stopped")
     },
   }

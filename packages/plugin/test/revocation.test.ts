@@ -13,4 +13,14 @@ describe("relay revocation cleanup", () => {
     expect(branch).toContain("candidate.id !== error.device.id || !candidate.revokedAt")
     expect(branch.indexOf("sendEncrypted")).toBeLessThan(branch.indexOf("updateV2ConfigLocked"))
   })
+
+  it("pushes device.revoked to freshly revoked devices", async () => {
+    const source = await readFile(join(__dirname, "..", "src", "index.ts"), "utf8")
+
+    expect(source).toContain("const notifiedRevocations = new Set<string>()")
+    expect(source).toContain("if (!device.revokedAt || notifiedRevocations.has(device.id)) continue")
+    expect(source).toContain('sendEncrypted({ type: "device.revoked", deviceId: device.id }, device)')
+    expect(source).toContain("setInterval(() => { void pushRevocations().catch(() => undefined) }, 5_000)")
+    expect(source).toContain("clearInterval(revocationTimer)")
+  })
 })
