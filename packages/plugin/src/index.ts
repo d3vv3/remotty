@@ -24,6 +24,7 @@ import { completionNotification, completionSessionForEvent, shouldNotifySessionC
 import {
   consumeEnrollment,
   commandChangesState,
+  DeviceRevokedError,
   openCommandFrame,
   recordMessageId,
   updateV2ConfigLocked,
@@ -341,7 +342,29 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
     if (frame.channel !== "data" || frame.recipient !== relayId) throw new Error("Rejected non-command relay frame")
     const latest = await readConfig()
     if (latest?.version !== 2) throw new Error("Relay v2 configuration is unavailable")
-    const opened = await openCommandFrame(frame, latest, relayId)
+    let opened: Awaited<ReturnType<typeof openCommandFrame>>
+    try {
+      opened = await openCommandFrame(frame, latest, relayId)
+    } catch (error) {
+      if (error instanceof DeviceRevokedError) {
+        await sendEncrypted({ type: "device.revoked", deviceId: error.device.id }, error.device)
+        return
+      }
+      throw error
+    }
+    const deviceName = opened.command.type === "snapshot.request" ? opened.command.deviceName : undefined
+    if (deviceName && deviceName !== opened.device.name) {
+      const persisted = await updateV2ConfigLocked((current) => ({
+        ...current,
+        devices: current.devices.map((candidate) =>
+          candidate.id === opened.device.id && !candidate.revokedAt
+            ? { ...candidate, name: deviceName }
+            : candidate),
+      }))
+      const device = persisted.devices.find((candidate) => candidate.id === opened.device.id && !candidate.revokedAt)
+      if (!device) throw new Error("Device is not active")
+      opened = { ...opened, device }
+    }
     let device: DeviceRecord | undefined
     try {
       if (commandChangesState(opened.command)) {

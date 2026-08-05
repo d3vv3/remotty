@@ -91,11 +91,19 @@ export const relayMessageSchema = z.discriminatedUnion("type", [
     result: z.unknown().optional(),
     error: z.string().optional(),
   }),
+  z.object({
+    type: z.literal("device.revoked"),
+    deviceId: z.string(),
+  }),
 ])
 export type RelayMessage = z.infer<typeof relayMessageSchema>
 
 export const clientCommandSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("snapshot.request"), requestId: z.string() }),
+  z.object({
+    type: z.literal("snapshot.request"),
+    requestId: z.string(),
+    deviceName: z.string().trim().min(1).max(80).optional(),
+  }),
   z.object({
     type: z.literal("session.messages"),
     requestId: z.string(),

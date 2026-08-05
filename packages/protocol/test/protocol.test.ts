@@ -2,6 +2,21 @@ import { describe, expect, it } from "vitest"
 import { brokerMessageSchema, clientCommandSchema, relayMessageSchema } from "../src/index"
 
 describe("relay protocol", () => {
+  it("accepts an authenticated device revocation message", () => {
+    expect(relayMessageSchema.parse({ type: "device.revoked", deviceId: "device-1" })).toEqual({
+      type: "device.revoked",
+      deviceId: "device-1",
+    })
+  })
+
+  it("accepts an optional device label with snapshot requests", () => {
+    expect(clientCommandSchema.parse({
+      type: "snapshot.request",
+      requestId: "request-1",
+      deviceName: "Safari on iPadOS (abcdef)",
+    })).toMatchObject({ deviceName: "Safari on iPadOS (abcdef)" })
+  })
+
   it("accepts a valid prompt command", () => {
     expect(
       clientCommandSchema.parse({

@@ -79,6 +79,7 @@ The broker does not receive plaintext chat messages, diffs, commands, or notific
 The room identifier is the relay authority fingerprint and grants no command authority. P-256 ECDH, HKDF-SHA-256, AES-256-GCM, and ECDSA protect application payloads end to end. The relay rejects stale, replayed, unsigned, unknown-device, and revoked-device commands. The broker still sees room and device identifiers, Push endpoints, frame sizes, and timing, and it can delay or drop traffic.
 
 Use `remotty invite`, `remotty devices`, and `remotty revoke <device-id>` to manage browser access.
+The device ID is the SHA-256 fingerprint of its signing public key, not a random UUID. The device list also shows a browser, operating-system, and short-fingerprint label. Active devices refresh old labels when they connect.
 
 The hosted service privacy design is available at `https://remotty.devve.space/privacy`.
 

@@ -191,6 +191,15 @@ describe("relay v2 security", () => {
     const opened = await openCommandFrame(commandFrame, enrolled, relayId, now)
     expect(opened.command).toMatchObject({ type: "session.abort", requestId: "request-1" })
 
+    const revoked = {
+      ...enrolled,
+      devices: enrolled.devices.map((device) => ({ ...device, revokedAt: new Date(now).toISOString() })),
+    }
+    await expect(openCommandFrame(commandFrame, revoked, relayId, now)).rejects.toMatchObject({
+      name: "DeviceRevokedError",
+      device: { id: data.deviceId },
+    })
+
     const response = await sealJsonPayload(
       { type: "rpc.result", requestId: "request-1", result: true },
       {

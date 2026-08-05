@@ -15,6 +15,7 @@ import {
   type QuestionRequest,
   type SessionSummary,
 } from "@remotty/protocol"
+import { currentDeviceName } from "./deviceName"
 import {
   deleteIdentity,
   loadCurrentIdentity,
@@ -31,6 +32,10 @@ type PendingRequest = {
   reject: (error: Error) => void
   timeout: number
 }
+
+type RelayRequest = ClientCommand extends infer Command
+  ? Command extends { requestId: string } ? Omit<Command, "requestId"> : never
+  : never
 
 const MAX_FRAME_AGE_MS = 5 * 60 * 1_000
 const MAX_RECENT_MESSAGES = 1_000
@@ -184,7 +189,7 @@ export function useRelay(initialBundle?: PairingBundle) {
     socket.send(JSON.stringify(frame))
   }, [])
 
-  const requestFromRelay = useCallback((identity: DeviceIdentity, relayId: string, command: Omit<ClientCommand, "requestId">) => {
+  const requestFromRelay = useCallback((identity: DeviceIdentity, relayId: string, command: RelayRequest) => {
     if (!connectedRelaysRef.current.has(relayId)) return Promise.reject(new Error("The workspace relay is offline."))
     const requestId = crypto.randomUUID()
     return new Promise<unknown>((resolve, reject) => {
@@ -202,9 +207,10 @@ export function useRelay(initialBundle?: PairingBundle) {
   }, [sendCommandFrame])
 
   const requestSnapshots = useCallback((identity: DeviceIdentity, relayIds: Iterable<string>, waitForReply = false) => {
+    const deviceName = currentDeviceName(identity.deviceId)
     const requests = [...relayIds].map((relayId) => {
-      if (waitForReply) return requestFromRelay(identity, relayId, { type: "snapshot.request" })
-      return sendCommandFrame(identity, relayId, { type: "snapshot.request", requestId: crypto.randomUUID() })
+      if (waitForReply) return requestFromRelay(identity, relayId, { type: "snapshot.request", deviceName })
+      return sendCommandFrame(identity, relayId, { type: "snapshot.request", requestId: crypto.randomUUID(), deviceName })
     })
     return Promise.all(requests)
   }, [requestFromRelay, sendCommandFrame])
@@ -302,7 +308,29 @@ export function useRelay(initialBundle?: PairingBundle) {
         return
       }
       const data = relayMessage.data
-      if (data.type === "relay.hello") {
+      if (data.type === "device.revoked") {
+        if (data.deviceId !== identity.deviceId) return
+        ++connectionEpochRef.current
+        const socket = socketRef.current
+        socketRef.current = undefined
+        identityRef.current = undefined
+        socket?.close(1000, "Device revoked")
+        await deleteIdentity(identity)
+        connectedRelaysRef.current.clear()
+        slicesRef.current.clear()
+        sessionRelaysRef.current.clear()
+        for (const pending of pendingRef.current.values()) {
+          window.clearTimeout(pending.timeout)
+          pending.reject(new Error("This browser device was revoked."))
+        }
+        pendingRef.current.clear()
+        publishSlices()
+        history.replaceState({}, "", "/pair")
+        setConnection("disconnected")
+        setEnrolled(false)
+        setNotificationsEnabled(false)
+        setError("This browser device was revoked. Pair it again to restore access.")
+      } else if (data.type === "relay.hello") {
         if (data.relay.id !== frame.sender) return
         const current = slicesRef.current.get(frame.sender)
         if (!acceptsRelayPosition(current, data.relay, data.sequence)) return
@@ -511,7 +539,7 @@ export function useRelay(initialBundle?: PairingBundle) {
     })().catch(() => undefined)
   }, [publishSlices])
 
-  const request = useCallback((command: Omit<ClientCommand, "requestId">, workspaceRelayId?: string): Promise<unknown> => {
+  const request = useCallback((command: RelayRequest, workspaceRelayId?: string): Promise<unknown> => {
     const identity = identityRef.current
     if (!identity?.enrolled) return Promise.reject(new Error("The browser device is not enrolled."))
     if (command.type === "snapshot.request") {

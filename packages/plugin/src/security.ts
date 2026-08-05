@@ -180,6 +180,13 @@ export function recordMessageId(
   }
 }
 
+export class DeviceRevokedError extends Error {
+  constructor(readonly device: DeviceRecord) {
+    super("Device has been revoked")
+    this.name = "DeviceRevokedError"
+  }
+}
+
 export async function openCommandFrame(
   frame: E2eeFrame,
   config: RelayConfig,
@@ -189,14 +196,15 @@ export async function openCommandFrame(
   if (frame.channel !== "data" || frame.recipient !== relayId) throw new Error("Invalid command route")
   if (Math.abs(now - frame.issuedAt) > COMMAND_MAX_CLOCK_SKEW_MS) throw new Error("Command timestamp is outside the allowed window")
   const device = config.devices.find((candidate) => candidate.id === frame.sender)
-  if (!device || device.revokedAt) throw new Error("Device is not active")
-  const payload = await openJsonPayload<unknown>(frame, {
+  if (!device) throw new Error("Device is not active")
+  const command = clientCommandSchema.parse(await openJsonPayload<unknown>(frame, {
     recipient: relayId,
     recipientEncryptionPrivateKey: config.relayEncryptionPrivateKey,
     senderEncryptionPublicKey: device.encryptionPublicKey,
     senderSigningPublicKey: device.signingPublicKey,
-  })
-  return { command: clientCommandSchema.parse(payload), device }
+  }))
+  if (device.revokedAt) throw new DeviceRevokedError(device)
+  return { command, device }
 }
 
 export const updateV2ConfigLocked = (update: (config: RelayConfig) => RelayConfig | Promise<RelayConfig>) =>

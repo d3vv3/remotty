@@ -5,6 +5,7 @@ import {
   type EcPublicJwk,
   type PairingBundle,
 } from "@remotty/protocol"
+import { currentDeviceName } from "./deviceName"
 
 export const DEVICE_DB_NAME = "remotty-e2ee-v2"
 export const DEVICE_DB_VERSION = 1
@@ -181,7 +182,7 @@ const prepareIdentityImpl = async (bundle: PairingBundle): Promise<DeviceIdentit
     brokerUrl: bundle.brokerUrl,
     roomToken: bundle.roomToken,
     deviceId,
-    name: `Browser ${deviceId.slice(0, 8)}`,
+    name: currentDeviceName(deviceId),
     signingPublicKey: signing.publicKey,
     signingPrivateKey: signing.privateKey,
     encryptionPublicKey: encryption.publicKey,
