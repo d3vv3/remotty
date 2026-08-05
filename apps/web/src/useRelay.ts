@@ -290,6 +290,7 @@ export function useRelay(initialBundle?: PairingBundle) {
         }
         identityRef.current = enrolled
         setEnrolled(true)
+        setError(undefined)
         await requestSnapshots(enrolled, connectedRelaysRef.current)
         if (localStorage.getItem("remotty-notifications") === "enabled") await registerPush(enrolled)
         return
@@ -469,6 +470,7 @@ export function useRelay(initialBundle?: PairingBundle) {
               }
             }
             else if (control.data.connectedRelayIds.length) void enroll().catch((cause) => setError((cause as Error).message))
+            else setError("No OpenCode workspace is connected. On your computer run `opencode plugin opencode-remotty --global --force`, restart OpenCode, and keep this page open. Pairing resumes automatically.")
           } else if (control.data.type === "broker.relay-status") {
             if (control.data.connected) connectedRelaysRef.current.add(control.data.relayId)
             else {
@@ -487,6 +489,7 @@ export function useRelay(initialBundle?: PairingBundle) {
             if (control.data.connected && current?.enrolled) {
               void requestSnapshots(current, [control.data.relayId]).catch(() => undefined)
             } else if (control.data.connected) {
+              setError(undefined)
               void enroll().catch((cause) => setError((cause as Error).message))
             }
           } else if (control.data.type === "broker.error") {
