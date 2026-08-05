@@ -103,7 +103,7 @@ function PwaUpdatePrompt() {
     updateServiceWorker,
   } = useRegisterSW()
   const [updating, setUpdating] = useState(false)
-  if (!needRefresh) return null
+  if (!needRefresh || location.pathname === "/pair") return null
 
   const update = async () => {
     setUpdating(true)

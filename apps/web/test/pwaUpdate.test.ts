@@ -14,5 +14,6 @@ describe("controlled PWA updates", () => {
     expect(app).toContain("Update now")
     expect(app).toContain("close every Remotty tab and installed app window")
     expect(app).toContain("opencode plugin opencode-remotty --global --force")
+    expect(app).toContain('location.pathname === "/pair"')
   })
 })
