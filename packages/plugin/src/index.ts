@@ -348,6 +348,10 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
     } catch (error) {
       if (error instanceof DeviceRevokedError) {
         await sendEncrypted({ type: "device.revoked", deviceId: error.device.id }, error.device)
+        await updateV2ConfigLocked((current) => ({
+          ...current,
+          devices: current.devices.filter((candidate) => candidate.id !== error.device.id || !candidate.revokedAt),
+        }))
         return
       }
       throw error

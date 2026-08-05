@@ -27,9 +27,13 @@ npx opencode-remotty pair
 npx opencode-remotty invite
 npx opencode-remotty devices
 npx opencode-remotty revoke <device-id>
+npx opencode-remotty remove <device-id>
+npx opencode-remotty remove --revoked
 npx opencode-remotty status
 ```
 
 The plugin keeps relay authority keys, invitation hashes, device keys, revocation state, and replay records in `~/.config/remotty/config.json` with mode `0600`. The broker routes only opaque encrypted frames.
 
 Each device ID is the SHA-256 fingerprint of its signing public key. The readable device name contains the browser, operating system, and a short fingerprint. Active devices refresh this name when they connect.
+
+A revoked device stays in the list as a tombstone until it connects once more. The relay then tells the device it was revoked and deletes the record. `remove` deletes records that never reconnect; `remove --revoked` clears all tombstones at once.

@@ -98,6 +98,16 @@ export function revokeDevice(config: RelayConfig, id: string, now = new Date()):
   }
 }
 
+export function removeDevice(config: RelayConfig, id: string): RelayConfig {
+  const device = config.devices.find((candidate) => candidate.id === id)
+  if (!device) throw new Error(`Unknown device: ${id}`)
+  return { ...config, devices: config.devices.filter((candidate) => candidate.id !== id) }
+}
+
+export function removeRevokedDevices(config: RelayConfig): RelayConfig {
+  return { ...config, devices: config.devices.filter((device) => !device.revokedAt) }
+}
+
 export function statusView(config: RelayConfig, now = new Date()) {
   const timestamp = now.getTime()
   return {
@@ -244,6 +254,31 @@ export async function runCli(argv = process.argv.slice(2)): Promise<void> {
     return
   }
 
+  if (command === "remove") {
+    const target = args[0]
+    if (!target) throw new Error("Usage: remotty remove <id|--revoked>")
+    if (target === "--revoked") {
+      let removed = 0
+      await updateConfig((current) => {
+        const config = requireV2(current)
+        const next = removeRevokedDevices(config)
+        removed = config.devices.length - next.devices.length
+        return next
+      })
+      console.log(`Removed ${removed} revoked device(s)`)
+      return
+    }
+    let active = false
+    await updateConfig((current) => {
+      const config = requireV2(current)
+      active = config.devices.some((candidate) => candidate.id === target && !candidate.revokedAt)
+      return removeDevice(config, target)
+    })
+    console.log(`Removed device: ${target}`)
+    if (active) console.log("The device was still active; it stops working without a revocation notice.")
+    return
+  }
+
   if (command === "status") {
     const config = await readConfig()
     if (!config) console.log("Not paired")
@@ -252,5 +287,5 @@ export async function runCli(argv = process.argv.slice(2)): Promise<void> {
     return
   }
 
-  console.log("Usage: remotty <pair|invite|devices|revoke <id>|status>")
+  console.log("Usage: remotty <pair|invite|devices|revoke <id>|remove <id|--revoked>|status>")
 }

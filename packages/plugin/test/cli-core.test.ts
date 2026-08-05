@@ -1,5 +1,50 @@
 import { describe, expect, it, vi } from "vitest"
-import { copyPairingToken, terminalHyperlink, terminalQrCode } from "../src/cli-core"
+import { copyPairingToken, removeDevice, removeRevokedDevices, terminalHyperlink, terminalQrCode } from "../src/cli-core"
+import type { DeviceRecord, RelayConfig } from "../src/config"
+
+const publicKey = { kty: "EC", crv: "P-256", x: "x", y: "y" } as const
+
+const device = (id: string, revokedAt?: string): DeviceRecord => ({
+  id,
+  name: `Device ${id}`,
+  signingPublicKey: publicKey,
+  encryptionPublicKey: publicKey,
+  enrolledAt: "2026-08-01T00:00:00.000Z",
+  revokedAt,
+  recentMessages: [],
+})
+
+const configWith = (devices: DeviceRecord[]): RelayConfig => ({
+  version: 2,
+  brokerUrl: "wss://broker.test/ws",
+  roomToken: "room",
+  name: "relay",
+  authorityId: "authority",
+  relaySigningPublicKey: publicKey,
+  relaySigningPrivateKey: { ...publicKey, d: "d" },
+  relayEncryptionPublicKey: publicKey,
+  relayEncryptionPrivateKey: { ...publicKey, d: "d" },
+  invites: [],
+  devices,
+})
+
+describe("removeDevice", () => {
+  it("deletes the record for the given id", () => {
+    const config = configWith([device("a", "2026-08-05T00:00:00.000Z"), device("b")])
+    expect(removeDevice(config, "a").devices.map((entry) => entry.id)).toEqual(["b"])
+  })
+
+  it("rejects unknown ids", () => {
+    expect(() => removeDevice(configWith([device("a")]), "missing")).toThrow("Unknown device: missing")
+  })
+})
+
+describe("removeRevokedDevices", () => {
+  it("keeps only active devices", () => {
+    const config = configWith([device("a", "2026-08-05T00:00:00.000Z"), device("b"), device("c", "2026-08-05T01:00:00.000Z")])
+    expect(removeRevokedDevices(config).devices.map((entry) => entry.id)).toEqual(["b"])
+  })
+})
 
 describe("terminalHyperlink", () => {
   it("keeps redirected output plain", () => {
