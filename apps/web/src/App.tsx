@@ -103,7 +103,8 @@ function PwaUpdatePrompt() {
     updateServiceWorker,
   } = useRegisterSW()
   const [updating, setUpdating] = useState(false)
-  if (!needRefresh || location.pathname === "/pair") return null
+  const paired = Boolean(localStorage.getItem(CURRENT_IDENTITY_MARKER))
+  if (!needRefresh || location.pathname === "/pair" || (location.pathname !== "/app" && !paired)) return null
 
   const update = async () => {
     setUpdating(true)

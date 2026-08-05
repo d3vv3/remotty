@@ -16,4 +16,10 @@ describe("controlled PWA updates", () => {
     expect(app).toContain("opencode plugin opencode-remotty --global --force")
     expect(app).toContain('location.pathname === "/pair"')
   })
+
+  it("hides the prompt on unpaired landing pages", async () => {
+    const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8")
+    expect(app).toContain("localStorage.getItem(CURRENT_IDENTITY_MARKER)")
+    expect(app).toContain('(location.pathname !== "/app" && !paired)')
+  })
 })

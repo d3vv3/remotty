@@ -13,7 +13,7 @@ The local OpenCode plugin makes an outbound WebSocket connection to the broker. 
 
 ## Install the OpenCode plugin
 
-Install both the server and TUI plugin entries:
+Install with one command. It registers the plugin in the OpenCode configuration; no manual `tui.json` edit is needed:
 
 ```sh
 opencode plugin opencode-remotty --global --force

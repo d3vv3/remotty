@@ -4,7 +4,7 @@ remotty is a remote PWA control surface for OpenCode sessions.
 
 ## Install
 
-Install both the server and TUI plugin entries:
+Install with one command. It registers the plugin in the OpenCode configuration; no manual `tui.json` edit is needed:
 
 ```sh
 opencode plugin opencode-remotty --global --force
