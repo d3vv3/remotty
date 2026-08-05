@@ -35,7 +35,6 @@ import {
   WifiOff,
   X,
 } from "lucide-react"
-import type { IScannerControls } from "@zxing/browser"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { useRegisterSW } from "virtual:pwa-register/react"
@@ -568,36 +567,103 @@ function PairingScreen({ onConnect, error }: { onConnect: (bundle: PairingBundle
   )
 }
 
+type BarcodeDetectorLike = new (options?: { formats?: string[] }) => {
+  detect(source: HTMLVideoElement): Promise<Array<{ rawValue: string }>>
+}
+
 function PairingScanner({ onScan, onClose }: { onScan: (bundle: PairingBundle) => void; onClose: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [error, setError] = useState<string>()
 
   useEffect(() => {
-    let controls: IScannerControls | undefined
     let cancelled = false
-    void import("@zxing/browser").then(({ BrowserQRCodeReader }) => {
+    const cleanups: Array<() => void> = []
+    const stopAll = () => {
+      for (const cleanup of cleanups.splice(0)) cleanup()
+    }
+    const finish = (text: string) => {
       if (cancelled) return
-      const reader = new BrowserQRCodeReader(undefined, { delayBetweenScanAttempts: 150 })
-      return reader.decodeFromVideoDevice(undefined, videoRef.current ?? undefined, (result, _error, scannerControls) => {
-        controls = scannerControls
-        if (!result || cancelled) return
-        const bundle = pairingBundleFrom(result.getText())
-        if (!bundle) {
-          setError("This QR code does not contain a remotty v2 encrypted invite.")
-          return
-        }
-        scannerControls.stop()
-        onScan(bundle)
+      const bundle = pairingBundleFrom(text)
+      if (!bundle) {
+        setError("This QR code does not contain a remotty v2 encrypted invite.")
+        return
+      }
+      cancelled = true
+      stopAll()
+      onScan(bundle)
+    }
+
+    const scanWithZxing = async (stream: MediaStream, video: HTMLVideoElement) => {
+      const [{ BrowserQRCodeReader }, { DecodeHintType }] = await Promise.all([
+        import("@zxing/browser"),
+        import("@zxing/library"),
+      ])
+      if (cancelled) return
+      const hints = new Map([[DecodeHintType.TRY_HARDER, true]])
+      const reader = new BrowserQRCodeReader(hints, { delayBetweenScanAttempts: 50 })
+      const controls = await reader.decodeFromStream(stream, video, (result) => {
+        if (result) finish(result.getText())
       })
-    }).then((scannerControls) => {
-      if (!scannerControls) return
-      controls = scannerControls
-      if (cancelled) scannerControls.stop()
-    }).catch(() => setError("Camera access is unavailable. Check the browser permission."))
+      if (cancelled) controls.stop()
+      else cleanups.push(() => controls.stop())
+    }
+
+    const scanWithDetector = (video: HTMLVideoElement, Detector: BarcodeDetectorLike, onBroken: () => void) => {
+      const detector = new Detector({ formats: ["qr_code"] })
+      let fellBack = false
+      const timer = window.setInterval(() => {
+        if (video.readyState < 2) return
+        detector.detect(video).then((codes) => {
+          const value = codes.find((code) => code.rawValue)?.rawValue
+          if (value) finish(value)
+        }).catch(() => {
+          if (fellBack) return
+          fellBack = true
+          window.clearInterval(timer)
+          onBroken()
+        })
+      }, 100)
+      cleanups.push(() => window.clearInterval(timer))
+    }
+
+    const start = async () => {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
+      })
+      cleanups.push(() => {
+        for (const track of stream.getTracks()) track.stop()
+      })
+      if (cancelled) {
+        stopAll()
+        return
+      }
+      const [track] = stream.getVideoTracks()
+      await track?.applyConstraints({ advanced: [{ focusMode: "continuous" }] } as unknown as MediaTrackConstraints).catch(() => undefined)
+      const video = videoRef.current
+      if (!video) return
+      video.srcObject = stream
+      await video.play().catch(() => undefined)
+      if (cancelled) return
+      const Detector = (window as { BarcodeDetector?: BarcodeDetectorLike }).BarcodeDetector
+      if (Detector) {
+        try {
+          scanWithDetector(video, Detector, () => {
+            void scanWithZxing(stream, video).catch(() => setError("The QR scanner failed to start."))
+          })
+          return
+        } catch {
+          // fall through to zxing
+        }
+      }
+      await scanWithZxing(stream, video)
+    }
+
+    void start().catch(() => setError("Camera access is unavailable. Check the browser permission."))
 
     return () => {
       cancelled = true
-      controls?.stop()
+      stopAll()
     }
   }, [onScan])
 

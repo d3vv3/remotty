@@ -152,7 +152,7 @@ export const terminalHyperlink = (url: string, interactive = process.stdout.isTT
   interactive ? `\u001B]8;;${url}\u0007${label}\u001B]8;;\u0007` : url
 
 export const terminalQrCode = (value: string) =>
-  QRCode.toString(value, { type: "terminal", small: true, errorCorrectionLevel: "Q" })
+  QRCode.toString(value, { type: "terminal", small: true, errorCorrectionLevel: "L" })
 
 const runClipboardCommand = (command: string, args: string[], input?: string) =>
   new Promise<string>((resolve, reject) => {
