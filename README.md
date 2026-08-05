@@ -27,7 +27,7 @@ npx opencode-remotty pair
 
 Restart OpenCode. Paste the printed invite token into the PWA or open the clickable pairing link.
 
-The pairing command copies the token when a system clipboard is available. It also prints a QR code. Scan it with your phone camera or the scanner beside the pairing input.
+The pairing command prints the invite token, the pairing link, and a QR code. Copy the token, open the link, or scan the code with your phone camera or the scanner beside the pairing input.
 
 The CLI writes relay authority keys, device records, and invitation hashes to `~/.config/remotty/config.json` with mode `0600`. These environment variables override non-secret settings:
 

@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest"
-import { copyPairingToken, removeDevice, removeRevokedDevices, terminalHyperlink, terminalQrCode } from "../src/cli-core"
+import { describe, expect, it } from "vitest"
+import { removeDevice, removeRevokedDevices, terminalHyperlink, terminalQrCode } from "../src/cli-core"
 import type { DeviceRecord, RelayConfig } from "../src/config"
 
 const publicKey = { kty: "EC", crv: "P-256", x: "x", y: "y" } as const
@@ -55,26 +55,6 @@ describe("terminalHyperlink", () => {
     const url = "https://example.test/pair#token"
     expect(terminalHyperlink(url, true)).toBe(`\u001B]8;;${url}\u0007${url}\u001B]8;;\u0007`)
     expect(terminalHyperlink(url, true, "pairing page")).toBe(`\u001B]8;;${url}\u0007pairing page\u001B]8;;\u0007`)
-  })
-})
-
-describe("copyPairingToken", () => {
-  it("copies the raw invite token", async () => {
-    const write = vi.fn(async () => undefined)
-    const read = vi.fn(async () => "remotty:v2:invite")
-    await expect(copyPairingToken("remotty:v2:invite", write, read)).resolves.toBe(true)
-    expect(write).toHaveBeenCalledWith("remotty:v2:invite")
-  })
-
-  it("reports an unavailable clipboard without throwing", async () => {
-    const write = vi.fn(async () => { throw new Error("unavailable") })
-    await expect(copyPairingToken("remotty:v2:invite", write, vi.fn())).resolves.toBe(false)
-  })
-
-  it("reports success only when the clipboard contains the token", async () => {
-    const write = vi.fn(async () => undefined)
-    const read = vi.fn(async () => "previous clipboard value")
-    await expect(copyPairingToken("remotty:v2:invite", write, read)).resolves.toBe(false)
   })
 })
 

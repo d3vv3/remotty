@@ -70,7 +70,6 @@
     "access": "public"
   },
   "dependencies": {
-    "clipboardy": "^4.0.0",
     "qrcode": "^1.5.4"
   }
 }
