@@ -460,8 +460,13 @@ export function useRelay(initialBundle?: PairingBundle) {
       socket.addEventListener("error", () => {
         if (socketRef.current === socket) setError("Cannot reach the relay broker.")
       })
-      socket.addEventListener("close", () => {
+      socket.addEventListener("close", (event) => {
         if (socketRef.current !== socket || connectionEpochRef.current !== epoch) return
+        if (event.code === 4001) {
+          setConnection("offline")
+          setError("This device was opened in another Remotty window.")
+          return
+        }
         setConnection("connecting")
         window.setTimeout(open, 1_000)
       })

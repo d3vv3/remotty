@@ -41,7 +41,9 @@ export const registerRelay = (room: Room, relayId: string, socket: WebSocket) =>
 
 export const registerClient = (room: Room, deviceId: string, socket: WebSocket) => {
   const existing = room.clients.get(deviceId)
-  if (existing && existing !== socket && existing.readyState === WebSocket.OPEN) return false
+  if (existing && existing !== socket && existing.readyState === WebSocket.OPEN) {
+    existing.close(4001, "identity_replaced")
+  }
   room.clients.set(deviceId, socket)
   return true
 }

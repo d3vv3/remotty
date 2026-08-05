@@ -1,7 +1,7 @@
 import type { E2eeFrame } from "@remotty/protocol"
 import type { WebSocket } from "ws"
 import { WebSocket as WebSocketState } from "ws"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import {
   RelayRooms,
   isRoomToken,
@@ -14,7 +14,7 @@ import {
   routeRelayFrame,
 } from "../src/rooms"
 
-const socket = (readyState: number = WebSocketState.OPEN) => ({ readyState } as WebSocket)
+const socket = (readyState: number = WebSocketState.OPEN) => ({ readyState, close: vi.fn() } as unknown as WebSocket)
 const signingPublicKey = { kty: "EC" as const, crv: "P-256" as const, x: "A".repeat(43), y: "B".repeat(43) }
 const frame = (values: Partial<E2eeFrame> = {}): E2eeFrame => ({
   type: "e2ee.frame",
@@ -73,7 +73,7 @@ describe("RelayRooms", () => {
 })
 
 describe("identity registration", () => {
-  it("rejects duplicate active identities", () => {
+  it("rejects duplicate relays and lets the newest authenticated client win", () => {
     const room = new RelayRooms().get("token")
     const oldRelay = socket()
     const newRelay = socket()
@@ -83,9 +83,10 @@ describe("identity registration", () => {
     expect(registerRelay(room, "relay-1", oldRelay)).toBe(true)
     expect(registerRelay(room, "relay-1", newRelay)).toBe(false)
     expect(registerClient(room, "device-1", oldClient)).toBe(true)
-    expect(registerClient(room, "device-1", newClient)).toBe(false)
+    expect(registerClient(room, "device-1", newClient)).toBe(true)
     expect(room.relays.get("relay-1")).toBe(oldRelay)
-    expect(room.clients.get("device-1")).toBe(oldClient)
+    expect(room.clients.get("device-1")).toBe(newClient)
+    expect(oldClient.close).toHaveBeenCalledWith(4001, "identity_replaced")
   })
 })
 
