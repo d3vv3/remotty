@@ -1,4 +1,5 @@
 import { z } from "zod"
+import type { JsonValue } from "./e2ee"
 
 export * from "./e2ee-schema"
 export * from "./e2ee"
@@ -49,8 +50,56 @@ export const relayInfoSchema = z.object({
   version: z.string().optional(),
   instanceId: z.string().optional(),
   instanceStartedAt: z.number().int().nonnegative().optional(),
+  workspaceId: z.string().optional(),
+  capabilities: z.object({ ping: z.boolean().optional(), messageChunks: z.boolean().optional(), messageDelta: z.literal(1).optional(), promptMessageId: z.literal(1).optional() }).optional(),
 })
 export type RelayInfo = z.infer<typeof relayInfoSchema>
+/** Largest canonical message body accepted by both relay planning and browser reassembly. */
+export const MAX_CANONICAL_MESSAGE_BYTES = 7 * 1024 * 1024
+
+export const messageFingerprintSchema = z.string().length(43).regex(/^[A-Za-z0-9_-]+$/)
+/** Remove all browser-local delivery, provenance, and grace metadata without mutating an OpenCode message. */
+export const canonicalMessageValue = (value: JsonValue): JsonValue => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value
+  const message = value as Record<string, JsonValue>
+  const info = message.info
+  if (!info || typeof info !== "object" || Array.isArray(info)) return { ...message }
+  const { delivery: _delivery, legacyPrompt: _legacyPrompt, acceptedMisses: _acceptedMisses, ...canonicalInfo } = info as Record<string, JsonValue>
+  return { ...message, info: canonicalInfo }
+}
+export const messageInventoryEntrySchema = z.object({ id: z.string().min(1).max(200), fingerprint: messageFingerprintSchema }).strict()
+export const messageDeltaScopeSchema = z.object({ kind: z.literal("tail"), limit: z.literal(80) }).strict()
+export const messageDeltaManifestSchema = z.object({
+  version: z.literal(1),
+  scope: messageDeltaScopeSchema,
+  manifest: z.array(messageInventoryEntrySchema).max(80).superRefine((entries, context) => {
+    if (new Set(entries.map((entry) => entry.id)).size !== entries.length) context.addIssue({ code: "custom", message: "Message ids must be unique" })
+  }),
+  upserts: z.array(z.string().min(1).max(200)).max(80).superRefine((ids, context) => {
+    if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", message: "Upsert ids must be unique" })
+  }),
+  chunkCount: z.number().int().nonnegative().max(4_096),
+  snapshotId: messageFingerprintSchema,
+}).strict().superRefine((value, context) => {
+  const known = new Set(value.manifest.map((entry) => entry.id))
+  if (value.upserts.some((id) => !known.has(id))) context.addIssue({ code: "custom", message: "Upserts must be in manifest" })
+})
+export type MessageDeltaManifest = z.infer<typeof messageDeltaManifestSchema>
+
+export const messageDeltaFragmentSchema = z.object({
+  messageId: z.string().min(1).max(200), fingerprint: messageFingerprintSchema,
+  index: z.number().int().nonnegative(), total: z.number().int().positive().max(4_096), bytes: z.string().min(1),
+}).strict()
+export const messageDeltaChunkSchema = z.object({
+  requestId: z.string().min(1), snapshotId: messageFingerprintSchema,
+  index: z.number().int().nonnegative().max(4_095), total: z.number().int().positive().max(4_096),
+  records: z.array(z.object({ id: z.string().min(1).max(200), fingerprint: messageFingerprintSchema, message: z.unknown() }).strict()).max(80),
+  fragments: z.array(messageDeltaFragmentSchema).max(4_096).default([]),
+}).strict().superRefine((value, context) => {
+  if (value.index >= value.total) context.addIssue({ code: "custom", message: "Chunk index must be below total" })
+  if (!value.records.length && !value.fragments.length) context.addIssue({ code: "custom", message: "Chunk must carry a record or fragment" })
+})
+export type MessageDeltaChunk = z.infer<typeof messageDeltaChunkSchema>
 
 export const questionRequestSchema = z.object({
   id: z.string(),
@@ -79,6 +128,8 @@ export const relayMessageSchema = z.discriminatedUnion("type", [
     questions: z.array(questionRequestSchema).default([]),
     sequence: z.number().int().nonnegative().optional(),
   }),
+  z.object({ type: z.literal("session.messages.manifest"), requestId: z.string(), manifest: messageDeltaManifestSchema }),
+  z.object({ type: z.literal("session.messages.chunk"), chunk: messageDeltaChunkSchema }),
   z.object({
     type: z.literal("relay.event"),
     instanceId: z.string().optional(),
@@ -88,6 +139,15 @@ export const relayMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("rpc.result"),
     requestId: z.string(),
+    result: z.unknown().optional(),
+    error: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("rpc.chunk"),
+    requestId: z.string(),
+    index: z.number().int().nonnegative(),
+    total: z.number().int().positive().max(4_096),
+    done: z.boolean(),
     result: z.unknown().optional(),
     error: z.string().optional(),
   }),
@@ -108,7 +168,12 @@ export const clientCommandSchema = z.discriminatedUnion("type", [
     type: z.literal("session.messages"),
     requestId: z.string(),
     sessionId: z.string(),
+    chunked: z.literal(true).optional(),
+    sync: z.object({ version: z.literal(1), known: z.array(messageInventoryEntrySchema).max(80).superRefine((entries, context) => {
+      if (new Set(entries.map((entry) => entry.id)).size !== entries.length) context.addIssue({ code: "custom", message: "Known message ids must be unique" })
+    }) }).strict().optional(),
   }),
+  z.object({ type: z.literal("relay.ping"), requestId: z.string(), sentAt: z.number().int().nonnegative() }),
   z.object({
     type: z.literal("session.diff"),
     requestId: z.string(),
@@ -125,6 +190,7 @@ export const clientCommandSchema = z.discriminatedUnion("type", [
     sessionId: z.string(),
     text: z.string().trim().min(1).max(20_000),
     agent: z.string().optional(),
+    messageId: z.string().min(1).max(200).optional(),
   }),
   z.object({
     type: z.literal("session.abort"),

@@ -417,6 +417,7 @@ webSockets.on("connection", (socket: WebSocket, request: IncomingMessage) => {
           return
         }
         broadcastRelayStatus(room, identity, true)
+        sendControl(socket, { type: "broker.ready", version: 2, connectedRelayIds: [] })
       } else {
         if (!registerClient(room, identity, socket)) {
           reject("identity_in_use", "Transport identity already has an active connection", true)

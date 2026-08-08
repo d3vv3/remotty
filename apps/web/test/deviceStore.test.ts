@@ -1,6 +1,6 @@
 import type { EcPublicJwk, PairingBundle } from "@remotty/protocol"
 import { describe, expect, it } from "vitest"
-import { canReuseIdentity, identityKeyFor, type DeviceIdentity } from "../src/deviceStore"
+import { canReuseIdentity, identityKeyFor, queueCacheWrite, type DeviceIdentity } from "../src/deviceStore"
 
 const publicKey = (x: string): EcPublicJwk => ({ kty: "EC", crv: "P-256", x, y: "B".repeat(43) })
 const bundle: PairingBundle = {
@@ -40,5 +40,21 @@ describe("device identity reuse", () => {
   it("does not replace trusted relay keys", () => {
     expect(canReuseIdentity(identity, { ...bundle, relaySigningKey: publicKey("X".repeat(43)) })).toBe(false)
     expect(canReuseIdentity(identity, { ...bundle, roomToken: "Q".repeat(43) })).toBe(false)
+  })
+
+  it("serializes cache writes for the same resource key", async () => {
+    const events: string[] = []
+    let release!: () => void
+    const first = queueCacheWrite("identity:relay:session:messages", async () => {
+      events.push("first-start")
+      await new Promise<void>((resolve) => { release = resolve })
+      events.push("first-end")
+    })
+    const second = queueCacheWrite("identity:relay:session:messages", async () => { events.push("second") })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(events).toEqual(["first-start"])
+    release()
+    await Promise.all([first, second])
+    expect(events).toEqual(["first-start", "first-end", "second"])
   })
 })

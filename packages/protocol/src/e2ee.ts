@@ -115,6 +115,12 @@ export function canonicalizeJson(value: JsonValue): string {
     .join(",")}}`
 }
 
+/** SHA-256 of canonical JSON, encoded as an unpadded base64url digest. */
+export async function canonicalJsonFingerprint(value: JsonValue): Promise<string> {
+  const digest = await webcrypto().subtle.digest("SHA-256", encoder.encode(canonicalizeJson(value)))
+  return base64urlEncode(digest)
+}
+
 function frameHeader(frame: E2eeFrame | E2eeFrameHeader): E2eeFrameHeader {
   return {
     type: frame.type,

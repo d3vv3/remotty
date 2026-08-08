@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { acceptsRelayPosition, aggregateRelaySlices, commandRelayId, type RelaySlice } from "../src/relayState"
+import { acceptsRelayPosition, aggregateRelaySlices, commandRelayId, resolveConnectedWorkspaceRelay, stableWorkspaceKey, type RelaySlice } from "../src/relayState"
 
 const slice = (id: string, sessionId: string, updatedAt: number): RelaySlice => ({
   relay: { id, name: id, hostname: "host", platform: "linux", arch: "x64", workspace: `/${id}` },
@@ -47,6 +47,7 @@ describe("relay snapshot aggregation and routing", () => {
   it("merges duplicate sessions and routes to the active instance", () => {
     const idle = slice("relay-a", "session-a", 10)
     const busy = slice("relay-b", "session-a", 10)
+    busy.relay.workspace = idle.relay.workspace
     busy.sessions[0]!.status = "busy"
 
     const state = aggregateRelaySlices(new Map([["relay-a", idle], ["relay-b", busy]]))
@@ -65,5 +66,12 @@ describe("relay snapshot aggregation and routing", () => {
     expect(acceptsRelayPosition(current, current.relay, 9)).toBe(false)
     expect(acceptsRelayPosition(current, { ...current.relay, instanceId: "instance-1", instanceStartedAt: 10 }, 100)).toBe(false)
     expect(acceptsRelayPosition(current, { ...current.relay, instanceId: "instance-3", instanceStartedAt: 30 }, 0)).toBe(true)
+  })
+
+  it("resolves a restarted relay by stable workspace identity", () => {
+    const old = slice("old", "s", 1)
+    const replacement = slice("new", "s", 2)
+    replacement.relay.workspace = old.relay.workspace
+    expect(resolveConnectedWorkspaceRelay(stableWorkspaceKey(old.relay), ["new"], new Map([["old", old], ["new", replacement]]))).toBe("new")
   })
 })

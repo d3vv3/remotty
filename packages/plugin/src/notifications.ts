@@ -31,14 +31,14 @@ export const completionSessionForEvent = (
   return sessionId
 }
 
-export const completionNotification = (relayId: string, sessionId: string, sessionTitle?: string) => ({
+export const completionNotification = (relayId: string, sessionId: string, sessionTitle?: string, workspaceId?: string) => ({
   type: "notification.show" as const,
   title: "Agent finished",
   body: sessionTitle || "OpenCode is ready for your next instruction.",
   tag: `${relayId}:finished-${sessionId}`,
   actions: [],
   openApp: true,
-  data: { sessionId, workspaceRelayId: relayId },
+  data: { sessionId, workspaceRelayId: relayId, ...(workspaceId ? { workspaceId } : {}) },
 })
 
 export const shouldNotifySessionCompletion = (session: { parentID?: unknown } | undefined) =>

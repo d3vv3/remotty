@@ -57,6 +57,21 @@ describe("E2EE protocol v2", () => {
     ).resolves.toEqual({ command: "session.abort", nested: { sessionId: "session-1" } })
   })
 
+  it("keeps the maximum delta inventory encrypted frame below the broker limit", async () => {
+    const keys = await devices()
+    const frame = await sealJsonPayload({
+      type: "session.messages", requestId: "r", sessionId: "s", sync: {
+        version: 1,
+        known: Array.from({ length: 80 }, (_, index) => ({ id: `${index}-${"i".repeat(198)}`, fingerprint: "f".repeat(43) })),
+      },
+    }, {
+      channel: "data", sender: "alice", recipient: "bob", messageId: "inventory", issuedAt: 1,
+      senderSigningPrivateKey: keys.aliceSigning.privateKey, senderEncryptionPrivateKey: keys.aliceEncryption.privateKey,
+      recipientEncryptionPublicKey: keys.bobEncryption.publicKey,
+    })
+    expect(Buffer.byteLength(JSON.stringify(frame))).toBeLessThan(100 * 1024)
+  })
+
   it("rejects decryption with the wrong recipient key", async () => {
     const keys = await devices()
     const frame = await sealJsonPayload(

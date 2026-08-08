@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import {
   AlertTriangle,
   ArrowLeft,
@@ -44,6 +44,8 @@ import { useRelay } from "./useRelay"
 import { pairingBundleFrom, routeForEnrollment, routeForStoredIdentity } from "./pairing"
 import { NOTIFICATION_PROMPT_SEEN, shouldOfferPushNotifications } from "./notificationPrompt"
 import type { RoutedSession } from "./relayState"
+import { connectionLabel, mergeByMessageId, promptDeliveryState } from "./resilience"
+import { commitManifestForRefresh, emptyMessageCache, messageInventory, migrateMessageCache, replaceCanonicalMessages, stageMessage, visibleCachedMessages, type MessageCache } from "./messageCache"
 
 type MessagePart = {
   type: string
@@ -59,7 +61,7 @@ type MessagePart = {
     metadata?: Record<string, unknown>
   }
 }
-type SessionMessage = { info: { id: string; role: string; parentID?: string; time?: { created?: number } }; parts: MessagePart[] }
+type SessionMessage = { info: { id: string; role: string; parentID?: string; time?: { created?: number }; delivery?: "sending" | "queued" | "accepted" | "uncertain" | "failed"; legacyPrompt?: boolean }; parts: MessagePart[] }
 type FileDiff = { file: string; additions: number; deletions: number }
 type SessionTodo = { id: string; content: string; status: string; priority: string }
 
@@ -134,16 +136,25 @@ function PwaUpdatePrompt() {
 
 function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
   const relayState = useRelay(initialBundle)
+  const [connectionDetailsOpen, setConnectionDetailsOpen] = useState(false)
+  const connectionTriggerRef = useRef<HTMLButtonElement>(null)
   const [selectedKey, setSelectedKey] = useState<string | undefined>(
     () => new URLSearchParams(location.search).get("session") ?? undefined,
   )
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
   const [notificationPromptOpen, setNotificationPromptOpen] = useState(false)
   const [enablingNotifications, setEnablingNotifications] = useState(false)
-  const sessionKey = (session: SessionSummary & { workspaceRelayId?: string }) => `${session.workspaceRelayId ?? ""}:${session.id}`
+  const [, setClock] = useState(0)
+  const sessionKey = (session: SessionSummary & { workspaceRelayId?: string; workspaceId?: string }) => `${session.workspaceId ?? session.workspaceRelayId ?? ""}:${session.id}`
   const selected = relayState.sessions.find((session) =>
-    sessionKey(session) === selectedKey || (!selectedKey?.includes(":") && session.id === selectedKey),
+    sessionKey(session) === selectedKey || `${session.workspaceRelayId}:${session.id}` === selectedKey || (!selectedKey?.includes(":") && session.id === selectedKey),
   )
+  const loadSelectedCache = useCallback(<T,>(resource: string) => selected
+    ? relayState.loadCache<T>(selected.workspaceRelayId, resource, selected.id)
+    : Promise.resolve(undefined), [relayState.loadCache, selected?.workspaceRelayId, selected?.id])
+  const saveSelectedCache = useCallback(<T,>(resource: string, value: T) => selected
+    ? relayState.saveCache(selected.workspaceRelayId, resource, value, selected.id)
+    : Promise.resolve(), [relayState.saveCache, selected?.workspaceRelayId, selected?.id])
   const sessionGroups = useMemo(() => {
     const groups = new Map<string, RoutedSession[]>()
     for (const session of relayState.sessions) {
@@ -159,6 +170,10 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
     const timeout = window.setTimeout(() => relayState.setError(undefined), 6_000)
     return () => window.clearTimeout(timeout)
   }, [relayState.error])
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock((value) => value + 1), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     const supported = "Notification" in window && "serviceWorker" in navigator && "PushManager" in window
@@ -177,6 +192,10 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
     localStorage.setItem(NOTIFICATION_PROMPT_SEEN, "true")
     setNotificationPromptOpen(false)
   }
+  const closeConnectionDetails = useCallback(() => {
+    setConnectionDetailsOpen(false)
+    requestAnimationFrame(() => connectionTriggerRef.current?.focus())
+  }, [])
 
   const toggleGroup = (directory: string) => setCollapsedGroups((current) => {
     const next = new Set(current)
@@ -211,8 +230,10 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
           <strong>remotty</strong>
         </div>
         <div className={`connection-state ${relayState.connection}`}>
-          {relayState.connection === "online" ? <Wifi size={15} /> : <WifiOff size={15} />}
-          {relayState.connection === "online" ? "Live" : "Relay offline"}
+          <button ref={connectionTriggerRef} className="connection-button" onClick={() => setConnectionDetailsOpen(true)} aria-haspopup="dialog" aria-expanded={connectionDetailsOpen} aria-controls="connection-status-dialog">
+            {relayState.connection === "online" ? <Wifi size={15} /> : <WifiOff size={15} />}
+            {connectionLabel(relayState.connection, relayState.relays.length, Object.values(relayState.relayHealth).some((health) => health.timedOut))}
+          </button>
           <a className="notification-button" title="View source" aria-label="View source" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer"><Github size={15} /></a>
           <button
             className={`notification-button ${relayState.notificationsEnabled ? "enabled" : ""}`}
@@ -295,7 +316,9 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
               revision={relayState.sessionRevisions[sessionKey(selected)] ?? 0}
               permission={relayState.permissions.find((permission) => permission.sessionID === selected.id && permission.workspaceRelayId === selected.workspaceRelayId)}
               question={relayState.questions.find((question) => question.sessionID === selected.id && question.workspaceRelayId === selected.workspaceRelayId)}
-              request={(command) => relayState.request(command, selected.workspaceRelayId)}
+              request={(command, progress) => relayState.request(command, selected.workspaceRelayId, progress as ((messages: unknown[]) => void) | undefined)}
+              loadCache={loadSelectedCache}
+              saveCache={saveSelectedCache}
               onBack={() => setSelectedKey(undefined)}
               onError={relayState.setError}
             />
@@ -312,6 +335,7 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
       {relayState.error && (
         <div className="toast" role="alert"><AlertTriangle size={17} /><span>{relayState.error}</span><button title="Dismiss error" onClick={() => relayState.setError(undefined)}><X size={16} /></button></div>
       )}
+      {connectionDetailsOpen && <ConnectionDetails relayState={relayState} onClose={closeConnectionDetails} />}
       {notificationPromptOpen && (
         <div className="notification-prompt-overlay" role="presentation">
           <section className="notification-prompt" role="dialog" aria-modal="true" aria-labelledby="notification-prompt-title">
@@ -697,6 +721,41 @@ function SessionRow({ session, needsInput, offline, selected, onSelect }: { sess
   )
 }
 
+function ConnectionDetails({ relayState, onClose }: { relayState: ReturnType<typeof useRelay>; onClose: () => void }) {
+  const closeRef = useRef<HTMLButtonElement>(null)
+  const dialogRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    closeRef.current?.focus()
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") onClose()
+      if (event.key !== "Tab") return
+      const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])") ?? [])]
+      if (!focusable.length) return
+      const first = focusable[0]!
+      const last = focusable.at(-1)!
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+    }
+    window.addEventListener("keydown", escape)
+    return () => window.removeEventListener("keydown", escape)
+  }, [onClose])
+  const refresh = () => { void relayState.request({ type: "snapshot.request" }).catch((error) => relayState.setError(error.message)) }
+  return (
+    <div className="connection-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      <section ref={dialogRef} className="connection-dialog" id="connection-status-dialog" role="dialog" aria-modal="true" aria-labelledby="connection-title">
+        <header><h2 id="connection-title">Connection status</h2><button ref={closeRef} className="icon-button" title="Close" aria-label="Close connection status" onClick={onClose}><X size={18} /></button></header>
+        <div className="connection-row"><span>Remotty service</span><b>{relayState.serviceConnected ? "Connected" : "Unreachable"}</b></div>
+        {relayState.relays.map((relay) => {
+          const health = relayState.relayHealth[relay.id]
+          return <div className="connection-row" key={relay.id}><span>Your computer<small>{relay.name} . {relay.workspace}</small></span><b>{relayState.isRelayConnected(relay.id) ? "Connected" : "Offline"}<small>{health?.rtt ? `${health.rtt} ms` : health?.lastContact ? `Last contact ${relativeTime(health.lastContact)}` : ""}</small></b></div>
+        })}
+        <div className="connection-row"><span>OpenCode data</span><b>{relayState.lastSyncedAt && Date.now() - relayState.lastSyncedAt < 60_000 ? "Current" : "Stale"}<small>{relayState.lastSyncedAt ? `Updated ${relativeTime(relayState.lastSyncedAt)}` : "Not yet synced"}</small></b></div>
+        <footer><button className="notification-secondary" onClick={onClose}>Close</button><button className="notification-primary" onClick={refresh}><RefreshCw size={15} /> Refresh</button></footer>
+      </section>
+    </div>
+  )
+}
+
 function SessionDetail({
   session,
   agents,
@@ -704,6 +763,8 @@ function SessionDetail({
   permission,
   question,
   request,
+  loadCache,
+  saveCache,
   onBack,
   onError,
 }: {
@@ -712,11 +773,14 @@ function SessionDetail({
   revision: number
   permission?: PermissionRequest
   question?: QuestionRequest
-  request: (command: any) => Promise<unknown>
+  request: (command: any, progress?: (messages: SessionMessage[]) => void) => Promise<unknown>
+  loadCache: <T>(resource: string) => Promise<{ value: T; syncedAt: number } | undefined>
+  saveCache: <T>(resource: string, value: T) => Promise<void>
   onBack: () => void
   onError: (error?: string) => void
 }) {
   const [messages, setMessages] = useState<SessionMessage[]>([])
+  const messageCacheRef = useRef<MessageCache<SessionMessage>>(emptyMessageCache())
   const [diffs, setDiffs] = useState<FileDiff[]>([])
   const [todos, setTodos] = useState<SessionTodo[]>([])
   const [prompt, setPrompt] = useState("")
@@ -725,29 +789,71 @@ function SessionDetail({
   const [agent, setAgent] = useState(session.agent ?? agents[0]?.name ?? "")
   const [agentMenuOpen, setAgentMenuOpen] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [messageCacheReadySession, setMessageCacheReadySession] = useState<string>()
+  const [, setClock] = useState(0)
   const promptRef = useRef<HTMLTextAreaElement>(null)
   const detailContentRef = useRef<HTMLDivElement>(null)
   const mountedRef = useRef(true)
   const followOutputRef = useRef(true)
   const lastScrollTopRef = useRef(0)
   const snapshotRef = useRef<Record<string, string>>({})
+  const generationRef = useRef(0)
+  const refreshGenerationRef = useRef(0)
   const selectedAgent = agents.find((item) => item.name === agent)
   const selectedAgentStyle = { "--agent-color": selectedAgent?.color ?? "var(--cyan)" } as CSSProperties
+  const persistMessageCache = useCallback((cache: MessageCache<SessionMessage>) => {
+    messageCacheRef.current = cache
+    setMessages(visibleCachedMessages(cache))
+    return saveCache("messages", cache)
+  }, [saveCache])
+  const persistLocalMessages = useCallback((messages: SessionMessage[]) =>
+    persistMessageCache({ ...messageCacheRef.current, local: { ...messageCacheRef.current.local, messages: messages.filter((message) => message.info.delivery !== undefined) } }), [persistMessageCache])
 
   const refresh = async () => {
+    const refreshGeneration = ++refreshGenerationRef.current
     const load = async <T,>(
       key: string,
       command: Record<string, unknown>,
       update: (value: T[]) => void,
     ) => {
       try {
-        const result = await request(command)
-        if (mountedRef.current) {
-          const next = Array.isArray(result) ? result as T[] : []
+        const progress = key === "messages" ? async (partial: SessionMessage[]) => {
+          if (!mountedRef.current || refreshGeneration !== refreshGenerationRef.current) return
+          let cache = messageCacheRef.current
+          for (const message of partial) {
+            if (!mountedRef.current || refreshGeneration !== refreshGenerationRef.current) return
+            cache = await stageMessage(cache, message)
+            if (!mountedRef.current || refreshGeneration !== refreshGenerationRef.current) return
+          }
+          if (mountedRef.current && refreshGeneration === refreshGenerationRef.current) await persistMessageCache(cache)
+        } : undefined
+        const result = await request(key === "messages" ? { ...command, sync: { version: 1, known: messageInventory(messageCacheRef.current) } } : command, progress)
+        if (mountedRef.current && refreshGeneration === refreshGenerationRef.current) {
+          const delta = result && typeof result === "object" && "deltaManifest" in result
+            ? result as { deltaManifest: any; messages: SessionMessage[] }
+            : undefined
+          const next = (delta ? delta.messages : Array.isArray(result) ? result : []) as T[]
           const snapshot = JSON.stringify(next)
-          if (snapshotRef.current[key] !== snapshot) {
+          if (key === "messages" || snapshotRef.current[key] !== snapshot) {
             snapshotRef.current[key] = snapshot
-            update(next)
+            if (key === "messages") {
+              if (delta) {
+                let cache = messageCacheRef.current
+                for (const message of delta.messages) {
+                  if (refreshGeneration !== refreshGenerationRef.current) return
+                  cache = await stageMessage(cache, message)
+                  if (refreshGeneration !== refreshGenerationRef.current) return
+                }
+                const committed = commitManifestForRefresh(cache, refreshGeneration, refreshGenerationRef.current, delta.deltaManifest)
+                if (!committed) throw new Error("Delta transfer was incomplete")
+                void persistMessageCache(committed)
+              } else {
+                const committed = await replaceCanonicalMessages(messageCacheRef.current, next as SessionMessage[])
+                if (refreshGeneration === refreshGenerationRef.current) await persistMessageCache(committed)
+              }
+            }
+            else update(next)
+            if (key !== "messages") void saveCache(key, next)
           }
         }
       } catch {
@@ -771,13 +877,38 @@ function SessionDetail({
   }, [])
 
   useEffect(() => {
+    const generation = ++generationRef.current
+    ++refreshGenerationRef.current
+    setMessageCacheReadySession(undefined)
+    setLoading(true)
+    void Promise.all([
+      loadCache<unknown>("messages").then(async (cached) => {
+        if (generation !== generationRef.current) return
+        const cache = cached ? await migrateMessageCache<SessionMessage>(cached.value) : emptyMessageCache<SessionMessage>()
+        if (generation !== generationRef.current) return
+        messageCacheRef.current = cache
+        setMessages(visibleCachedMessages(cache))
+        setMessageCacheReadySession(session.id)
+      }),
+      loadCache<SessionTodo[]>("todos").then((cached) => cached && generation === generationRef.current && setTodos((current) => current.length ? current : cached.value)),
+      loadCache<FileDiff[]>("diffs").then((cached) => cached && generation === generationRef.current && setDiffs((current) => current.length ? current : cached.value)),
+    ]).then(() => { if (generation === generationRef.current) setLoading(false) })
+  }, [loadCache, session.id])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock((value) => value + 1), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
     setAgent(session.agent ?? agents[0]?.name ?? "")
   }, [session.id, session.agent, agents])
 
   useEffect(() => {
+    if (messageCacheReadySession !== session.id) return
     const timeout = window.setTimeout(() => void refresh(), revision ? 350 : 0)
     return () => window.clearTimeout(timeout)
-  }, [session.id, session.status, revision])
+  }, [session.id, session.status, revision, messageCacheReadySession])
 
   const visibleMessages = useMemo(
     () => messages.filter((message) => message.parts.some((part) => part.type === "text" || part.type === "tool")),
@@ -803,16 +934,40 @@ function SessionDetail({
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     if (!prompt.trim() || sending) return
+    const text = prompt.trim()
+    const messageId = crypto.randomUUID()
+    const optimistic: SessionMessage = { info: { id: messageId, role: "user", time: { created: Date.now() }, delivery: "sending" }, parts: [{ type: "text", text }] }
+    setMessages((current) => {
+      const next = mergeByMessageId(current, [...current, optimistic])
+      void persistLocalMessages(next)
+      return next
+    })
     setSending(true)
     try {
-      await request({
+      const acknowledgement = await request({
         type: "session.prompt",
         sessionId: session.id,
-        text: prompt,
+        text,
         agent: agent || undefined,
+        messageId,
+      })
+      setMessages((current) => {
+        // Legacy relays acknowledge before async OpenCode dispatch. Preserve user
+        // text as uncertain until a later canonical response can reconcile it.
+        const next = acknowledgement && typeof acknowledgement === "object" && (acknowledgement as { promptMessageId?: unknown }).promptMessageId === false
+          ? current.map((message) => message.info.id === messageId ? { ...message, info: { ...message.info, delivery: "uncertain" as const, legacyPrompt: true } } : message)
+          : current.map((message) => message.info.id === messageId ? { ...message, info: { ...message.info, delivery: "accepted" as const } } : message)
+        void persistLocalMessages(next)
+        return next
       })
       setPrompt("")
     } catch (error) {
+      const delivery = promptDeliveryState((error as Error).message)
+      setMessages((current) => {
+        const next = current.map((message) => message.info.id === messageId ? { ...message, info: { ...message.info, delivery } } : message)
+        void persistLocalMessages(next)
+        return next
+      })
       onError((error as Error).message)
     } finally {
       setSending(false)
@@ -913,7 +1068,7 @@ function SessionDetail({
               <div className="empty-state"><LoaderCircle className="spin" size={22} /></div>
             ) : (
               <>
-                {visibleMessages.map((message) => <Message key={message.info.id} message={message} queued={message.info.role === "user" && !processedUserMessages.has(message.info.id)} />)}
+                {visibleMessages.map((message) => <Message key={message.info.id} message={message} queued={message.info.delivery ?? (message.info.role === "user" && !processedUserMessages.has(message.info.id) ? "queued" : undefined)} />)}
                 {visibleMessages.length === 0 && <div className="empty-state"><p>No message activity yet.</p></div>}
               </>
             )}
@@ -1061,7 +1216,7 @@ function PermissionPanel({ permission, request, onError }: { permission: Permiss
   )
 }
 
-function Message({ message, queued }: { message: SessionMessage; queued?: boolean }) {
+function Message({ message, queued }: { message: SessionMessage; queued?: SessionMessage["info"]["delivery"] }) {
   const isUser = message.info.role === "user"
   return (
     <article className={`message ${message.info.role}`} aria-label={isUser ? "Your message" : "OpenCode response"}>
@@ -1070,7 +1225,8 @@ function Message({ message, queued }: { message: SessionMessage; queued?: boolea
           {isUser ? <UserRound size={15} /> : <Code2 size={16} />}
         </span>
         <div className="message-body">
-          {queued && <span className="queued-flag"><Clock3 size={12} /> Queued</span>}
+          {queued && <span className="queued-flag"><Clock3 size={12} /> {queued === "accepted" ? "Accepted by OpenCode" : queued === "uncertain" ? "Delivery uncertain" : queued}</span>}
+          {message.info.time?.created && <time className="message-time" dateTime={new Date(message.info.time.created).toISOString()} title={new Date(message.info.time.created).toLocaleString()}>{relativeTime(message.info.time.created)}</time>}
           {message.parts.map((part, index) => {
             if (part.type === "text" && part.text) {
               if (isUser) return <p key={index}>{part.text}</p>

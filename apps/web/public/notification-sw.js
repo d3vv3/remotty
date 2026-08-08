@@ -148,6 +148,7 @@ const verifyAndOpen = async (frame, identity) => {
 const notificationData = (value, identityKey) => {
   if (!value || typeof value !== "object" || typeof value.workspaceRelayId !== "string") throw new Error("Invalid notification data")
   const data = { workspaceRelayId: value.workspaceRelayId, identityKey }
+  if (typeof value.workspaceId === "string") data.workspaceId = value.workspaceId
   for (const key of ["sessionId", "targetSessionId", "permissionId", "questionId"]) {
     if (typeof value[key] === "string") data[key] = value[key]
   }
@@ -258,8 +259,8 @@ const sendPermissionAction = async (action, data) => {
 const applicationUrl = (data) => {
   const url = new URL("/app", self.location.origin)
   if (typeof data?.sessionId === "string") {
-    const sessionKey = typeof data.workspaceRelayId === "string"
-      ? `${data.workspaceRelayId}:${data.sessionId}`
+    const sessionKey = typeof data.workspaceId === "string" || typeof data.workspaceRelayId === "string"
+      ? `${data.workspaceId || data.workspaceRelayId}:${data.sessionId}`
       : data.sessionId
     url.searchParams.set("session", sessionKey)
   }

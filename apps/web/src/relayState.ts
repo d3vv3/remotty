@@ -1,6 +1,6 @@
 import type { AgentSummary, PermissionRequest, QuestionRequest, RelayInfo, SessionSummary } from "@remotty/protocol"
 
-export type RoutedSession = SessionSummary & { workspaceRelayId: string }
+export type RoutedSession = SessionSummary & { workspaceRelayId: string; workspaceId: string }
 export type RoutedPermission = PermissionRequest & { workspaceRelayId: string }
 export type RoutedQuestion = QuestionRequest & { workspaceRelayId: string }
 export type RoutedAgent = AgentSummary & { workspaceRelayId: string }
@@ -22,6 +22,7 @@ export type AggregatedRelayState = {
   questions: RoutedQuestion[]
   sessionRelays: Map<string, string>
 }
+export const stableWorkspaceKey = (relay: Pick<RelayInfo, "workspaceId" | "hostname" | "workspace">) => relay.workspaceId ?? `legacy:${relay.hostname}:${relay.workspace}`
 
 export const acceptsRelayPosition = (
   current: Pick<RelaySlice, "relay" | "sequence"> | undefined,
@@ -38,7 +39,7 @@ export const aggregateRelaySlices = (slices: Iterable<[string, RelaySlice]>): Ag
   const entries = [...slices]
   const relays = entries.map(([, slice]) => slice.relay)
   const candidates = entries
-    .flatMap(([relayId, slice]) => slice.sessions.map((session) => ({ ...session, workspaceRelayId: relayId })))
+    .flatMap(([relayId, slice]) => slice.sessions.map((session) => ({ ...session, workspaceRelayId: relayId, workspaceId: stableWorkspaceKey(slice.relay) })))
     .sort((left, right) => {
       const recency = right.updatedAt - left.updatedAt
       if (recency) return recency
@@ -47,8 +48,9 @@ export const aggregateRelaySlices = (slices: Iterable<[string, RelaySlice]>): Ag
     })
   const seenSessions = new Set<string>()
   const sessions = candidates.filter((session) => {
-    if (seenSessions.has(session.id)) return false
-    seenSessions.add(session.id)
+    const key = `${sliceWorkspaceKey(session.workspaceId, session.workspaceRelayId)}:${session.id}`
+    if (seenSessions.has(key)) return false
+    seenSessions.add(key)
     return true
   })
   const sessionRelays = new Map<string, string>()
@@ -72,6 +74,8 @@ export const aggregateRelaySlices = (slices: Iterable<[string, RelaySlice]>): Ag
   }
 }
 
+const sliceWorkspaceKey = (workspaceId: string, _relayId: string) => workspaceId
+
 export const commandRelayId = (
   command: { type: string; sessionId?: string },
   connectedRelayIds: Iterable<string>,
@@ -82,3 +86,12 @@ export const commandRelayId = (
   const connected = [...connectedRelayIds]
   return connected.length === 1 ? connected[0] : undefined
 }
+
+export const resolveConnectedWorkspaceRelay = (
+  workspaceKey: string,
+  connectedRelayIds: Iterable<string>,
+  slices: ReadonlyMap<string, RelaySlice>,
+) => [...connectedRelayIds].find((relayId) => {
+  const slice = slices.get(relayId)
+  return slice && stableWorkspaceKey(slice.relay) === workspaceKey
+})

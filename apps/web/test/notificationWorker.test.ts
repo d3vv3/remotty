@@ -54,8 +54,8 @@ describe("notification service worker security boundary", () => {
     const worker = workerCrypto()
     expect(worker.notificationClickMode("once")).toBe("action")
     expect(worker.notificationClickMode("")).toBe("open")
-    expect(worker.applicationUrl({ workspaceRelayId: "relay-1", sessionId: "session-1" }).href)
-      .toBe("https://app.example/app?session=relay-1%3Asession-1")
+    expect(worker.applicationUrl({ workspaceRelayId: "relay-1", workspaceId: "stable-1", sessionId: "session-1" }).href)
+      .toBe("https://app.example/app?session=stable-1%3Asession-1")
   })
 
   it("verifies, decrypts, and rejects stale Push frames", () => {

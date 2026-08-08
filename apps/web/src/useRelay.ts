@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
   brokerTransportControlSchema,
+  canonicalJsonFingerprint,
+  canonicalMessageValue,
   e2eeFrameSchema,
   openJsonPayload,
   permissionRequestSchema,
@@ -14,31 +16,54 @@ import {
   type PairingBundle,
   type QuestionRequest,
   type SessionSummary,
+  type MessageDeltaManifest,
 } from "@remotty/protocol"
 import { currentDeviceName } from "./deviceName"
 import {
   deleteIdentity,
+  loadCachedResource,
+  loadCachedResources,
   loadCurrentIdentity,
   markIdentityEnrolled,
   prepareIdentity,
   setCurrentIdentity,
+  saveCachedResource,
   type DeviceIdentity,
 } from "./deviceStore"
-import { acceptsRelayPosition, aggregateRelaySlices, commandRelayId, type RelaySlice } from "./relayState"
+import { acceptsRelayPosition, aggregateRelaySlices, commandRelayId, resolveConnectedWorkspaceRelay, stableWorkspaceKey, type RelaySlice } from "./relayState"
+import { addChunk, assembledMessages, completeChunks, createChunkAssembly, exactManifestMessages, hasSequenceGap, healthSummary, orderByManifest, readOnlyCommand, reconnectDelay, requestInactivityMs, retryPlan, validManifest, type ChunkAssembly } from "./resilience"
+import { verifyDeltaSnapshot } from "./messageCache"
 
 type PendingRequest = {
   relayId: string
   resolve: (value: unknown) => void
   reject: (error: Error) => void
   timeout: number
+  command: RelayRequest
+  startedAt: number
+  chunks: ChunkAssembly
+  generation: number
+  progress?: (messages: unknown[]) => void | Promise<void>
+  manifestIds?: string[]
+  deltaManifest?: MessageDeltaManifest
 }
 
-type RelayRequest = ClientCommand extends infer Command
+export type RelayRequest = ClientCommand extends infer Command
   ? Command extends { requestId: string } ? Omit<Command, "requestId"> : never
   : never
 
 const MAX_FRAME_AGE_MS = 5 * 60 * 1_000
 const MAX_RECENT_MESSAGES = 1_000
+
+export const commandForRelayCapabilities = (command: RelayRequest, capabilities?: { messageChunks?: boolean; messageDelta?: 1; promptMessageId?: 1 }): RelayRequest => {
+  if (command.type === "session.prompt" && !capabilities?.promptMessageId) {
+    const { messageId: _messageId, ...legacy } = command
+    return legacy
+  }
+  if (command.type === "session.messages" && capabilities?.messageDelta && command.sync) return command
+  if (command.type === "session.messages" && capabilities?.messageChunks) return { ...command, chunked: true, sync: undefined }
+  return command
+}
 
 const httpBrokerUrl = (identity: DeviceIdentity) => {
   const url = new URL(identity.brokerUrl)
@@ -128,7 +153,7 @@ const signedPushRequest = async (
 }
 
 export function useRelay(initialBundle?: PairingBundle) {
-  const [connection, setConnection] = useState<"disconnected" | "connecting" | "online" | "offline">("connecting")
+  const [connection, setConnection] = useState<"disconnected" | "connecting" | "online" | "unstable" | "offline">("connecting")
   const [enrolled, setEnrolled] = useState<boolean>()
   const [relay, setRelay] = useState<ReturnType<typeof aggregateRelaySlices>["relay"]>()
   const [relays, setRelays] = useState<ReturnType<typeof aggregateRelaySlices>["relays"]>([])
@@ -142,6 +167,9 @@ export function useRelay(initialBundle?: PairingBundle) {
       typeof Notification !== "undefined" && Notification.permission === "granted",
   )
   const [error, setError] = useState<string>()
+  const [serviceConnected, setServiceConnected] = useState(false)
+  const [relayHealth, setRelayHealth] = useState<Record<string, { lastContact?: number; rtt?: number; timedOut?: boolean; failures?: number }>>({})
+  const [lastSyncedAt, setLastSyncedAt] = useState<number>()
   const socketRef = useRef<WebSocket | undefined>(undefined)
   const identityRef = useRef<DeviceIdentity | undefined>(undefined)
   const pendingRef = useRef(new Map<string, PendingRequest>())
@@ -152,6 +180,10 @@ export function useRelay(initialBundle?: PairingBundle) {
   const recentMessageQueueRef = useRef<string[]>([])
   const connectionEpochRef = useRef(0)
   const cleanupRef = useRef<Promise<void>>(Promise.resolve())
+  const reconnectAttemptRef = useRef(0)
+  const recoveryInFlightRef = useRef(new Set<string>())
+  const socketGenerationRef = useRef(0)
+  const authenticatedRef = useRef(false)
 
   const publishSlices = useCallback(() => {
     const state = aggregateRelaySlices(slicesRef.current)
@@ -189,15 +221,16 @@ export function useRelay(initialBundle?: PairingBundle) {
     socket.send(JSON.stringify(frame))
   }, [])
 
-  const requestFromRelay = useCallback((identity: DeviceIdentity, relayId: string, command: RelayRequest) => {
+  const requestFromRelay = useCallback((identity: DeviceIdentity, relayId: string, command: RelayRequest, progress?: (messages: unknown[]) => void | Promise<void>) => {
     if (!connectedRelaysRef.current.has(relayId)) return Promise.reject(new Error("The workspace relay is offline."))
     const requestId = crypto.randomUUID()
     return new Promise<unknown>((resolve, reject) => {
+      const generation = socketGenerationRef.current
       const timeout = window.setTimeout(() => {
         pendingRef.current.delete(requestId)
         reject(new Error("The relay did not respond."))
-      }, 30_000)
-      pendingRef.current.set(requestId, { relayId, resolve, reject, timeout })
+      }, requestInactivityMs(command.type))
+      pendingRef.current.set(requestId, { relayId, resolve, reject, timeout, command, startedAt: Date.now(), chunks: createChunkAssembly(), generation, progress })
       void sendCommandFrame(identity, relayId, { ...command, requestId } as ClientCommand).catch((cause) => {
         window.clearTimeout(timeout)
         pendingRef.current.delete(requestId)
@@ -223,6 +256,13 @@ export function useRelay(initialBundle?: PairingBundle) {
   ) => {
     const slice = slicesRef.current.get(relayId)
     if (!slice || !instanceId || slice.relay.instanceId !== instanceId || sequence <= (slice.sequence ?? -1)) return
+    if (hasSequenceGap(slice.sequence, sequence)) {
+      if (recoveryInFlightRef.current.has(relayId)) return
+      recoveryInFlightRef.current.add(relayId)
+      const identity = identityRef.current
+      if (identity) void requestSnapshots(identity, [relayId]).catch(() => undefined)
+      return
+    }
     slice.sequence = sequence
     const properties = event.properties as Record<string, unknown>
     const info = properties.info as Record<string, unknown> | undefined
@@ -256,7 +296,7 @@ export function useRelay(initialBundle?: PairingBundle) {
       if (questionId) closeNotification(`${relayId}:question-${questionId}`)
     }
     publishSlices()
-  }, [publishSlices])
+  }, [publishSlices, requestSnapshots])
 
   const handleEncryptedFrame = useCallback(async (frameValue: unknown, epoch: number) => {
     const identity = identityRef.current
@@ -277,6 +317,7 @@ export function useRelay(initialBundle?: PairingBundle) {
       if (connectionEpochRef.current !== epoch || identityRef.current?.key !== identityKey) return
       if (recentMessageIdsRef.current.has(frame.messageId)) return
       rememberMessage(frame.messageId)
+      setRelayHealth((current) => ({ ...current, [frame.sender]: { ...current[frame.sender], lastContact: Date.now(), timedOut: false } }))
 
       if (typeof payload === "object" && payload !== null && (payload as { type?: unknown }).type === "enrollment.accepted") {
         const accepted = payload as { type: string; deviceId?: unknown; relayId?: unknown; deviceCertificate?: unknown }
@@ -342,6 +383,13 @@ export function useRelay(initialBundle?: PairingBundle) {
         slicesRef.current.set(frame.sender, current ? { ...current, relay: data.relay } : {
           relay: data.relay, sessions: [], agents: [], permissions: [], questions: [], sequence: data.sequence,
         })
+        if (data.relay.workspaceId || data.relay.workspace) {
+          const superseded: string[] = []
+          for (const [id, slice] of slicesRef.current) {
+            if (id !== frame.sender && stableWorkspaceKey(slice.relay) === stableWorkspaceKey(data.relay)) { slicesRef.current.delete(id); superseded.push(id) }
+          }
+          if (superseded.length) setRelayHealth((current) => { const next = { ...current }; for (const id of superseded) delete next[id]; return next })
+        }
         slicesRef.current.get(frame.sender)!.sequence = data.sequence
         publishSlices()
       } else if (data.type === "relay.snapshot") {
@@ -356,9 +404,80 @@ export function useRelay(initialBundle?: PairingBundle) {
           questions: data.questions,
           sequence: data.sequence,
         })
+        if (data.relay.workspaceId || data.relay.workspace) {
+          const superseded: string[] = []
+          for (const [id, slice] of slicesRef.current) {
+            if (id !== frame.sender && stableWorkspaceKey(slice.relay) === stableWorkspaceKey(data.relay)) { slicesRef.current.delete(id); superseded.push(id) }
+          }
+          if (superseded.length) setRelayHealth((current) => { const next = { ...current }; for (const id of superseded) delete next[id]; return next })
+        }
+        void saveCachedResource(identity, stableWorkspaceKey(data.relay), "snapshot", {
+          relay: data.relay, sessions: data.sessions, agents: data.agents, permissions: data.permissions, questions: data.questions, sequence: data.sequence,
+        })
+        setLastSyncedAt(Date.now())
+        recoveryInFlightRef.current.delete(frame.sender)
         publishSlices()
       } else if (data.type === "relay.event") {
         applyEvent(frame.sender, data.event, data.instanceId, data.sequence)
+      } else if (data.type === "session.messages.manifest") {
+        const pending = pendingRef.current.get(data.requestId)
+        if (!pending || pending.relayId !== frame.sender || pending.command.type !== "session.messages") return
+        if (!await verifyDeltaSnapshot(data.manifest) || pendingRef.current.get(data.requestId) !== pending) return
+        pending.deltaManifest = data.manifest
+        pending.chunks.total = data.manifest.chunkCount
+        if (data.manifest.chunkCount === 0) {
+          window.clearTimeout(pending.timeout)
+          pendingRef.current.delete(data.requestId)
+          pending.resolve({ deltaManifest: data.manifest, messages: [] })
+          return
+        }
+        window.clearTimeout(pending.timeout)
+        pending.timeout = window.setTimeout(() => { pendingRef.current.delete(data.requestId); pending.reject(new Error("The relay stopped sending messages.")) }, requestInactivityMs(pending.command.type))
+      } else if (data.type === "session.messages.chunk") {
+        const chunk = data.chunk
+        const pending = pendingRef.current.get(chunk.requestId)
+        if (!pending || pending.relayId !== frame.sender || !pending.deltaManifest || pending.deltaManifest.snapshotId !== chunk.snapshotId || pending.deltaManifest.chunkCount !== chunk.total) return
+        const expected = new Map(pending.deltaManifest.manifest.map((entry) => [entry.id, entry.fingerprint]))
+        const upserts = new Set(pending.deltaManifest.upserts)
+        const records: unknown[] = []
+        for (const record of chunk.records) {
+          if (!upserts.has(record.id) || expected.get(record.id) !== record.fingerprint || (record.message as { info?: { id?: unknown } }).info?.id !== record.id) return
+          const actual = await canonicalJsonFingerprint(canonicalMessageValue(jsonValue(record.message)))
+          if (pendingRef.current.get(chunk.requestId) !== pending || pending.generation !== socketGenerationRef.current || actual !== record.fingerprint) return
+          records.push(record.message)
+        }
+        const fragment = chunk.fragments[0]
+        if (chunk.fragments.length > 1 || (fragment && (!upserts.has(fragment.messageId) || expected.get(fragment.messageId) !== fragment.fingerprint))) return
+        if (!addChunk(pending.chunks, { index: chunk.index, total: chunk.total, result: fragment ? { fragment } : records })) return
+        window.clearTimeout(pending.timeout)
+        pending.timeout = window.setTimeout(() => { pendingRef.current.delete(chunk.requestId); pending.reject(new Error("The relay stopped sending messages.")) }, requestInactivityMs(pending.command.type))
+        const messages = assembledMessages(pending.chunks)
+        if (messages.length) await pending.progress?.(messages)
+        if (pendingRef.current.get(chunk.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
+        if (completeChunks(pending.chunks)) {
+          const messages = assembledMessages(pending.chunks)
+          const received = new Map<string, unknown>()
+          for (const message of messages) {
+            const id = (message as { info?: { id?: unknown } }).info?.id
+            if (typeof id !== "string" || received.has(id)) return
+            received.set(id, message)
+          }
+          for (const id of pending.deltaManifest.upserts) {
+            const message = received.get(id)
+            const fingerprint = expected.get(id)
+            if (!message || !fingerprint) {
+              window.clearTimeout(pending.timeout); pendingRef.current.delete(chunk.requestId); pending.reject(new Error("The relay sent an incomplete delta transfer.")); return
+            }
+            const actual = await canonicalJsonFingerprint(canonicalMessageValue(jsonValue(message)))
+            if (pendingRef.current.get(chunk.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
+            if (actual !== fingerprint) {
+              window.clearTimeout(pending.timeout); pendingRef.current.delete(chunk.requestId); pending.reject(new Error("The relay sent an invalid delta transfer.")); return
+            }
+          }
+          window.clearTimeout(pending.timeout)
+          pendingRef.current.delete(chunk.requestId)
+          pending.resolve({ deltaManifest: pending.deltaManifest, messages })
+        }
       } else if (data.type === "rpc.result") {
         const pending = pendingRef.current.get(data.requestId)
         if (!pending) return
@@ -370,10 +489,45 @@ export function useRelay(initialBundle?: PairingBundle) {
           })
           return
         }
+        if (pending.command.type === "session.messages" &&
+          validManifest(data.result)) {
+          const manifest = validManifest(data.result)!
+          pending.manifestIds = manifest.ids
+          pending.chunks.total = manifest.total
+          window.clearTimeout(pending.timeout)
+          pending.timeout = window.setTimeout(() => { pendingRef.current.delete(data.requestId); pending.reject(new Error("The relay stopped sending messages.")) }, requestInactivityMs(pending.command.type))
+          return
+        }
         window.clearTimeout(pending.timeout)
         pendingRef.current.delete(data.requestId)
+        if (pending.command.type === "relay.ping") {
+          const rtt = Date.now() - pending.startedAt
+          setRelayHealth((current) => ({ ...current, [frame.sender]: { ...current[frame.sender], lastContact: Date.now(), rtt, timedOut: false } }))
+        }
         if (data.error) pending.reject(new Error(data.error))
         else pending.resolve(data.result)
+      } else if (data.type === "rpc.chunk") {
+        const pending = pendingRef.current.get(data.requestId)
+        if (!pending || pending.relayId !== frame.sender) return
+        if (data.error) {
+          window.clearTimeout(pending.timeout)
+          pendingRef.current.delete(data.requestId)
+          pending.reject(new Error(data.error))
+          return
+        }
+        if (!addChunk(pending.chunks, data)) return
+        window.clearTimeout(pending.timeout)
+        pending.timeout = window.setTimeout(() => { pendingRef.current.delete(data.requestId); pending.reject(new Error("The relay stopped sending messages.")) }, requestInactivityMs(pending.command.type))
+        const partial = assembledMessages(pending.chunks)
+        if (partial.length) await pending.progress?.(pending.manifestIds ? orderByManifest(partial, pending.manifestIds) : partial)
+        if (completeChunks(pending.chunks)) {
+          window.clearTimeout(pending.timeout)
+          pendingRef.current.delete(data.requestId)
+          const messages = assembledMessages(pending.chunks)
+          const ordered = pending.manifestIds ? exactManifestMessages(messages, pending.manifestIds) : messages
+          if (!ordered) { pending.reject(new Error("The relay sent an incomplete message transfer.")); return }
+          pending.resolve(ordered)
+        }
       }
     } catch (cause) {
       console.warn("Rejected encrypted relay frame", cause)
@@ -394,8 +548,11 @@ export function useRelay(initialBundle?: PairingBundle) {
       broker.searchParams.set("role", "client")
       const socket = new WebSocket(broker, ["remotty", identity.roomToken])
       socketRef.current = socket
+      const generation = ++socketGenerationRef.current
+      authenticatedRef.current = false
       let enrollmentSent = false
       let helloStarted = false
+      let encryptedFrameQueue: Promise<void> = Promise.resolve()
 
       const enroll = async () => {
         const current = identityRef.current
@@ -453,6 +610,9 @@ export function useRelay(initialBundle?: PairingBundle) {
               }))
             }).catch((cause) => setError((cause as Error).message))
           } else if (control.data.type === "broker.ready") {
+            authenticatedRef.current = true
+            setServiceConnected(true)
+            reconnectAttemptRef.current = 0
             connectedRelaysRef.current = new Set(control.data.connectedRelayIds)
             setConnection(control.data.connectedRelayIds.length ? "online" : "offline")
             const current = identityRef.current
@@ -474,8 +634,10 @@ export function useRelay(initialBundle?: PairingBundle) {
           } else if (control.data.type === "broker.relay-status") {
             if (control.data.connected) connectedRelaysRef.current.add(control.data.relayId)
             else {
-              connectedRelaysRef.current.delete(control.data.relayId)
-              slicesRef.current.delete(control.data.relayId)
+              const relayId = control.data.relayId
+              connectedRelaysRef.current.delete(relayId)
+              recoveryInFlightRef.current.delete(relayId)
+              setRelayHealth((current) => { const next = { ...current }; delete next[relayId]; return next })
               publishSlices()
               for (const [requestId, pending] of pendingRef.current) {
                 if (pending.relayId !== control.data.relayId) continue
@@ -497,7 +659,9 @@ export function useRelay(initialBundle?: PairingBundle) {
           }
           return
         }
-        void handleEncryptedFrame(value, epoch)
+        encryptedFrameQueue = encryptedFrameQueue.catch(() => undefined).then(async () => {
+          if (socketRef.current === socket && connectionEpochRef.current === epoch) await handleEncryptedFrame(value, epoch)
+        })
       })
       socket.addEventListener("error", () => {
         if (socketRef.current === socket) setError("Cannot reach the relay broker.")
@@ -505,12 +669,34 @@ export function useRelay(initialBundle?: PairingBundle) {
       socket.addEventListener("close", (event) => {
         if (socketRef.current !== socket || connectionEpochRef.current !== epoch) return
         if (event.code === 4001) {
+          for (const [requestId, pending] of pendingRef.current) {
+            if (pending.generation !== generation) continue
+            window.clearTimeout(pending.timeout)
+            pending.reject(new Error("This device was opened in another Remotty window."))
+            pendingRef.current.delete(requestId)
+          }
+          connectedRelaysRef.current.clear()
+          recoveryInFlightRef.current.clear()
+          setServiceConnected(false)
+          setRelayHealth({})
+          publishSlices()
           setConnection("offline")
           setError("This device was opened in another Remotty window.")
           return
         }
+        for (const [requestId, pending] of pendingRef.current) {
+          if (pending.generation !== generation) continue
+          window.clearTimeout(pending.timeout)
+          pending.reject(new Error("Connection interrupted"))
+          pendingRef.current.delete(requestId)
+        }
+        connectedRelaysRef.current.clear()
+        recoveryInFlightRef.current.clear()
+        setRelayHealth({})
+        setServiceConnected(false)
+        publishSlices()
         setConnection("connecting")
-        window.setTimeout(open, 1_000)
+        window.setTimeout(open, reconnectDelay(reconnectAttemptRef.current++))
       })
     }
     open()
@@ -544,6 +730,7 @@ export function useRelay(initialBundle?: PairingBundle) {
     sessionRelaysRef.current.clear()
     publishSlices()
     setConnection("disconnected")
+    setServiceConnected(false)
     setEnrolled(false)
     setNotificationsEnabled(false)
     localStorage.removeItem("remotty-notifications")
@@ -553,15 +740,37 @@ export function useRelay(initialBundle?: PairingBundle) {
     })().catch(() => undefined)
   }, [publishSlices])
 
-  const request = useCallback((command: RelayRequest, workspaceRelayId?: string): Promise<unknown> => {
+  const request = useCallback(async (command: RelayRequest, workspaceRelayId?: string, progress?: (messages: unknown[]) => void | Promise<void>): Promise<unknown> => {
     const identity = identityRef.current
-    if (!identity?.enrolled) return Promise.reject(new Error("The browser device is not enrolled."))
+    if (!identity?.enrolled) throw new Error("The browser device is not enrolled.")
     if (command.type === "snapshot.request") {
       return requestSnapshots(identity, connectedRelaysRef.current, true)
     }
-    const relayId = workspaceRelayId ?? commandRelayId(command, connectedRelaysRef.current, sessionRelaysRef.current)
-    if (!relayId) return Promise.reject(new Error("Cannot determine the workspace relay for this command."))
-    return requestFromRelay(identity, relayId, command)
+    const initialRelayId = workspaceRelayId ?? commandRelayId(command, connectedRelaysRef.current, sessionRelaysRef.current)
+    if (!initialRelayId) throw new Error("Cannot determine the workspace relay for this command.")
+    const initialSlice = slicesRef.current.get(initialRelayId)
+    const workspaceKey = initialSlice ? stableWorkspaceKey(initialSlice.relay) : undefined
+    const deadline = Date.now() + 60_000
+    for (let attempts = 0; ; attempts += 1) {
+       const relayId = workspaceKey ? resolveConnectedWorkspaceRelay(workspaceKey, connectedRelaysRef.current, slicesRef.current) : initialRelayId
+       if (!relayId) {
+         if (!readOnlyCommand(command.type) || Date.now() >= deadline) throw new Error("The workspace relay disconnected.")
+         await new Promise((resolve) => window.setTimeout(resolve, 100))
+         continue
+       }
+       const relay = slicesRef.current.get(relayId)?.relay
+       const compatibleCommand = commandForRelayCapabilities(command, relay?.capabilities)
+       try {
+         const result = await requestFromRelay(identity, relayId, compatibleCommand, progress)
+         return command.type === "session.prompt" && !relay?.capabilities?.promptMessageId ? { promptMessageId: false, result } : result
+       } catch (error) {
+        if (!readOnlyCommand(command.type) || !retryPlan(Date.now(), deadline, attempts)) throw error
+         while (Date.now() < deadline && (!authenticatedRef.current || !(workspaceKey ? resolveConnectedWorkspaceRelay(workspaceKey, connectedRelaysRef.current, slicesRef.current) : connectedRelaysRef.current.has(relayId)))) {
+          await new Promise((resolve) => window.setTimeout(resolve, 100))
+        }
+        if (Date.now() >= deadline) throw error
+      }
+    }
   }, [requestFromRelay, requestSnapshots])
 
   const toggleNotifications = useCallback(async () => {
@@ -592,6 +801,18 @@ export function useRelay(initialBundle?: PairingBundle) {
   }, [notificationsEnabled])
 
   const isRelayConnected = useCallback((relayId: string) => connectedRelaysRef.current.has(relayId), [])
+  const cacheRelayId = (relayId: string) => {
+    const relay = slicesRef.current.get(relayId)?.relay
+    return relay ? stableWorkspaceKey(relay) : relayId
+  }
+  const loadCache = useCallback(<T,>(relayId: string, resource: string, sessionId?: string) => {
+    const identity = identityRef.current
+    return identity ? loadCachedResource<T>(identity, cacheRelayId(relayId), resource, sessionId) : Promise.resolve(undefined)
+  }, [])
+  const saveCache = useCallback(<T,>(relayId: string, resource: string, value: T, sessionId?: string) => {
+    const identity = identityRef.current
+    return identity ? saveCachedResource(identity, cacheRelayId(relayId), resource, value, sessionId) : Promise.resolve()
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -603,7 +824,14 @@ export function useRelay(initialBundle?: PairingBundle) {
       }
       const identity = await loadCurrentIdentity()
       if (cancelled) return
-      if (identity) connectIdentity(identity)
+      if (identity) {
+        const cached = await loadCachedResources<RelaySlice>(identity, "snapshot")
+        if (!cancelled) {
+          for (const record of cached) slicesRef.current.set(record.value.relay.id, record.value)
+          publishSlices()
+          connectIdentity(identity)
+        }
+      }
       else {
         setConnection("disconnected")
         setEnrolled(false)
@@ -622,7 +850,49 @@ export function useRelay(initialBundle?: PairingBundle) {
       socketRef.current = undefined
       socket?.close(1000, "Page closed")
     }
-  }, [connect, connectIdentity, initialBundle])
+  }, [connect, connectIdentity, initialBundle, publishSlices])
+
+  useEffect(() => {
+    const reconnect = () => {
+      const identity = identityRef.current
+      if (identity && socketRef.current?.readyState !== WebSocket.OPEN) connectIdentity(identity)
+    }
+    window.addEventListener("online", reconnect)
+    window.addEventListener("pageshow", reconnect)
+    const visibility = () => { if (document.visibilityState === "visible") reconnect() }
+    document.addEventListener("visibilitychange", visibility)
+    return () => { window.removeEventListener("online", reconnect); window.removeEventListener("pageshow", reconnect); document.removeEventListener("visibilitychange", visibility) }
+  }, [connectIdentity])
+
+  useEffect(() => {
+    const ping = () => {
+      const identity = identityRef.current
+      if (!identity?.enrolled || document.visibilityState !== "visible") return
+      for (const relayId of connectedRelaysRef.current) {
+        if (!slicesRef.current.get(relayId)?.relay.capabilities?.ping) continue
+        const generation = socketGenerationRef.current
+        void requestFromRelay(identity, relayId, { type: "relay.ping", sentAt: Date.now() }).then(() => {
+          setRelayHealth((current) => {
+            const next = { ...current, [relayId]: { ...current[relayId], failures: 0, timedOut: false } }
+            if (!healthSummary(connectedRelaysRef.current, next)) setConnection("online")
+            return next
+          })
+        }).catch(() => {
+          if (socketGenerationRef.current !== generation) return
+          setRelayHealth((current) => {
+            const failures = (current[relayId]?.failures ?? 0) + 1
+            const next = { ...current, [relayId]: { ...current[relayId], failures, timedOut: true } }
+            setConnection("unstable")
+            if (failures >= 2) socketRef.current?.close(4000, "Health check timed out")
+            return next
+          })
+        })
+      }
+    }
+    const timer = window.setInterval(ping, 20_000)
+    ping()
+    return () => window.clearInterval(timer)
+  }, [requestFromRelay])
 
   return {
     connection,
@@ -636,11 +906,16 @@ export function useRelay(initialBundle?: PairingBundle) {
     sessionRevisions,
     notificationsEnabled,
     error,
+    serviceConnected,
+    relayHealth,
+    lastSyncedAt,
     connect,
     disconnect,
     request,
     toggleNotifications,
     setError,
     isRelayConnected,
+    loadCache,
+    saveCache,
   }
 }

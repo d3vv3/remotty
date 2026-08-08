@@ -8,9 +8,20 @@ import {
 import { currentDeviceName } from "./deviceName"
 
 export const DEVICE_DB_NAME = "remotty-e2ee-v2"
-export const DEVICE_DB_VERSION = 1
+export const DEVICE_DB_VERSION = 2
 export const CURRENT_IDENTITY_KEY = "current"
 export const CURRENT_IDENTITY_MARKER = "remotty-current-identity"
+const MAX_CACHE_RECORDS_PER_IDENTITY = 200
+const cacheWriteQueues = new Map<string, Promise<void>>()
+
+/** Serializes read/modify/write callers for one cache record. */
+export const queueCacheWrite = (key: string, write: () => Promise<void>) => {
+  const previous = cacheWriteQueues.get(key) ?? Promise.resolve()
+  const next = previous.catch(() => undefined).then(write)
+  const tail = next.catch(() => undefined)
+  cacheWriteQueues.set(key, tail)
+  return next.finally(() => { if (cacheWriteQueues.get(key) === tail) cacheWriteQueues.delete(key) })
+}
 
 export type DeviceIdentity = {
   key: string
@@ -33,6 +44,8 @@ export type DeviceIdentity = {
 }
 
 type MetaRecord = { key: string; value: string }
+export type CachedResource<T = unknown> = { key: string; identityKey: string; relayId: string; sessionId?: string; resource: string; value: T; syncedAt: number }
+export const cacheKeyFor = (identityKey: string, relayId: string, resource: string, sessionId = "") => `${identityKey}:${relayId}:${sessionId}:${resource}`
 
 export const identityKeyFor = (bundle: Pick<PairingBundle, "relayId" | "roomToken">) =>
   `${bundle.relayId}:${bundle.roomToken}`
@@ -70,6 +83,7 @@ const database = () => {
       if (!db.objectStoreNames.contains("identities")) db.createObjectStore("identities", { keyPath: "key" })
       if (!db.objectStoreNames.contains("meta")) db.createObjectStore("meta", { keyPath: "key" })
       if (!db.objectStoreNames.contains("messages")) db.createObjectStore("messages", { keyPath: "key" })
+      if (!db.objectStoreNames.contains("cache")) db.createObjectStore("cache", { keyPath: "key" })
     }
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error ?? new Error("Cannot open the device identity store"))
@@ -125,7 +139,7 @@ export const clearCurrentIdentity = async (expectedKey?: string) => {
 
 export const deleteIdentity = async (identity: DeviceIdentity) => {
   const db = await database()
-  const transaction = db.transaction(["identities", "meta", "messages"], "readwrite")
+  const transaction = db.transaction(["identities", "meta", "messages", "cache"], "readwrite")
   transaction.objectStore("identities").delete(identity.key)
   const meta = transaction.objectStore("meta")
   const current = meta.get(CURRENT_IDENTITY_KEY)
@@ -139,11 +153,50 @@ export const deleteIdentity = async (identity: DeviceIdentity) => {
     if (String(cursor.key).startsWith(`${identity.key}:`)) cursor.delete()
     cursor.continue()
   }
+  const cache = transaction.objectStore("cache").openCursor()
+  cache.onsuccess = () => {
+    const cursor = cache.result
+    if (!cursor) return
+    if (String(cursor.key).startsWith(`${identity.key}:`)) cursor.delete()
+    cursor.continue()
+  }
   await transactionComplete(transaction)
   if (localStorage.getItem(CURRENT_IDENTITY_MARKER) === identity.key) {
     localStorage.removeItem(CURRENT_IDENTITY_MARKER)
   }
 }
+
+export const loadCachedResource = async <T>(identity: DeviceIdentity, relayId: string, resource: string, sessionId?: string) => {
+  const db = await database()
+  const transaction = db.transaction("cache", "readonly")
+  return requestResult(transaction.objectStore("cache").get(cacheKeyFor(identity.key, relayId, resource, sessionId))) as Promise<CachedResource<T> | undefined>
+}
+
+export const loadCachedResources = async <T>(identity: DeviceIdentity, resource: string) => {
+  const db = await database()
+  const transaction = db.transaction("cache", "readonly")
+  const records = await requestResult(transaction.objectStore("cache").getAll()) as CachedResource<T>[]
+  return records.filter((record) => record.identityKey === identity.key && record.resource === resource)
+}
+
+const saveCachedResourceImpl = async <T>(identity: DeviceIdentity, relayId: string, resource: string, value: T, sessionId?: string) => {
+  const db = await database()
+  const transaction = db.transaction("cache", "readwrite")
+  transaction.objectStore("cache").put({ key: cacheKeyFor(identity.key, relayId, resource, sessionId), identityKey: identity.key, relayId, sessionId, resource, value, syncedAt: Date.now() } satisfies CachedResource<T>)
+  await transactionComplete(transaction)
+  const read = db.transaction("cache", "readonly")
+  const records = (await requestResult(read.objectStore("cache").getAll()) as CachedResource[])
+    .filter((record) => record.identityKey === identity.key)
+    .sort((left, right) => left.syncedAt - right.syncedAt)
+  if (records.length <= MAX_CACHE_RECORDS_PER_IDENTITY) return
+  const prune = db.transaction("cache", "readwrite")
+  const store = prune.objectStore("cache")
+  for (const record of records.slice(0, records.length - MAX_CACHE_RECORDS_PER_IDENTITY)) store.delete(record.key)
+  await transactionComplete(prune)
+}
+
+export const saveCachedResource = <T>(identity: DeviceIdentity, relayId: string, resource: string, value: T, sessionId?: string) =>
+  queueCacheWrite(cacheKeyFor(identity.key, relayId, resource, sessionId), () => saveCachedResourceImpl(identity, relayId, resource, value, sessionId))
 
 export const loadCurrentIdentity = async () => {
   const marker = localStorage.getItem(CURRENT_IDENTITY_MARKER)

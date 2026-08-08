@@ -32,24 +32,15 @@ import {
   workspaceRelayId,
 } from "./security.js"
 import { includeActiveSession, routeSessionRequests, selectOpenSessions } from "./sessions.js"
+import { messageDeltaPlan, messagePlan } from "./messageSync.js"
+import { promptBody } from "./prompt.js"
+import { PerRecipientQueue } from "./sendQueue.js"
 
 type JsonObject = Record<string, unknown>
 type SdkResult<T> = { data?: T; error?: unknown }
 type RawSdkClient = {
   get: <T>(options: { url: string }) => Promise<SdkResult<T>>
   post: <T>(options: { url: string; body?: unknown }) => Promise<SdkResult<T>>
-}
-
-const promptContext = (session: JsonObject) => {
-  const model = session.model as JsonObject | undefined
-  const providerID = model?.providerID
-  const modelID = model?.modelID ?? model?.id
-  return {
-    ...(typeof session.agent === "string" ? { agent: session.agent } : {}),
-    ...(typeof providerID === "string" && typeof modelID === "string"
-      ? { model: { providerID, modelID } }
-      : {}),
-  }
 }
 
 const toWebSocketUrl = (brokerUrl: string) => {
@@ -88,6 +79,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
   const instanceId = randomUUID()
   const instanceStartedAt = Date.now()
   const relayId = workspaceRelayId(config.authorityId, hostname(), directory, instanceId)
+  const workspaceId = workspaceRelayId(config.authorityId, hostname(), directory, "workspace")
   const relay: RelayInfo = {
     id: relayId,
     name: config.name,
@@ -97,6 +89,8 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
     workspace: directory,
     instanceId,
     instanceStartedAt,
+    workspaceId,
+    capabilities: { ping: true, messageChunks: true, messageDelta: 1, promptMessageId: 1 },
   }
 
   let socket: WebSocket | undefined
@@ -120,6 +114,8 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
     },
   })
 
+  let controlSendQueue = Promise.resolve()
+  const bulkSendQueues = new PerRecipientQueue()
   const sendEncrypted = async (
     payload: unknown,
     recipient: Pick<DeviceRecord, "id" | "encryptionPublicKey">,
@@ -138,6 +134,13 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
       recipientEncryptionPublicKey: recipient.encryptionPublicKey,
     })
     if (socket === target && target.readyState === WebSocket.OPEN) target.send(JSON.stringify(frame))
+  }
+
+  const enqueuePayload = (payload: unknown, device: DeviceRecord, priority: "control" | "bulk" = "control") => {
+    if (priority === "bulk") return bulkSendQueues.enqueue(device.id, () => sendPayload(payload, device))
+    const operation = controlSendQueue.then(() => sendPayload(payload, device))
+    controlSendQueue = operation.catch(() => undefined)
+    return operation
   }
 
   const sendPayload = async (payload: unknown, device: DeviceRecord, channel: E2eeChannel = "data") => {
@@ -241,7 +244,28 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
           await reply(device, command.requestId, true)
           break
         case "session.messages":
-          await reply(device, command.requestId, await sdkData(client.session.messages({ path: { id: command.sessionId }, query: { limit: 80 } })))
+          const messages = await sdkData(client.session.messages({ path: { id: command.sessionId }, query: { limit: 80 } })) as JsonObject[]
+          if (command.sync) {
+            const plan = await messageDeltaPlan(messages, command.sync.known)
+            await enqueuePayload({ type: "session.messages.manifest", requestId: command.requestId, manifest: plan.manifest }, device)
+            for (const chunk of plan.chunks) {
+              await enqueuePayload({ type: "session.messages.chunk", chunk: { ...chunk, requestId: command.requestId } }, device, "bulk")
+            }
+            break
+          }
+          if (!command.chunked) {
+            await reply(device, command.requestId, messages)
+            break
+          }
+          const plan = messagePlan(messages)
+          await reply(device, command.requestId, { manifest: true, ids: plan.ids, total: plan.chunks.length })
+          const chunks = plan.chunks
+          for (const [index, chunk] of chunks.entries()) {
+            await enqueuePayload({ type: "rpc.chunk", requestId: command.requestId, index, total: chunks.length, done: index === chunks.length - 1, result: chunk }, device, "bulk")
+          }
+          break
+        case "relay.ping":
+          await reply(device, command.requestId, { sentAt: command.sentAt })
           break
         case "session.diff":
           await reply(device, command.requestId, await sdkData(client.session.diff({ path: { id: command.sessionId } })))
@@ -251,23 +275,11 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
           break
         case "session.prompt": {
           const session = (await sdkData(client.session.get({ path: { id: command.sessionId } }))) as unknown as JsonObject
-          const promptRequest = sdkCall(client.session.promptAsync({
+          await sdkCall(client.session.promptAsync({
             path: { id: command.sessionId },
-            body: {
-              ...promptContext(session),
-              ...(command.agent ? { agent: command.agent } : {}),
-              parts: [{ type: "text", text: command.text }],
-            },
+            body: promptBody(session, command.text, command.agent, command.messageId),
           }))
           await reply(device, command.requestId, true)
-          void promptRequest.catch((error) => client.app.log({
-            body: {
-              service: "remotty",
-              level: "error",
-              message: "Remote prompt failed after dispatch",
-              extra: { error: String(error), sessionId: command.sessionId },
-            },
-          }))
           break
         }
         case "session.abort":
@@ -393,13 +405,13 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
     if (stopped) return
     const connection = new WebSocket(toWebSocketUrl(config.brokerUrl), ["remotty", config.roomToken])
     let helloStarted = false
+    let readyAcknowledged = false
     socket = connection
     connection.addEventListener("open", () => {
       if (socket !== connection) {
         connection.close(1000, "Superseded connection")
         return
       }
-      reconnectDelay = 1_000
       transportReady = false
     })
     connection.addEventListener("message", (message) => {
@@ -430,10 +442,23 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
               publicKey: config.relaySigningPublicKey,
               signature,
             }))
-            transportReady = true
-            await sendOrderedState(() => ({ type: "relay.hello", relay, sequence: sequence++ }))
-            await snapshot()
+            // Older brokers authenticated the hello but did not acknowledge it.
+            setTimeout(() => {
+              if (socket !== connection || transportReady || connection.readyState !== WebSocket.OPEN) return
+              transportReady = true
+              void sendOrderedState(() => ({ type: "relay.hello", relay, sequence: sequence++ })).then(() => snapshot()).then(() => {
+                setTimeout(() => {
+                  if (socket === connection && connection.readyState === WebSocket.OPEN && transportReady && !readyAcknowledged) reconnectDelay = 1_000
+                }, 1_000)
+              }).catch((error) => log("error", "Failed to send fallback relay state", error))
+            }, 250)
           })().catch((error) => log("error", "Failed to send initial encrypted relay state", error))
+        }
+        if (control.data.type === "broker.ready") {
+          readyAcknowledged = true
+          transportReady = true
+          reconnectDelay = 1_000
+          void sendOrderedState(() => ({ type: "relay.hello", relay, sequence: sequence++ })).then(() => snapshot()).catch((error) => log("error", "Failed to send initial encrypted relay state", error))
         }
         if (control.data.type === "broker.error") void log("warn", `Broker rejected relay message: ${control.data.code}: ${control.data.message}`)
         return
@@ -478,6 +503,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
         relayId,
         completedSessionId,
         typeof session?.title === "string" ? session.title : undefined,
+        workspaceId,
       ), "push")
     } else if (["permission.updated", "permission.asked"].includes(eventType)) {
       const permissionId = String(properties.id ?? properties.requestID ?? "")
@@ -497,7 +523,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
         data: {
           sessionId,
           permissionId,
-          workspaceRelayId: relayId,
+          workspaceRelayId: relayId, workspaceId,
           ...(typeof properties.targetSessionID === "string" ? { targetSessionId: properties.targetSessionID } : {}),
         },
       }, "push")
@@ -522,7 +548,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
         tag: `${relayId}:question-${questionId}`,
         actions: [],
         openApp: true,
-        data: { sessionId, questionId, workspaceRelayId: relayId },
+        data: { sessionId, questionId, workspaceRelayId: relayId, workspaceId },
       }, "push")
     } else if (["question.replied", "question.rejected"].includes(eventType)) {
       const questionId = String(properties.requestID ?? properties.questionID ?? "")
