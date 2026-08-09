@@ -114,5 +114,17 @@ export const visibleCachedMessages = <T extends MessageWithId>(cache: MessageCac
   })
   const canonicalIds = new Set(canonical.map((message) => message.info.id))
   const staged = Object.values(cache.staged.records).map((record) => record.message).filter((message) => !canonicalIds.has(message.info.id))
-  return [...canonical, ...staged, ...cache.local.messages.filter((message) => !canonicalIds.has(message.info.id))]
+  const visible = [...canonical, ...staged]
+  for (const message of cache.local.messages.filter((item) => !canonicalIds.has(item.info.id))) {
+    const knownMessageIds = (message.info as { knownMessageIds?: string[] }).knownMessageIds
+    if (!knownMessageIds) {
+      visible.push(message)
+      continue
+    }
+    const known = new Set(knownMessageIds)
+    let insertAt = 0
+    for (const [index, item] of visible.entries()) if (known.has(item.info.id)) insertAt = index + 1
+    visible.splice(insertAt, 0, message)
+  }
+  return visible
 }

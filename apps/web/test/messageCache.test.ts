@@ -111,7 +111,18 @@ describe("versioned message cache", () => {
     let cache = await replaceCanonicalMessages(emptyMessageCache<PromptMessage>(), [canonical])
     cache = { ...cache, local: { messages: [first, retry] } }
     cache = commitMessageManifest(cache, { version: 1, scope: { kind: "tail", limit: 80 }, manifest: [canonicalEntry], upserts: [], chunkCount: 0, snapshotId: "x".repeat(43) })!
-    expect(visibleCachedMessages(cache).map((item) => item.info.id)).toEqual(["canonical", "retry"])
+    expect(visibleCachedMessages(cache).map((item) => item.info.id)).toEqual(["retry", "canonical"])
+  })
+
+  it("keeps failed local prompts before replies that arrived after sending", async () => {
+    type PromptMessage = { info: { id: string; role: string; delivery?: string; knownMessageIds?: string[] }; parts: Array<{ type: string; text: string }> }
+    const before: PromptMessage = { info: { id: "before", role: "assistant" }, parts: [{ type: "text", text: "before" }] }
+    const reply: PromptMessage = { info: { id: "reply", role: "assistant" }, parts: [{ type: "text", text: "reply" }] }
+    const first: PromptMessage = { info: { id: "first", role: "user", delivery: "failed", knownMessageIds: ["before"] }, parts: [{ type: "text", text: "first" }] }
+    const retry: PromptMessage = { info: { id: "retry", role: "user", delivery: "failed", knownMessageIds: ["before", "first"] }, parts: [{ type: "text", text: "retry" }] }
+    const cache = await replaceCanonicalMessages(emptyMessageCache<PromptMessage>(), [before, reply])
+    cache.local.messages = [first, retry]
+    expect(visibleCachedMessages(cache).map((item) => item.info.id)).toEqual(["before", "first", "retry", "reply"])
   })
 
   it("does not let an older refresh overwrite a newer completed snapshot", async () => {
