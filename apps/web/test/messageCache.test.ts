@@ -125,6 +125,16 @@ describe("versioned message cache", () => {
     expect(visibleCachedMessages(cache).map((item) => item.info.id)).toEqual(["before", "first", "retry", "reply"])
   })
 
+  it("places historical failed prompts by timestamp when no baseline was captured", async () => {
+    type PromptMessage = { info: { id: string; role: string; delivery?: string; time?: { created: number } }; parts: Array<{ type: string; text: string }> }
+    const before: PromptMessage = { info: { id: "before", role: "assistant", time: { created: 1 } }, parts: [{ type: "text", text: "before" }] }
+    const failed: PromptMessage = { info: { id: "failed", role: "user", delivery: "failed", time: { created: 2 } }, parts: [{ type: "text", text: "failed" }] }
+    const reply: PromptMessage = { info: { id: "reply", role: "assistant", time: { created: 3 } }, parts: [{ type: "text", text: "reply" }] }
+    const cache = await replaceCanonicalMessages(emptyMessageCache<PromptMessage>(), [before, reply])
+    cache.local.messages = [failed]
+    expect(visibleCachedMessages(cache).map((item) => item.info.id)).toEqual(["before", "failed", "reply"])
+  })
+
   it("does not let an older refresh overwrite a newer completed snapshot", async () => {
     const old = message("old", "old")
     const fresh = message("fresh", "fresh")

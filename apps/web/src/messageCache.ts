@@ -118,7 +118,17 @@ export const visibleCachedMessages = <T extends MessageWithId>(cache: MessageCac
   for (const message of cache.local.messages.filter((item) => !canonicalIds.has(item.info.id))) {
     const knownMessageIds = (message.info as { knownMessageIds?: string[] }).knownMessageIds
     if (!knownMessageIds) {
-      visible.push(message)
+      const created = (message.info as { time?: { created?: number } }).time?.created
+      if (typeof created !== "number") {
+        visible.push(message)
+        continue
+      }
+      let insertAt = 0
+      for (const [index, item] of visible.entries()) {
+        const itemCreated = (item.info as { time?: { created?: number } }).time?.created
+        if (typeof itemCreated === "number" && itemCreated <= created) insertAt = index + 1
+      }
+      visible.splice(insertAt, 0, message)
       continue
     }
     const known = new Set(knownMessageIds)

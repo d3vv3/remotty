@@ -224,8 +224,6 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
     setSelectedKey(key)
     setNewSessionOpen(false)
   }, [relayState.relays, relayState.request])
-  const canCreateSession = relayState.relays.some((relay) => relaySupportsSessionCreate(relay) && relayState.isRelayConnected(relay.id))
-
   const toggleGroup = (directory: string) => setCollapsedGroups((current) => {
     const next = new Set(current)
     if (next.has(directory)) next.delete(directory)
@@ -291,10 +289,9 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
               <button
                 ref={newSessionTriggerRef}
                 className="icon-button"
-                title={canCreateSession ? "New session" : "Update and connect an OpenCode relay to create sessions"}
+                title="New session"
                 aria-label="New session"
                 onClick={() => setNewSessionOpen(true)}
-                disabled={!canCreateSession}
               >
                 <Plus size={18} />
               </button>
@@ -871,6 +868,7 @@ function NewSessionDialog({
             })}
           </select>
           {relayId && <small>{relays.find((relay) => relay.id === relayId)?.workspace}</small>}
+          {!available.length && <p className="form-error" role="status">No connected workspace supports session creation. Reconnect after updating the OpenCode plugin.</p>}
           {error && <p className="form-error" role="alert">{error}</p>}
         </div>
         <footer><button className="notification-secondary" onClick={onClose} disabled={creating}>Cancel</button><button className="notification-primary" onClick={() => void create()} disabled={!relayId || creating}>{creating ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} Create</button></footer>
