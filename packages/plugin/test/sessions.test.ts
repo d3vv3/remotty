@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { includeActiveSession, rootSessionId, routeSessionRequests, selectOpenSessions } from "../src/sessions"
+import { includeActiveSession, rootSessionId, routeSessionRequests, selectOpenSessions, sessionDirectory } from "../src/sessions"
 
 describe("selectOpenSessions", () => {
   const sessions = [
@@ -48,5 +48,21 @@ describe("selectOpenSessions", () => {
       sessionID: "root",
       targetSessionID: "grandchild",
     }])
+  })
+})
+
+describe("sessionDirectory", () => {
+  const sessions = [
+    { id: "root", directory: "/work/root" },
+    { id: "child", parentID: "root", directory: "/work/child" },
+  ]
+
+  it("routes root and child requests to the root session workspace", () => {
+    expect(sessionDirectory("root", sessions, "/fallback")).toBe("/work/root")
+    expect(sessionDirectory("child", sessions, "/fallback")).toBe("/work/root")
+  })
+
+  it("falls back when the session is not known", () => {
+    expect(sessionDirectory("missing", sessions, "/fallback")).toBe("/fallback")
   })
 })

@@ -1,6 +1,7 @@
 export type SessionLike = {
   id?: unknown
   parentID?: unknown
+  directory?: unknown
   time?: unknown
 }
 
@@ -42,6 +43,12 @@ export const rootSessionId = (sessionId: string, sessions: SessionLike[]) => {
     current = String(parents.get(current))
   }
   return current
+}
+
+export const sessionDirectory = (sessionId: string, sessions: SessionLike[], fallback: string) => {
+  const rootId = rootSessionId(sessionId, sessions)
+  const directory = sessions.find((session) => session.id === rootId)?.directory
+  return typeof directory === "string" && directory ? directory : fallback
 }
 
 export const routeSessionRequests = <T extends SessionRequest>(requests: T[], sessions: SessionLike[]) =>

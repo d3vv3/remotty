@@ -32,7 +32,7 @@ import {
   validateEnrollmentFrame,
   workspaceRelayId,
 } from "./security.js"
-import { includeActiveSession, routeSessionRequests, selectOpenSessions } from "./sessions.js"
+import { includeActiveSession, routeSessionRequests, selectOpenSessions, sessionDirectory } from "./sessions.js"
 import { messageDeltaPlan, messagePlan } from "./messageSync.js"
 import { openCodeMessageId } from "./messageId.js"
 import { promptBody } from "./prompt.js"
@@ -287,10 +287,10 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
           await reply(device, command.requestId, await sdkData(client.session.diff({ path: { id: command.sessionId } })))
           break
         case "workspace.diff":
-          await reply(device, command.requestId, await workspaceGitDiff(directory))
+          await reply(device, command.requestId, await workspaceGitDiff(sessionDirectory(command.sessionId, knownSessions, directory)))
           break
         case "workspace.diff.patch":
-          await reply(device, command.requestId, await workspaceGitPatch(directory, command.file))
+          await reply(device, command.requestId, await workspaceGitPatch(sessionDirectory(command.sessionId, knownSessions, directory), command.file))
           break
         case "session.todos":
           await reply(device, command.requestId, await sdkData(client.session.todo({ path: { id: command.sessionId } })))
