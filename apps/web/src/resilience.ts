@@ -128,9 +128,9 @@ export const orderByManifest = <T extends { info?: { id?: string } }>(messages: 
 }
 
 export const readOnlyCommand = (type: string) =>
-  ["snapshot.request", "session.messages", "session.todos", "session.diff", "relay.ping"].includes(type)
+  ["snapshot.request", "session.messages", "session.todos", "session.diff", "workspace.diff", "workspace.diff.patch", "relay.ping"].includes(type)
 
 export const retryPlan = (now: number, deadline: number, attempts: number) => attempts < 2 && now < deadline
-export const requestInactivityMs = (type: string) => type === "relay.ping" ? 8_000 : type === "session.messages" ? 20_000 : 15_000
+export const requestInactivityMs = (type: string) => type === "relay.ping" ? 8_000 : ["session.messages", "workspace.diff", "workspace.diff.patch"].includes(type) ? 20_000 : 15_000
 export const healthSummary = (connected: Iterable<string>, health: Record<string, { timedOut?: boolean }>) => [...connected].some((relayId) => health[relayId]?.timedOut)
 export const promptDeliveryState = (message: string): "uncertain" | "failed" => /Connection interrupted|relay did not respond|Relay is offline|workspace relay disconnected|socket (?:closed|replaced)|transport (?:closed|lost)/i.test(message) ? "uncertain" : "failed"

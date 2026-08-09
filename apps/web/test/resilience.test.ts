@@ -108,4 +108,10 @@ describe("bad network helpers", () => {
     expect(commandForRelayCapabilities(command, {})).not.toHaveProperty("messageId")
     expect(commandForRelayCapabilities(command, { promptMessageId: 1 })).toMatchObject({ messageId: "browser-id" })
   })
+
+  it("falls back to the legacy session diff for older relays", () => {
+    const command = { type: "workspace.diff" as const, sessionId: "session-1" }
+    expect(commandForRelayCapabilities(command, {})).toEqual({ type: "session.diff", sessionId: "session-1" })
+    expect(commandForRelayCapabilities(command, { workspaceDiff: 1 })).toEqual(command)
+  })
 })

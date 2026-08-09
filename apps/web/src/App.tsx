@@ -63,7 +63,17 @@ type MessagePart = {
   }
 }
 type SessionMessage = { info: { id: string; role: string; parentID?: string; time?: { created?: number }; delivery?: "sending" | "queued" | "accepted" | "uncertain" | "failed"; legacyPrompt?: boolean }; parts: MessagePart[] }
-type FileDiff = { file: string; additions: number; deletions: number }
+type FileDiff = {
+  file: string
+  status?: "added" | "modified" | "deleted" | "untracked"
+  additions: number
+  deletions: number
+  patch?: string
+  binary?: boolean
+  truncated?: boolean
+}
+type WorkspaceDiff = { state: "ok" | "not_git"; files: FileDiff[]; truncated: boolean }
+type WorkspacePatch = { patch?: string; truncated: boolean }
 type SessionTodo = { id: string; content: string; status: string; priority: string }
 
 let routePairingBundle = location.pathname === "/pair" && location.hash
@@ -899,6 +909,9 @@ function SessionDetail({
   const [messages, setMessages] = useState<SessionMessage[]>([])
   const messageCacheRef = useRef<MessageCache<SessionMessage>>(emptyMessageCache())
   const [diffs, setDiffs] = useState<FileDiff[]>([])
+  const [diffState, setDiffState] = useState<"idle" | "loading" | "ok" | "not_git" | "error">("idle")
+  const [diffTruncated, setDiffTruncated] = useState(false)
+  const [diffVersion, setDiffVersion] = useState(0)
   const [todos, setTodos] = useState<SessionTodo[]>([])
   const [prompt, setPrompt] = useState("")
   const [sending, setSending] = useState(false)
@@ -916,6 +929,7 @@ function SessionDetail({
   const snapshotRef = useRef<Record<string, string>>({})
   const generationRef = useRef(0)
   const refreshGenerationRef = useRef(0)
+  const diffGenerationRef = useRef(0)
   const selectedAgent = agents.find((item) => item.name === agent)
   const selectedAgentStyle = { "--agent-color": selectedAgent?.color ?? "var(--cyan)" } as CSSProperties
   const persistMessageCache = useCallback((cache: MessageCache<SessionMessage>) => {
@@ -925,6 +939,32 @@ function SessionDetail({
   }, [saveCache])
   const persistLocalMessages = useCallback((messages: SessionMessage[]) =>
     persistMessageCache({ ...messageCacheRef.current, local: { ...messageCacheRef.current.local, messages: messages.filter((message) => message.info.delivery !== undefined) } }), [persistMessageCache])
+
+  const refreshDiffs = async () => {
+    const generation = ++diffGenerationRef.current
+    setDiffState("loading")
+    try {
+      const result = await request({ type: "workspace.diff", sessionId: session.id })
+      if (!mountedRef.current || generation !== diffGenerationRef.current) return
+      if (Array.isArray(result)) {
+        setDiffs(result as FileDiff[])
+        setDiffTruncated(false)
+        setDiffVersion((version) => version + 1)
+        setDiffState("ok")
+        return
+      }
+      const workspace = result as WorkspaceDiff
+      if (!workspace || !Array.isArray(workspace.files) || !["ok", "not_git"].includes(workspace.state)) throw new Error("The relay returned an invalid workspace diff.")
+      setDiffs(workspace.files)
+      setDiffTruncated(Boolean(workspace.truncated))
+      setDiffVersion((version) => version + 1)
+      setDiffState(workspace.state)
+    } catch (error) {
+      if (!mountedRef.current || generation !== diffGenerationRef.current) return
+      setDiffState("error")
+      onError((error as Error).message)
+    }
+  }
 
   const refresh = async () => {
     const refreshGeneration = ++refreshGenerationRef.current
@@ -980,7 +1020,6 @@ function SessionDetail({
     await Promise.all([
       load<SessionMessage>("messages", { type: "session.messages", sessionId: session.id }, setMessages),
       load<SessionTodo>("todos", { type: "session.todos", sessionId: session.id }, setTodos),
-      load<FileDiff>("diffs", { type: "session.diff", sessionId: session.id }, setDiffs),
     ])
     if (!mountedRef.current) return
     setLoading(false)
@@ -996,8 +1035,12 @@ function SessionDetail({
   useEffect(() => {
     const generation = ++generationRef.current
     ++refreshGenerationRef.current
+    ++diffGenerationRef.current
     setMessageCacheReadySession(undefined)
     setLoading(true)
+    setDiffs([])
+    setDiffState("idle")
+    setDiffTruncated(false)
     void Promise.all([
       loadCache<unknown>("messages").then(async (cached) => {
         if (generation !== generationRef.current) return
@@ -1008,7 +1051,6 @@ function SessionDetail({
         setMessageCacheReadySession(session.id)
       }),
       loadCache<SessionTodo[]>("todos").then((cached) => cached && generation === generationRef.current && setTodos((current) => current.length ? current : cached.value)),
-      loadCache<FileDiff[]>("diffs").then((cached) => cached && generation === generationRef.current && setDiffs((current) => current.length ? current : cached.value)),
     ]).then(() => { if (generation === generationRef.current) setLoading(false) })
   }, [loadCache, session.id])
 
@@ -1035,6 +1077,12 @@ function SessionDetail({
     const timeout = window.setTimeout(() => void refresh(), revision ? 350 : 0)
     return () => window.clearTimeout(timeout)
   }, [session.id, session.status, revision, messageCacheReadySession])
+
+  useEffect(() => {
+    if (tab !== "changes") return
+    const timeout = window.setTimeout(() => void refreshDiffs(), revision ? 500 : 0)
+    return () => window.clearTimeout(timeout)
+  }, [tab, revision, session.id])
 
   const visibleMessages = useMemo(
     () => messages.filter((message) => message.parts.some((part) => part.type === "text" || part.type === "tool")),
@@ -1174,7 +1222,7 @@ function SessionDetail({
       <div className="tabs" role="tablist">
         <button type="button" role="tab" aria-selected={tab === "activity"} className={tab === "activity" ? "active" : ""} onClick={() => setTab("activity")}>Activity</button>
         <button type="button" role="tab" aria-selected={tab === "todos"} className={tab === "todos" ? "active" : ""} onClick={() => { setTab("todos"); void refresh() }}>Todos <span>{todos.filter((todo) => todo.status !== "completed" && todo.status !== "cancelled").length}</span></button>
-        <button type="button" role="tab" aria-selected={tab === "changes"} className={tab === "changes" ? "active" : ""} onClick={() => { setTab("changes"); void refresh() }}>Changes <span>{diffs.length}</span></button>
+        <button type="button" role="tab" aria-selected={tab === "changes"} className={tab === "changes" ? "active" : ""} onClick={() => setTab("changes")}>Changes <span>{diffs.length}</span></button>
       </div>
 
       <div
@@ -1212,13 +1260,14 @@ function SessionDetail({
           </div>
         ) : (
           <div className="change-list">
+            {diffState === "loading" && <div className="empty-state"><LoaderCircle className="spin" size={22} /></div>}
             {diffs.map((diff) => (
-              <div className="change-row" key={diff.file}>
-                <code>{diff.file}</code>
-                <span><b>+{diff.additions}</b><i>-{diff.deletions}</i></span>
-              </div>
+              <ChangeEntry key={`${diffVersion}:${diff.file}`} diff={diff} sessionId={session.id} request={request} onError={onError} />
             ))}
-            {diffs.length === 0 && <div className="empty-state"><p>No tracked changes reported for {session.directory}.</p></div>}
+            {diffTruncated && <p className="change-notice">Some files were omitted because the workspace contains more than 500 changes.</p>}
+            {diffState === "not_git" && <div className="empty-state"><p>{session.directory} is not a Git working tree.</p></div>}
+            {diffState === "ok" && diffs.length === 0 && <div className="empty-state"><p>The working tree matches the latest commit.</p></div>}
+            {diffState === "error" && <div className="empty-state"><p>Workspace changes could not be loaded.</p></div>}
           </div>
         )}
       </div>
@@ -1248,6 +1297,55 @@ function SessionDetail({
         </form>
       </div>
     </div>
+  )
+}
+
+function ChangeEntry({
+  diff,
+  sessionId,
+  request,
+  onError,
+}: {
+  diff: FileDiff
+  sessionId: string
+  request: (command: any) => Promise<unknown>
+  onError: (error?: string) => void
+}) {
+  const [patch, setPatch] = useState(diff.patch)
+  const [patchState, setPatchState] = useState<"idle" | "loading" | "ready" | "error">(diff.patch ? "ready" : "idle")
+  const [patchTruncated, setPatchTruncated] = useState(Boolean(diff.truncated))
+
+  const loadPatch = async () => {
+    if (patchState !== "idle" || diff.status === "untracked" || !diff.status) return
+    setPatchState("loading")
+    try {
+      const result = await request({ type: "workspace.diff.patch", sessionId, file: diff.file }) as WorkspacePatch
+      if (!result || typeof result.truncated !== "boolean" || (result.patch !== undefined && typeof result.patch !== "string")) throw new Error("The relay returned an invalid file patch.")
+      setPatch(result.patch)
+      setPatchTruncated(result.truncated)
+      setPatchState("ready")
+    } catch (error) {
+      setPatchState("error")
+      onError((error as Error).message)
+    }
+  }
+
+  return (
+    <details className="change-entry" onToggle={(event) => { if (event.currentTarget.open) void loadPatch() }}>
+      <summary className="change-row">
+        <small className={`change-status ${diff.status ?? "modified"}`}>{diff.status ?? "changed"}</small>
+        <code>{diff.file}</code>
+        <span><b>+{diff.additions}</b><i>-{diff.deletions}</i></span>
+        <ChevronDown size={15} />
+      </summary>
+      <div className="change-patch">
+        {patchState === "loading"
+          ? <p><LoaderCircle className="spin" size={15} /> Loading patch</p>
+          : patch
+            ? <pre><code>{patch}</code></pre>
+            : <p>{diff.status === "untracked" ? "Untracked file content is not transferred automatically." : !diff.status ? "Update the workspace plugin to view this patch." : diff.binary ? "Binary file changed." : patchTruncated ? "Patch is too large to display." : patchState === "error" ? "Patch could not be loaded." : "No textual patch is available."}</p>}
+      </div>
+    </details>
   )
 }
 

@@ -24,6 +24,19 @@ export type AggregatedRelayState = {
 }
 export const stableWorkspaceKey = (relay: Pick<RelayInfo, "workspaceId" | "hostname" | "workspace">) => relay.workspaceId ?? `legacy:${relay.hostname}:${relay.workspace}`
 export const relaySupportsSessionCreate = (relay: Pick<RelayInfo, "capabilities">) => relay.capabilities?.sessionCreate === 1
+export const sessionRevisionKey = (relay: Pick<RelayInfo, "workspaceId" | "hostname" | "workspace">, sessionId: string) => `${stableWorkspaceKey(relay)}:${sessionId}`
+export const bumpSessionRevisions = (
+  current: Readonly<Record<string, number>>,
+  relay: Pick<RelayInfo, "workspaceId" | "hostname" | "workspace">,
+  sessionIds: Iterable<string>,
+) => {
+  const next = { ...current }
+  for (const sessionId of sessionIds) {
+    const key = sessionRevisionKey(relay, sessionId)
+    next[key] = (next[key] ?? 0) + 1
+  }
+  return next
+}
 
 export const acceptsRelayPosition = (
   current: Pick<RelaySlice, "relay" | "sequence"> | undefined,

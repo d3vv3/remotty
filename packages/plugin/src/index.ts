@@ -19,6 +19,7 @@ import {
   isSecureBrokerUrl,
 } from "@remotty/protocol"
 import { primaryAgentSummaries } from "./agents.js"
+import { workspaceGitDiff, workspaceGitPatch } from "./gitChanges.js"
 import { readConfig, type DeviceRecord, type RelayConfig } from "./config.js"
 import { completionNotification, completionSessionForEvent, shouldNotifySessionCompletion, type CompletionState } from "./notifications.js"
 import {
@@ -90,7 +91,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
     instanceId,
     instanceStartedAt,
     workspaceId,
-    capabilities: { ping: true, messageChunks: true, messageDelta: 1, promptMessageId: 1, sessionCreate: 1 },
+    capabilities: { ping: true, messageChunks: true, messageDelta: 1, promptMessageId: 1, sessionCreate: 1, workspaceDiff: 1 },
   }
 
   let socket: WebSocket | undefined
@@ -280,6 +281,12 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
         }
         case "session.diff":
           await reply(device, command.requestId, await sdkData(client.session.diff({ path: { id: command.sessionId } })))
+          break
+        case "workspace.diff":
+          await reply(device, command.requestId, await workspaceGitDiff(directory))
+          break
+        case "workspace.diff.patch":
+          await reply(device, command.requestId, await workspaceGitPatch(directory, command.file))
           break
         case "session.todos":
           await reply(device, command.requestId, await sdkData(client.session.todo({ path: { id: command.sessionId } })))

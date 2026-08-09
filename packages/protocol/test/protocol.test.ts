@@ -39,6 +39,18 @@ describe("relay protocol", () => {
       .not.toHaveProperty("directory")
   })
 
+  it("accepts a session-routed workspace diff request", () => {
+    expect(clientCommandSchema.parse({ type: "workspace.diff", requestId: "request-1", sessionId: "session-1" })).toEqual({
+      type: "workspace.diff",
+      requestId: "request-1",
+      sessionId: "session-1",
+    })
+    expect(clientCommandSchema.parse({ type: "workspace.diff.patch", requestId: "request-2", sessionId: "session-1", file: "src/app.ts" })).toMatchObject({
+      type: "workspace.diff.patch",
+      file: "src/app.ts",
+    })
+  })
+
   it("accepts health requests and independently encrypted response chunks", () => {
     expect(clientCommandSchema.parse({ type: "relay.ping", requestId: "ping-1", sentAt: 1 })).toMatchObject({ type: "relay.ping" })
     expect(relayMessageSchema.parse({ type: "rpc.chunk", requestId: "messages-1", index: 0, total: 1, done: true, result: [] })).toMatchObject({ type: "rpc.chunk", done: true })
@@ -47,7 +59,7 @@ describe("relay protocol", () => {
   it("keeps optional capabilities and chunking compatible with legacy peers", () => {
     expect(clientCommandSchema.parse({ type: "session.messages", requestId: "m", sessionId: "s" })).not.toHaveProperty("chunked")
     expect(clientCommandSchema.parse({ type: "session.messages", requestId: "m", sessionId: "s", chunked: true })).toMatchObject({ chunked: true })
-    expect(relayMessageSchema.parse({ type: "relay.hello", relay: { id: "r", name: "n", hostname: "h", platform: "p", arch: "a", workspace: "w", workspaceId: "stable", capabilities: { ping: true, sessionCreate: 1 } } })).toMatchObject({ type: "relay.hello", relay: { capabilities: { sessionCreate: 1 } } })
+    expect(relayMessageSchema.parse({ type: "relay.hello", relay: { id: "r", name: "n", hostname: "h", platform: "p", arch: "a", workspace: "w", workspaceId: "stable", capabilities: { ping: true, sessionCreate: 1, workspaceDiff: 1 } } })).toMatchObject({ type: "relay.hello", relay: { capabilities: { sessionCreate: 1, workspaceDiff: 1 } } })
   })
 
   it("fingerprints canonical JSON and excludes local delivery metadata", async () => {

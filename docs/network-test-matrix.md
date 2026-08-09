@@ -5,7 +5,7 @@ Run the web app and a local broker/plugin pair, then apply each condition to the
 | Condition | Command | Expected result |
 | --- | --- | --- |
 | Latency and jitter | `sudo tc qdisc replace dev <interface> root netem delay 400ms 150ms` | Status becomes Unstable when pings time out; cached content remains readable. |
-| Packet loss | `sudo tc qdisc replace dev <interface> root netem loss 25%` | Read-only sync retries after reconnect; a lost prompt acknowledgement is shown as Delivery uncertain rather than replayed. |
+| Packet loss | `sudo tc qdisc replace dev <interface> root netem loss 25%` | Read-only sync retries after reconnect; a lost prompt acknowledgement is shown as Delivery uncertain rather than replayed, and the recovery snapshot refreshes the open chat without navigation. |
 | Full outage | `sudo tc qdisc replace dev <interface> root netem loss 100%` | Service and computer rows show offline; reconnect resumes on network recovery. |
 | Large messages | Use a session with multi-megabyte tool output while `delay 200ms` is active | User/newest message chunks appear before bulk tool data and status refreshes remain responsive. |
 | Delta tail sync | Refresh an unchanged 80-message session, then edit one message | An unchanged refresh sends only a small manifest; one changed message sends the manifest plus that record. The known-inventory control frame remains below the broker 100KB limit. |

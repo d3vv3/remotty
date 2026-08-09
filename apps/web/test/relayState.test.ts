@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { acceptsRelayPosition, aggregateRelaySlices, commandRelayId, relaySupportsSessionCreate, resolveConnectedWorkspaceRelay, stableWorkspaceKey, type RelaySlice } from "../src/relayState"
+import { acceptsRelayPosition, aggregateRelaySlices, bumpSessionRevisions, commandRelayId, relaySupportsSessionCreate, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, type RelaySlice } from "../src/relayState"
 
 const slice = (id: string, sessionId: string, updatedAt: number): RelaySlice => ({
   relay: { id, name: id, hostname: "host", platform: "linux", arch: "x64", workspace: `/${id}` },
@@ -79,5 +79,17 @@ describe("relay snapshot aggregation and routing", () => {
     const replacement = slice("new", "s", 2)
     replacement.relay.workspace = old.relay.workspace
     expect(resolveConnectedWorkspaceRelay(stableWorkspaceKey(old.relay), ["new"], new Map([["old", old], ["new", replacement]]))).toBe("new")
+  })
+
+  it("invalidates sessions under stable workspace keys across relay restarts", () => {
+    const old = slice("old-relay", "one", 1).relay
+    old.workspaceId = "stable-workspace"
+    const replacement = { ...old, id: "new-relay" }
+    const initial = bumpSessionRevisions({}, old, ["one", "two"])
+    const refreshed = bumpSessionRevisions(initial, replacement, ["one"])
+
+    expect(sessionRevisionKey(old, "one")).toBe("stable-workspace:one")
+    expect(refreshed).toEqual({ "stable-workspace:one": 2, "stable-workspace:two": 1 })
+    expect(refreshed).not.toHaveProperty("old-relay:one")
   })
 })

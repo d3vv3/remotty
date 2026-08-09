@@ -30,7 +30,7 @@ import {
   saveCachedResource,
   type DeviceIdentity,
 } from "./deviceStore"
-import { acceptsRelayPosition, aggregateRelaySlices, commandRelayId, resolveConnectedWorkspaceRelay, stableWorkspaceKey, type RelaySlice } from "./relayState"
+import { acceptsRelayPosition, aggregateRelaySlices, bumpSessionRevisions, commandRelayId, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, type RelaySlice } from "./relayState"
 import { addChunk, assembledMessages, completeChunks, createChunkAssembly, exactManifestMessages, hasSequenceGap, healthSummary, orderByManifest, readOnlyCommand, reconnectDelay, requestInactivityMs, retryPlan, validManifest, type ChunkAssembly } from "./resilience"
 import { verifyDeltaSnapshot } from "./messageCache"
 
@@ -55,13 +55,14 @@ export type RelayRequest = ClientCommand extends infer Command
 const MAX_FRAME_AGE_MS = 5 * 60 * 1_000
 const MAX_RECENT_MESSAGES = 1_000
 
-export const commandForRelayCapabilities = (command: RelayRequest, capabilities?: { messageChunks?: boolean; messageDelta?: 1; promptMessageId?: 1 }): RelayRequest => {
+export const commandForRelayCapabilities = (command: RelayRequest, capabilities?: { messageChunks?: boolean; messageDelta?: 1; promptMessageId?: 1; workspaceDiff?: 1 }): RelayRequest => {
   if (command.type === "session.prompt" && !capabilities?.promptMessageId) {
     const { messageId: _messageId, ...legacy } = command
     return legacy
   }
   if (command.type === "session.messages" && capabilities?.messageDelta && command.sync) return command
   if (command.type === "session.messages" && capabilities?.messageChunks) return { ...command, chunked: true, sync: undefined }
+  if (command.type === "workspace.diff" && !capabilities?.workspaceDiff) return { type: "session.diff", sessionId: command.sessionId }
   return command
 }
 
@@ -182,6 +183,7 @@ export function useRelay(initialBundle?: PairingBundle) {
   const cleanupRef = useRef<Promise<void>>(Promise.resolve())
   const reconnectAttemptRef = useRef(0)
   const recoveryInFlightRef = useRef(new Set<string>())
+  const snapshotInvalidationRef = useRef(new Set<string>())
   const socketGenerationRef = useRef(0)
   const authenticatedRef = useRef(false)
 
@@ -241,7 +243,9 @@ export function useRelay(initialBundle?: PairingBundle) {
 
   const requestSnapshots = useCallback((identity: DeviceIdentity, relayIds: Iterable<string>, waitForReply = false) => {
     const deviceName = currentDeviceName(identity.deviceId)
-    const requests = [...relayIds].map((relayId) => {
+    const targets = [...relayIds]
+    for (const relayId of targets) snapshotInvalidationRef.current.add(relayId)
+    const requests = targets.map((relayId) => {
       if (waitForReply) return requestFromRelay(identity, relayId, { type: "snapshot.request", deviceName })
       return sendCommandFrame(identity, relayId, { type: "snapshot.request", requestId: crypto.randomUUID(), deviceName })
     })
@@ -269,7 +273,7 @@ export function useRelay(initialBundle?: PairingBundle) {
     const part = properties.part as Record<string, unknown> | undefined
     const sessionID = String(properties.sessionID ?? info?.sessionID ?? part?.sessionID ?? "")
     if (sessionID && ["message.updated", "message.part.updated", "message.part.delta", "session.diff", "todo.updated"].includes(event.type)) {
-      const revisionKey = `${relayId}:${sessionID}`
+      const revisionKey = sessionRevisionKey(slice.relay, sessionID)
       setSessionRevisions((current) => ({ ...current, [revisionKey]: (current[revisionKey] ?? 0) + 1 }))
     }
     if (["session.status", "session.idle", "session.error"].includes(event.type)) {
@@ -416,6 +420,9 @@ export function useRelay(initialBundle?: PairingBundle) {
         })
         setLastSyncedAt(Date.now())
         recoveryInFlightRef.current.delete(frame.sender)
+        if (snapshotInvalidationRef.current.delete(frame.sender)) {
+          setSessionRevisions((current) => bumpSessionRevisions(current, data.relay, data.sessions.map((session) => session.id)))
+        }
         publishSlices()
       } else if (data.type === "relay.event") {
         applyEvent(frame.sender, data.event, data.instanceId, data.sequence)
@@ -677,6 +684,7 @@ export function useRelay(initialBundle?: PairingBundle) {
           }
           connectedRelaysRef.current.clear()
           recoveryInFlightRef.current.clear()
+          snapshotInvalidationRef.current.clear()
           setServiceConnected(false)
           setRelayHealth({})
           publishSlices()
@@ -726,6 +734,7 @@ export function useRelay(initialBundle?: PairingBundle) {
     }
     pendingRef.current.clear()
     connectedRelaysRef.current.clear()
+    snapshotInvalidationRef.current.clear()
     slicesRef.current.clear()
     sessionRelaysRef.current.clear()
     publishSlices()

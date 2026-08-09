@@ -51,7 +51,7 @@ export const relayInfoSchema = z.object({
   instanceId: z.string().optional(),
   instanceStartedAt: z.number().int().nonnegative().optional(),
   workspaceId: z.string().optional(),
-  capabilities: z.object({ ping: z.boolean().optional(), messageChunks: z.boolean().optional(), messageDelta: z.literal(1).optional(), promptMessageId: z.literal(1).optional(), sessionCreate: z.literal(1).optional() }).optional(),
+  capabilities: z.object({ ping: z.boolean().optional(), messageChunks: z.boolean().optional(), messageDelta: z.literal(1).optional(), promptMessageId: z.literal(1).optional(), sessionCreate: z.literal(1).optional(), workspaceDiff: z.literal(1).optional() }).optional(),
 })
 export type RelayInfo = z.infer<typeof relayInfoSchema>
 /** Largest canonical message body accepted by both relay planning and browser reassembly. */
@@ -182,6 +182,17 @@ export const clientCommandSchema = z.discriminatedUnion("type", [
     type: z.literal("session.diff"),
     requestId: z.string(),
     sessionId: z.string(),
+  }),
+  z.object({
+    type: z.literal("workspace.diff"),
+    requestId: z.string(),
+    sessionId: z.string(),
+  }),
+  z.object({
+    type: z.literal("workspace.diff.patch"),
+    requestId: z.string(),
+    sessionId: z.string(),
+    file: z.string().min(1).max(4096),
   }),
   z.object({
     type: z.literal("session.todos"),
