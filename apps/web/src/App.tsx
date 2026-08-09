@@ -62,7 +62,7 @@ type MessagePart = {
     metadata?: Record<string, unknown>
   }
 }
-type SessionMessage = { info: { id: string; role: string; parentID?: string; time?: { created?: number }; delivery?: "sending" | "queued" | "accepted" | "uncertain" | "failed"; legacyPrompt?: boolean }; parts: MessagePart[] }
+type SessionMessage = { info: { id: string; role: string; parentID?: string; time?: { created?: number }; delivery?: "sending" | "queued" | "accepted" | "uncertain" | "failed"; legacyPrompt?: boolean; knownMessageIds?: string[] }; parts: MessagePart[] }
 type FileDiff = {
   file: string
   status?: "added" | "modified" | "deleted" | "untracked"
@@ -1049,6 +1049,12 @@ function SessionDetail({
         messageCacheRef.current = cache
         setMessages(visibleCachedMessages(cache))
         setMessageCacheReadySession(session.id)
+      }).catch(() => {
+        if (generation !== generationRef.current) return
+        const cache = emptyMessageCache<SessionMessage>()
+        messageCacheRef.current = cache
+        setMessages([])
+        setMessageCacheReadySession(session.id)
       }),
       loadCache<SessionTodo[]>("todos").then((cached) => cached && generation === generationRef.current && setTodos((current) => current.length ? current : cached.value)),
     ]).then(() => { if (generation === generationRef.current) setLoading(false) })
@@ -1107,10 +1113,15 @@ function SessionDetail({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
-    if (!prompt.trim() || sending) return
+    if (!prompt.trim() || sending || messageCacheReadySession !== session.id) return
     const text = prompt.trim()
     const messageId = crypto.randomUUID()
-    const optimistic: SessionMessage = { info: { id: messageId, role: "user", time: { created: Date.now() }, delivery: "sending" }, parts: [{ type: "text", text }] }
+    const knownMessageIds = [...new Set([
+      ...messageCacheRef.current.canonical.manifest.map((entry) => entry.id),
+      ...Object.keys(messageCacheRef.current.staged.records),
+      ...messageCacheRef.current.local.messages.map((message) => message.info.id),
+    ])]
+    const optimistic: SessionMessage = { info: { id: messageId, role: "user", time: { created: Date.now() }, delivery: "sending", knownMessageIds }, parts: [{ type: "text", text }] }
     setMessages((current) => {
       const next = mergeByMessageId(current, [...current, optimistic])
       void persistLocalMessages(next)
@@ -1123,14 +1134,16 @@ function SessionDetail({
         sessionId: session.id,
         text,
         agent: agent || undefined,
-        messageId,
       })
       setMessages((current) => {
         // Legacy relays acknowledge before async OpenCode dispatch. Preserve user
         // text as uncertain until a later canonical response can reconcile it.
-        const next = acknowledgement && typeof acknowledgement === "object" && (acknowledgement as { promptMessageId?: unknown }).promptMessageId === false
-          ? current.map((message) => message.info.id === messageId ? { ...message, info: { ...message.info, delivery: "uncertain" as const, legacyPrompt: true } } : message)
-          : current.map((message) => message.info.id === messageId ? { ...message, info: { ...message.info, delivery: "accepted" as const } } : message)
+        const canonicalId = acknowledgement && typeof acknowledgement === "object" && typeof (acknowledgement as { messageId?: unknown }).messageId === "string" && (acknowledgement as { messageId: string }).messageId.startsWith("msg")
+          ? (acknowledgement as { messageId: string }).messageId
+          : undefined
+        const next = canonicalId
+          ? current.map((message) => message.info.id === messageId ? { ...message, info: { ...message.info, id: canonicalId, delivery: "accepted" as const } } : message)
+          : current.map((message) => message.info.id === messageId ? { ...message, info: { ...message.info, delivery: "uncertain" as const, legacyPrompt: true } } : message)
         void persistLocalMessages(next)
         return next
       })
@@ -1138,7 +1151,7 @@ function SessionDetail({
     } catch (error) {
       const delivery = promptDeliveryState((error as Error).message)
       setMessages((current) => {
-        const next = current.map((message) => message.info.id === messageId ? { ...message, info: { ...message.info, delivery } } : message)
+        const next = current.map((message) => message.info.id === messageId ? { ...message, info: { ...message.info, delivery, ...(delivery === "uncertain" ? { legacyPrompt: true } : {}) } } : message)
         void persistLocalMessages(next)
         return next
       })
@@ -1291,7 +1304,7 @@ function SessionDetail({
             rows={1}
             aria-label="Message OpenCode"
           />
-          <button className="primary-button" type="submit" disabled={!prompt.trim() || sending} aria-label="Send prompt">
+          <button className="primary-button" type="submit" disabled={!prompt.trim() || sending || messageCacheReadySession !== session.id} aria-label="Send prompt">
             {sending ? <LoaderCircle className="spin" size={19} /> : <Send size={19} />}
           </button>
         </form>

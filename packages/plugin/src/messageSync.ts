@@ -48,14 +48,11 @@ export const messageChunks = <T extends MessageLike>(messages: T[], maxBytes = M
   return chunks
 }
 
-const priority = (message: { info?: { role?: string }; parts?: Array<{ type?: string; text?: string }> }) =>
-  message.info?.role === "user" ? 0 : message.parts?.some((part) => part.type === "text" && part.text && part.text.length < 8_000) ? 1 : 2
-
 export const messagePlan = <T extends MessageLike & { info?: { id?: string; role?: string }; parts?: Array<{ type?: string; text?: string }> }>(messages: T[], maxBytes = MESSAGE_CHUNK_BYTES): MessagePlan<T> => {
   const ids = messages.map((message) => message.info?.id)
   if (ids.some((id) => !id) || new Set(ids).size !== ids.length || ids.length > 80) throw new Error("Messages require unique stable ids")
-  const units = messages.map((message, index) => ({ index, priority: priority(message), chunks: messageChunks([message], maxBytes) }))
-  units.sort((left, right) => left.priority - right.priority || left.index - right.index)
+  const units = messages.map((message, index) => ({ index, chunks: messageChunks([message], maxBytes) }))
+  units.sort((left, right) => right.index - left.index)
   return { ids: ids as string[], chunks: units.flatMap((unit) => unit.chunks) }
 }
 
@@ -74,8 +71,8 @@ export const messageDeltaPlan = async <T extends MessageLike & { info?: { id?: s
   const upsertRecords = records.filter((record) => knownById.get(record.id) !== record.fingerprint)
   const manifestEntries = records.map(({ id, fingerprint }) => ({ id, fingerprint }))
   const snapshotId = await deltaSnapshotId(manifestEntries)
-  const individual = upsertRecords.map((record, index) => ({ index, priority: priority(record.message as any), record }))
-  individual.sort((left, right) => left.priority - right.priority || left.index - right.index)
+  const individual = upsertRecords.map((record, index) => ({ index, record }))
+  individual.sort((left, right) => right.index - left.index)
   const chunks: MessageDeltaChunk[] = []
   for (const { record } of individual) {
     const serialized = JSON.stringify(record.message)

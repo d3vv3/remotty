@@ -55,8 +55,8 @@ export type RelayRequest = ClientCommand extends infer Command
 const MAX_FRAME_AGE_MS = 5 * 60 * 1_000
 const MAX_RECENT_MESSAGES = 1_000
 
-export const commandForRelayCapabilities = (command: RelayRequest, capabilities?: { messageChunks?: boolean; messageDelta?: 1; promptMessageId?: 1; workspaceDiff?: 1 }): RelayRequest => {
-  if (command.type === "session.prompt" && !capabilities?.promptMessageId) {
+export const commandForRelayCapabilities = (command: RelayRequest, capabilities?: { messageChunks?: boolean; messageDelta?: 1; promptMessageId?: 1; relayPromptMessageId?: 1; workspaceDiff?: 1 }): RelayRequest => {
+  if (command.type === "session.prompt") {
     const { messageId: _messageId, ...legacy } = command
     return legacy
   }
@@ -458,7 +458,7 @@ export function useRelay(initialBundle?: PairingBundle) {
         if (!addChunk(pending.chunks, { index: chunk.index, total: chunk.total, result: fragment ? { fragment } : records })) return
         window.clearTimeout(pending.timeout)
         pending.timeout = window.setTimeout(() => { pendingRef.current.delete(chunk.requestId); pending.reject(new Error("The relay stopped sending messages.")) }, requestInactivityMs(pending.command.type))
-        const messages = assembledMessages(pending.chunks)
+        const messages = orderByManifest(assembledMessages(pending.chunks), pending.deltaManifest.manifest.map((entry) => entry.id))
         if (messages.length) await pending.progress?.(messages)
         if (pendingRef.current.get(chunk.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
         if (completeChunks(pending.chunks)) {
@@ -771,7 +771,7 @@ export function useRelay(initialBundle?: PairingBundle) {
        const compatibleCommand = commandForRelayCapabilities(command, relay?.capabilities)
        try {
          const result = await requestFromRelay(identity, relayId, compatibleCommand, progress)
-         return command.type === "session.prompt" && !relay?.capabilities?.promptMessageId ? { promptMessageId: false, result } : result
+          return command.type === "session.prompt" && !relay?.capabilities?.relayPromptMessageId ? { promptMessageId: false, result } : result
        } catch (error) {
         if (!readOnlyCommand(command.type) || !retryPlan(Date.now(), deadline, attempts)) throw error
          while (Date.now() < deadline && (!authenticatedRef.current || !(workspaceKey ? resolveConnectedWorkspaceRelay(workspaceKey, connectedRelaysRef.current, slicesRef.current) : connectedRelaysRef.current.has(relayId)))) {

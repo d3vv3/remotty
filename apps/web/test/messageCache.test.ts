@@ -31,6 +31,15 @@ describe("versioned message cache", () => {
     await expect(stageMessage(cache, value, "x".repeat(43))).rejects.toThrow("fingerprint")
   })
 
+  it("lets cumulative canonical progress repair staged transport order", async () => {
+    const tool = message("tool", "tool")
+    const user = message("user", "user")
+    let cache = await stageMessage(emptyMessageCache<typeof tool>(), user)
+    cache = await stageMessage(cache, tool)
+    cache = await stageMessage(cache, user)
+    expect(visibleCachedMessages(cache).map((item) => item.info.id)).toEqual(["tool", "user"])
+  })
+
   it("commits a deletion-only zero-upsert manifest after an unchanged one", async () => {
     const first = message("first", "one")
     const second = message("second", "two")
@@ -68,6 +77,41 @@ describe("versioned message cache", () => {
     expect(visibleCachedMessages(cache).find((item) => item.info.id === "phone")?.info.delivery).toBe("accepted")
     cache = commitMessageManifest(cache, manifest)!
     expect(visibleCachedMessages(cache).find((item) => item.info.id === "phone")?.info.delivery).toBe("uncertain")
+  })
+
+  it("does not reconcile an uncertain repeated prompt against messages known before sending", async () => {
+    type PromptMessage = { info: { id: string; role: string; delivery?: string; legacyPrompt?: boolean; knownMessageIds?: string[] }; parts: Array<{ type: string; text: string }> }
+    const old: PromptMessage = { info: { id: "old", role: "user" }, parts: [{ type: "text", text: "continue" }] }
+    const local: PromptMessage = { info: { id: "local", role: "user", delivery: "uncertain", legacyPrompt: true, knownMessageIds: ["old", "staged"] }, parts: [{ type: "text", text: "continue" }] }
+    const oldEntry = await entry(old)
+    let cache = await replaceCanonicalMessages(emptyMessageCache<PromptMessage>(), [old])
+    cache = { ...cache, local: { messages: [local] } }
+    cache = commitMessageManifest(cache, { version: 1, scope: { kind: "tail", limit: 80 }, manifest: [oldEntry], upserts: [], chunkCount: 0, snapshotId: "x".repeat(43) })!
+    expect(visibleCachedMessages(cache).map((item) => item.info.id)).toEqual(["old", "local"])
+
+    const staged: PromptMessage = { info: { id: "staged", role: "user" }, parts: [{ type: "text", text: "continue" }] }
+    const stagedEntry = await entry(staged)
+    cache = await stageMessage(cache, staged)
+    cache = commitMessageManifest(cache, { version: 1, scope: { kind: "tail", limit: 80 }, manifest: [oldEntry, stagedEntry], upserts: ["staged"], chunkCount: 1, snapshotId: "x".repeat(43) })!
+    expect(visibleCachedMessages(cache).map((item) => item.info.id)).toEqual(["old", "staged", "local"])
+
+    const fresh: PromptMessage = { info: { id: "fresh", role: "user" }, parts: [{ type: "text", text: "continue" }] }
+    const freshEntry = await entry(fresh)
+    cache = await stageMessage(cache, fresh)
+    cache = commitMessageManifest(cache, { version: 1, scope: { kind: "tail", limit: 80 }, manifest: [oldEntry, stagedEntry, freshEntry], upserts: ["fresh"], chunkCount: 1, snapshotId: "x".repeat(43) })!
+    expect(visibleCachedMessages(cache).map((item) => item.info.id)).toEqual(["old", "staged", "fresh"])
+  })
+
+  it("uses each canonical text match for at most one uncertain retry", async () => {
+    type PromptMessage = { info: { id: string; role: string; delivery?: string; legacyPrompt?: boolean; knownMessageIds?: string[] }; parts: Array<{ type: string; text: string }> }
+    const canonical: PromptMessage = { info: { id: "canonical", role: "user" }, parts: [{ type: "text", text: "continue" }] }
+    const first: PromptMessage = { info: { id: "first", role: "user", delivery: "uncertain", legacyPrompt: true, knownMessageIds: [] }, parts: [{ type: "text", text: "continue" }] }
+    const retry: PromptMessage = { info: { id: "retry", role: "user", delivery: "uncertain", legacyPrompt: true, knownMessageIds: [] }, parts: [{ type: "text", text: "continue" }] }
+    const canonicalEntry = await entry(canonical)
+    let cache = await replaceCanonicalMessages(emptyMessageCache<PromptMessage>(), [canonical])
+    cache = { ...cache, local: { messages: [first, retry] } }
+    cache = commitMessageManifest(cache, { version: 1, scope: { kind: "tail", limit: 80 }, manifest: [canonicalEntry], upserts: [], chunkCount: 0, snapshotId: "x".repeat(43) })!
+    expect(visibleCachedMessages(cache).map((item) => item.info.id)).toEqual(["canonical", "retry"])
   })
 
   it("does not let an older refresh overwrite a newer completed snapshot", async () => {

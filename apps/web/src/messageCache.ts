@@ -47,7 +47,10 @@ export const stageMessage = async <T extends MessageWithId>(cache: MessageCache<
   const id = message.info.id
   const actual = await canonicalJsonFingerprint(canonicalMessageValue(asJson(message)))
   if (fingerprint && fingerprint !== actual) throw new Error("Message fingerprint did not match its body")
-  return { ...cache, staged: { records: { ...cache.staged.records, [id]: { message, fingerprint: actual } } } }
+  const records = { ...cache.staged.records }
+  delete records[id]
+  records[id] = { message, fingerprint: actual }
+  return { ...cache, staged: { records } }
 }
 
 export const commitMessageManifest = <T extends MessageWithId>(cache: MessageCache<T>, manifest: MessageDeltaManifest): MessageCache<T> | undefined => {
@@ -65,13 +68,16 @@ export const commitMessageManifest = <T extends MessageWithId>(cache: MessageCac
     staged: { records: {} },
     local: (() => {
       const acceptedMisses = { ...cache.local.acceptedMisses }
+      const claimedLegacyIds = new Set<string>()
       const messages = cache.local.messages.flatMap((message) => {
-        const localInfo = message.info as { id: string; delivery?: string; legacyPrompt?: boolean }
+        const localInfo = message.info as { id: string; delivery?: string; legacyPrompt?: boolean; knownMessageIds?: string[] }
         const localText = (message as { parts?: Array<{ type?: string; text?: string }> }).parts?.find((part) => part.type === "text")?.text
-        const canonicalLegacyMatch = localInfo.legacyPrompt && localText && Object.values(records).some((record) => {
-          const candidate = record.message as { info?: { role?: string }; parts?: Array<{ type?: string; text?: string }> }
-          return candidate.info?.role === "user" && candidate.parts?.some((part) => part.type === "text" && part.text === localText)
+        const knownMessageIds = new Set(localInfo.knownMessageIds ?? [])
+        const canonicalLegacyMatch = localInfo.legacyPrompt && localText && Object.entries(records).find(([id, record]) => {
+          const candidate = record.message as { info?: { id?: string; role?: string }; parts?: Array<{ type?: string; text?: string }> }
+          return candidate.info?.role === "user" && !claimedLegacyIds.has(id) && !knownMessageIds.has(candidate.info.id ?? "") && candidate.parts?.some((part) => part.type === "text" && part.text === localText)
         })
+        if (canonicalLegacyMatch) claimedLegacyIds.add(canonicalLegacyMatch[0])
         if (canonicalIds.has(message.info.id) || canonicalLegacyMatch) { delete acceptedMisses[message.info.id]; return [] }
         if (message.info.delivery !== "accepted") return [message]
         // One completed tail may legitimately lag acknowledgement. On the second

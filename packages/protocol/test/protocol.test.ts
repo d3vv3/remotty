@@ -25,7 +25,7 @@ describe("relay protocol", () => {
         sessionId: "session-1",
         text: "Continue the task",
         agent: "build",
-        messageId: "phone-message-1",
+        messageId: "msg_phone-message-1",
       }),
     ).toMatchObject({ type: "session.prompt", agent: "build" })
   })
@@ -59,7 +59,7 @@ describe("relay protocol", () => {
   it("keeps optional capabilities and chunking compatible with legacy peers", () => {
     expect(clientCommandSchema.parse({ type: "session.messages", requestId: "m", sessionId: "s" })).not.toHaveProperty("chunked")
     expect(clientCommandSchema.parse({ type: "session.messages", requestId: "m", sessionId: "s", chunked: true })).toMatchObject({ chunked: true })
-    expect(relayMessageSchema.parse({ type: "relay.hello", relay: { id: "r", name: "n", hostname: "h", platform: "p", arch: "a", workspace: "w", workspaceId: "stable", capabilities: { ping: true, sessionCreate: 1, workspaceDiff: 1 } } })).toMatchObject({ type: "relay.hello", relay: { capabilities: { sessionCreate: 1, workspaceDiff: 1 } } })
+    expect(relayMessageSchema.parse({ type: "relay.hello", relay: { id: "r", name: "n", hostname: "h", platform: "p", arch: "a", workspace: "w", workspaceId: "stable", capabilities: { ping: true, relayPromptMessageId: 1, sessionCreate: 1, workspaceDiff: 1 } } })).toMatchObject({ type: "relay.hello", relay: { capabilities: { relayPromptMessageId: 1, sessionCreate: 1, workspaceDiff: 1 } } })
   })
 
   it("fingerprints canonical JSON and excludes local delivery metadata", async () => {

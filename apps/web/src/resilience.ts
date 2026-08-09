@@ -110,8 +110,13 @@ export const assembledMessages = (assembly: ChunkAssembly) => [...assembly.chunk
 
 export const exactManifestMessages = (messages: unknown[], ids: string[]) => {
   if (messages.length !== ids.length) return undefined
-  const actual = messages.map((message) => message && typeof message === "object" && !Array.isArray(message) ? (message as { info?: { id?: unknown } }).info?.id : undefined)
-  return actual.every((id, index) => typeof id === "string" && id === ids[index]) ? messages : undefined
+  const byId = new Map<string, unknown>()
+  for (const message of messages) {
+    const id = message && typeof message === "object" && !Array.isArray(message) ? (message as { info?: { id?: unknown } }).info?.id : undefined
+    if (typeof id !== "string" || byId.has(id)) return undefined
+    byId.set(id, message)
+  }
+  return ids.every((id) => byId.has(id)) ? ids.map((id) => byId.get(id)!) : undefined
 }
 
 export const validManifest = (value: unknown) => {

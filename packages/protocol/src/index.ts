@@ -51,7 +51,7 @@ export const relayInfoSchema = z.object({
   instanceId: z.string().optional(),
   instanceStartedAt: z.number().int().nonnegative().optional(),
   workspaceId: z.string().optional(),
-  capabilities: z.object({ ping: z.boolean().optional(), messageChunks: z.boolean().optional(), messageDelta: z.literal(1).optional(), promptMessageId: z.literal(1).optional(), sessionCreate: z.literal(1).optional(), workspaceDiff: z.literal(1).optional() }).optional(),
+  capabilities: z.object({ ping: z.boolean().optional(), messageChunks: z.boolean().optional(), messageDelta: z.literal(1).optional(), promptMessageId: z.literal(1).optional(), relayPromptMessageId: z.literal(1).optional(), sessionCreate: z.literal(1).optional(), workspaceDiff: z.literal(1).optional() }).optional(),
 })
 export type RelayInfo = z.infer<typeof relayInfoSchema>
 /** Largest canonical message body accepted by both relay planning and browser reassembly. */

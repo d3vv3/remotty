@@ -36,7 +36,7 @@ describe("message sync chunks", () => {
     for (const chunk of chunks) expect(Buffer.byteLength(JSON.stringify(chunk))).toBeLessThanOrEqual(maxBytes)
   })
 
-  it("sends a later small user turn before an older oversized tool turn with canonical manifest order", () => {
+  it("sends newest messages first with canonical manifest order", () => {
     const messages = [
       { info: { id: "tool", role: "assistant" }, parts: [{ type: "tool", text: "x".repeat(2_000) }] },
       { info: { id: "user", role: "user" }, parts: [{ type: "text", text: "continue" }] },
@@ -46,7 +46,15 @@ describe("message sync chunks", () => {
     expect(plan.chunks[0]).toEqual([{ info: { id: "user", role: "user" }, parts: [{ type: "text", text: "continue" }] }])
   })
 
-  it("plans stateless deltas with canonical order and useful transfer priority", async () => {
+  it("uses recency rather than message role for transfer priority", () => {
+    const messages = [
+      { info: { id: "old-user", role: "user" }, parts: [{ type: "text", text: "old" }] },
+      { info: { id: "new-tool", role: "assistant" }, parts: [{ type: "tool", text: "new" }] },
+    ]
+    expect(messagePlan(messages, 500).chunks[0]).toEqual([messages[1]])
+  })
+
+  it("plans stateless deltas with canonical order and newest-first transfer", async () => {
     const messages = [
       { info: { id: "tool", role: "assistant" }, parts: [{ type: "tool", text: "x".repeat(2_000) }] },
       { info: { id: "user", role: "user" }, parts: [{ type: "text", text: "continue" }] },

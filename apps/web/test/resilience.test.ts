@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { addChunk, assembledMessages, completeChunks, connectionLabel, createChunkAssembly, hasSequenceGap, healthSummary, mergeByMessageId, orderByManifest, promptDeliveryState, reconcileCanonicalMessages, reconnectDelay, requestInactivityMs, retryPlan, validManifest } from "../src/resilience"
+import { addChunk, assembledMessages, completeChunks, connectionLabel, createChunkAssembly, exactManifestMessages, hasSequenceGap, healthSummary, mergeByMessageId, orderByManifest, promptDeliveryState, reconcileCanonicalMessages, reconnectDelay, requestInactivityMs, retryPlan, validManifest } from "../src/resilience"
 import { commandForRelayCapabilities } from "../src/useRelay"
 
 describe("bad network helpers", () => {
@@ -92,6 +92,9 @@ describe("bad network helpers", () => {
     const tool = { info: { id: "tool" }, parts: [] }
     const user = { info: { id: "user" }, parts: [] }
     expect(orderByManifest([user, tool], ["tool", "user"])).toEqual([tool, user])
+    expect(exactManifestMessages([user, tool], ["tool", "user"])).toEqual([tool, user])
+    expect(exactManifestMessages([user, user], ["tool", "user"])).toBeUndefined()
+    expect(exactManifestMessages([user], ["tool", "user"])).toBeUndefined()
     expect(validManifest({ manifest: true, ids: ["tool", "user"], total: 2 })).toEqual({ ids: ["tool", "user"], total: 2 })
     expect(validManifest({ manifest: true, ids: ["same", "same"], total: 2 })).toBeUndefined()
   })
@@ -103,11 +106,13 @@ describe("bad network helpers", () => {
     expect(promptDeliveryState("Socket replaced")).toBe("uncertain")
   })
 
-  it("strips browser message ids for old prompt relays", () => {
-    const command = { type: "session.prompt" as const, sessionId: "s", text: "hello", messageId: "browser-id" }
+  it("never forwards browser-local message ids to OpenCode relays", () => {
+    const command = { type: "session.prompt" as const, sessionId: "s", text: "hello", messageId: "msg_browser-id" }
     expect(commandForRelayCapabilities(command, {})).not.toHaveProperty("messageId")
-    expect(commandForRelayCapabilities(command, { promptMessageId: 1 })).toMatchObject({ messageId: "browser-id" })
+    expect(commandForRelayCapabilities(command, { promptMessageId: 1 })).not.toHaveProperty("messageId")
+    expect(commandForRelayCapabilities(command, { relayPromptMessageId: 1 })).not.toHaveProperty("messageId")
   })
+
 
   it("falls back to the legacy session diff for older relays", () => {
     const command = { type: "workspace.diff" as const, sessionId: "session-1" }

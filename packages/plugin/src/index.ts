@@ -34,6 +34,7 @@ import {
 } from "./security.js"
 import { includeActiveSession, routeSessionRequests, selectOpenSessions } from "./sessions.js"
 import { messageDeltaPlan, messagePlan } from "./messageSync.js"
+import { openCodeMessageId } from "./messageId.js"
 import { promptBody } from "./prompt.js"
 import { PerRecipientQueue } from "./sendQueue.js"
 
@@ -93,7 +94,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
     instanceId,
     instanceStartedAt,
     workspaceId,
-    capabilities: { ping: true, messageChunks: true, messageDelta: 1, promptMessageId: 1, sessionCreate: 1, workspaceDiff: 1 },
+    capabilities: { ping: true, messageChunks: true, messageDelta: 1, relayPromptMessageId: 1, sessionCreate: 1, workspaceDiff: 1 },
   }
 
   let socket: WebSocket | undefined
@@ -296,11 +297,12 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
           break
         case "session.prompt": {
           const session = (await sdkData(client.session.get({ path: { id: command.sessionId } }))) as unknown as JsonObject
+          const messageId = openCodeMessageId()
           await sdkCall(client.session.promptAsync({
             path: { id: command.sessionId },
-            body: promptBody(session, command.text, command.agent, command.messageId),
+            body: promptBody(session, command.text, command.agent, messageId),
           }))
-          await reply(device, command.requestId, true)
+          await reply(device, command.requestId, { messageId })
           break
         }
         case "session.abort":
