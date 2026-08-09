@@ -99,7 +99,7 @@ export const workspaceRelayId = (authorityId: string, host: string, directory: s
 }
 
 export const commandChangesState = (command: ClientCommand) =>
-  ["session.prompt", "session.abort", "permission.reply", "question.reply", "question.reject"].includes(command.type)
+  ["session.create", "session.prompt", "session.abort", "permission.reply", "question.reply", "question.reject"].includes(command.type)
 
 export async function validateEnrollmentFrame(
   frame: E2eeFrame,

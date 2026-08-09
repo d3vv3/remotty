@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { acceptsRelayPosition, aggregateRelaySlices, commandRelayId, resolveConnectedWorkspaceRelay, stableWorkspaceKey, type RelaySlice } from "../src/relayState"
+import { acceptsRelayPosition, aggregateRelaySlices, commandRelayId, relaySupportsSessionCreate, resolveConnectedWorkspaceRelay, stableWorkspaceKey, type RelaySlice } from "../src/relayState"
 
 const slice = (id: string, sessionId: string, updatedAt: number): RelaySlice => ({
   relay: { id, name: id, hostname: "host", platform: "linux", arch: "x64", workspace: `/${id}` },
@@ -42,6 +42,12 @@ describe("relay snapshot aggregation and routing", () => {
 
   it("does not guess a relay for an unknown session in a multi-relay room", () => {
     expect(commandRelayId({ type: "session.messages", sessionId: "missing" }, ["relay-a", "relay-b"], new Map())).toBeUndefined()
+  })
+
+  it("requires an explicit session creation capability", () => {
+    expect(relaySupportsSessionCreate({ capabilities: { sessionCreate: 1 } })).toBe(true)
+    expect(relaySupportsSessionCreate({ capabilities: { ping: true } })).toBe(false)
+    expect(relaySupportsSessionCreate({})).toBe(false)
   })
 
   it("merges duplicate sessions and routes to the active instance", () => {

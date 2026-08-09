@@ -23,6 +23,7 @@ export type AggregatedRelayState = {
   sessionRelays: Map<string, string>
 }
 export const stableWorkspaceKey = (relay: Pick<RelayInfo, "workspaceId" | "hostname" | "workspace">) => relay.workspaceId ?? `legacy:${relay.hostname}:${relay.workspace}`
+export const relaySupportsSessionCreate = (relay: Pick<RelayInfo, "capabilities">) => relay.capabilities?.sessionCreate === 1
 
 export const acceptsRelayPosition = (
   current: Pick<RelaySlice, "relay" | "sequence"> | undefined,

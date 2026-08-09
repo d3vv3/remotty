@@ -30,6 +30,15 @@ describe("relay protocol", () => {
     ).toMatchObject({ type: "session.prompt", agent: "build" })
   })
 
+  it("accepts workspace-scoped session creation without remote path controls", () => {
+    expect(clientCommandSchema.parse({ type: "session.create", requestId: "request-1" })).toEqual({
+      type: "session.create",
+      requestId: "request-1",
+    })
+    expect(clientCommandSchema.parse({ type: "session.create", requestId: "request-1", directory: "/tmp" }))
+      .not.toHaveProperty("directory")
+  })
+
   it("accepts health requests and independently encrypted response chunks", () => {
     expect(clientCommandSchema.parse({ type: "relay.ping", requestId: "ping-1", sentAt: 1 })).toMatchObject({ type: "relay.ping" })
     expect(relayMessageSchema.parse({ type: "rpc.chunk", requestId: "messages-1", index: 0, total: 1, done: true, result: [] })).toMatchObject({ type: "rpc.chunk", done: true })
@@ -38,7 +47,7 @@ describe("relay protocol", () => {
   it("keeps optional capabilities and chunking compatible with legacy peers", () => {
     expect(clientCommandSchema.parse({ type: "session.messages", requestId: "m", sessionId: "s" })).not.toHaveProperty("chunked")
     expect(clientCommandSchema.parse({ type: "session.messages", requestId: "m", sessionId: "s", chunked: true })).toMatchObject({ chunked: true })
-    expect(relayMessageSchema.parse({ type: "relay.hello", relay: { id: "r", name: "n", hostname: "h", platform: "p", arch: "a", workspace: "w", workspaceId: "stable", capabilities: { ping: true } } })).toMatchObject({ type: "relay.hello" })
+    expect(relayMessageSchema.parse({ type: "relay.hello", relay: { id: "r", name: "n", hostname: "h", platform: "p", arch: "a", workspace: "w", workspaceId: "stable", capabilities: { ping: true, sessionCreate: 1 } } })).toMatchObject({ type: "relay.hello", relay: { capabilities: { sessionCreate: 1 } } })
   })
 
   it("fingerprints canonical JSON and excludes local delivery metadata", async () => {

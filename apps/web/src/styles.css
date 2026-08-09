@@ -30,7 +30,7 @@
 * { box-sizing: border-box; }
 html { color-scheme: dark; }
 body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; background: var(--void); }
-button, input, textarea { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .38; }
 .text-\[7px\] { font-size: 8px; }
@@ -88,6 +88,12 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .connection-row span, .connection-row b { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .connection-row b { color: var(--acid); font-family: var(--mono); font-size: 11px; text-align: right; }
 .connection-row small { overflow: hidden; color: var(--muted); font-family: var(--mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.new-session-body { display: flex; flex-direction: column; gap: 8px; padding: 18px 16px 20px; }
+.new-session-body label { color: var(--cyan); font-family: var(--mono); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.new-session-body select { width: 100%; height: 42px; padding: 0 36px 0 12px; color: var(--ink); border: 1px solid var(--line-bright); border-radius: 4px; outline: none; background: var(--surface); font-family: var(--mono); font-size: 12px; }
+.new-session-body select:focus { border-color: var(--acid); box-shadow: 0 0 0 2px #d8ff3e26; }
+.new-session-body > small { overflow: hidden; color: var(--muted); font-family: var(--mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.new-session-body .form-error { margin-bottom: 0; line-height: 1.5; }
 .notification-button { width: 30px; height: 30px; display: grid; place-items: center; margin-left: 7px; padding: 0; color: var(--muted); border: 1px solid var(--line-bright); border-radius: 4px; background: var(--surface); }
 .notification-button.enabled { color: #080909; border-color: var(--acid); background: var(--acid); }
 .workspace-layout { height: calc(100dvh - 64px); display: grid; grid-template-columns: minmax(320px, 400px) minmax(0, 1fr); }
@@ -100,6 +106,7 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .icon-button { width: 36px; height: 36px; display: inline-grid; place-items: center; padding: 0; color: var(--muted); border: 1px solid transparent; border-radius: 4px; background: transparent; }
 .icon-button:hover { color: var(--ink); border-color: var(--line-bright); background: var(--raised); }
 .section-heading { height: 48px; display: flex; align-items: center; justify-content: space-between; padding: 0 15px 0 20px; color: var(--acid); border-bottom: 1px solid var(--line); background: #111415; font-family: var(--mono); font-size: 11px; text-transform: uppercase; }
+.section-actions { display: flex; align-items: center; gap: 2px; }
 .session-legend { min-height: 58px; display: flex; flex-wrap: wrap; align-content: center; gap: 7px 13px; padding: 8px 16px; color: var(--muted); border-bottom: 1px solid var(--line); background: #0d1011; font-family: var(--mono); font-size: 10px; }
 .session-legend > span { display: inline-flex; align-items: center; gap: 6px; }
 .session-legend .status-dot { width: 7px; height: 7px; }

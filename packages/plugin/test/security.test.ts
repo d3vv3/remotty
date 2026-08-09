@@ -85,6 +85,7 @@ describe("relay v2 security", () => {
 
   it("persists replay protection only for state-changing commands", () => {
     expect(commandChangesState({ type: "session.messages", requestId: "r", sessionId: "s" })).toBe(false)
+    expect(commandChangesState({ type: "session.create", requestId: "r" })).toBe(true)
     expect(commandChangesState({ type: "session.prompt", requestId: "r", sessionId: "s", text: "continue" })).toBe(true)
     expect(commandChangesState({ type: "permission.reply", requestId: "r", sessionId: "s", permissionId: "p", response: "always" })).toBe(true)
   })

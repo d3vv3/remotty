@@ -90,7 +90,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
     instanceId,
     instanceStartedAt,
     workspaceId,
-    capabilities: { ping: true, messageChunks: true, messageDelta: 1, promptMessageId: 1 },
+    capabilities: { ping: true, messageChunks: true, messageDelta: 1, promptMessageId: 1, sessionCreate: 1 },
   }
 
   let socket: WebSocket | undefined
@@ -267,6 +267,17 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
         case "relay.ping":
           await reply(device, command.requestId, { sentAt: command.sentAt })
           break
+        case "session.create": {
+          const created = await sdkData(client.session.create()) as unknown as JsonObject
+          const sessionId = String(created.id ?? "")
+          if (!sessionId) throw new Error("OpenCode created a session without an id")
+          knownSessions = [...knownSessions.filter((session) => session.id !== sessionId), created]
+          visibleSessionIds.add(sessionId)
+          activeSessionId = sessionId
+          await snapshot()
+          await reply(device, command.requestId, { sessionId })
+          break
+        }
         case "session.diff":
           await reply(device, command.requestId, await sdkData(client.session.diff({ path: { id: command.sessionId } })))
           break

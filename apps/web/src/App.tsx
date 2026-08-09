@@ -22,6 +22,7 @@ import {
   LockKeyhole,
   LoaderCircle,
   LogOut,
+  Plus,
   ShieldCheck,
   Terminal,
   Unplug,
@@ -38,12 +39,12 @@ import {
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { useRegisterSW } from "virtual:pwa-register/react"
-import type { AgentSummary, PairingBundle, PermissionRequest, QuestionRequest, SessionSummary } from "@remotty/protocol"
+import type { AgentSummary, PairingBundle, PermissionRequest, QuestionRequest, RelayInfo, SessionSummary } from "@remotty/protocol"
 import { CURRENT_IDENTITY_MARKER, loadCurrentIdentity } from "./deviceStore"
 import { useRelay } from "./useRelay"
 import { pairingBundleFrom, routeForEnrollment, routeForStoredIdentity } from "./pairing"
 import { NOTIFICATION_PROMPT_SEEN, shouldOfferPushNotifications } from "./notificationPrompt"
-import type { RoutedSession } from "./relayState"
+import { relaySupportsSessionCreate, stableWorkspaceKey, type RoutedSession } from "./relayState"
 import { connectionLabel, mergeByMessageId, promptDeliveryState } from "./resilience"
 import { commitManifestForRefresh, emptyMessageCache, messageInventory, migrateMessageCache, replaceCanonicalMessages, stageMessage, visibleCachedMessages, type MessageCache } from "./messageCache"
 
@@ -138,6 +139,9 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
   const relayState = useRelay(initialBundle)
   const [connectionDetailsOpen, setConnectionDetailsOpen] = useState(false)
   const connectionTriggerRef = useRef<HTMLButtonElement>(null)
+  const [newSessionOpen, setNewSessionOpen] = useState(false)
+  const newSessionTriggerRef = useRef<HTMLButtonElement>(null)
+  const [focusSessionKey, setFocusSessionKey] = useState<string>()
   const [selectedKey, setSelectedKey] = useState<string | undefined>(
     () => new URLSearchParams(location.search).get("session") ?? undefined,
   )
@@ -196,6 +200,21 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
     setConnectionDetailsOpen(false)
     requestAnimationFrame(() => connectionTriggerRef.current?.focus())
   }, [])
+  const closeNewSession = useCallback(() => {
+    setNewSessionOpen(false)
+    requestAnimationFrame(() => newSessionTriggerRef.current?.focus())
+  }, [])
+  const createSession = useCallback(async (relayId: string) => {
+    const relay = relayState.relays.find((candidate) => candidate.id === relayId)
+    if (!relay) throw new Error("The selected workspace is unavailable.")
+    const result = await relayState.request({ type: "session.create" }, relayId) as { sessionId?: unknown }
+    if (typeof result?.sessionId !== "string" || !result.sessionId) throw new Error("The relay returned an invalid session.")
+    const key = `${stableWorkspaceKey(relay)}:${result.sessionId}`
+    setFocusSessionKey(key)
+    setSelectedKey(key)
+    setNewSessionOpen(false)
+  }, [relayState.relays, relayState.request])
+  const canCreateSession = relayState.relays.some((relay) => relaySupportsSessionCreate(relay) && relayState.isRelayConnected(relay.id))
 
   const toggleGroup = (directory: string) => setCollapsedGroups((current) => {
     const next = new Set(current)
@@ -258,14 +277,26 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
 
           <div className="section-heading">
             <span>Sessions</span>
-            <button
-              className="icon-button"
-              title="Refresh sessions"
-              onClick={() => void relayState.request({ type: "snapshot.request" })}
-              disabled={relayState.connection !== "online"}
-            >
-              <RefreshCw size={17} />
-            </button>
+            <div className="section-actions">
+              <button
+                ref={newSessionTriggerRef}
+                className="icon-button"
+                title={canCreateSession ? "New session" : "Update and connect an OpenCode relay to create sessions"}
+                aria-label="New session"
+                onClick={() => setNewSessionOpen(true)}
+                disabled={!canCreateSession}
+              >
+                <Plus size={18} />
+              </button>
+              <button
+                className="icon-button"
+                title="Refresh sessions"
+                onClick={() => void relayState.request({ type: "snapshot.request" })}
+                disabled={relayState.connection !== "online"}
+              >
+                <RefreshCw size={17} />
+              </button>
+            </div>
           </div>
           <div className="session-legend" aria-label="Session status colors">
             <span><i className="status-dot idle" />Finished</span>
@@ -321,6 +352,8 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
               saveCache={saveSelectedCache}
               onBack={() => setSelectedKey(undefined)}
               onError={relayState.setError}
+              focusPrompt={focusSessionKey === sessionKey(selected)}
+              onPromptFocused={() => setFocusSessionKey(undefined)}
             />
           ) : (
             <div className="detail-placeholder">
@@ -336,6 +369,7 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
         <div className="toast" role="alert"><AlertTriangle size={17} /><span>{relayState.error}</span><button title="Dismiss error" onClick={() => relayState.setError(undefined)}><X size={16} /></button></div>
       )}
       {connectionDetailsOpen && <ConnectionDetails relayState={relayState} onClose={closeConnectionDetails} />}
+      {newSessionOpen && <NewSessionDialog relays={relayState.relays} isConnected={relayState.isRelayConnected} onCreate={createSession} onClose={closeNewSession} />}
       {notificationPromptOpen && (
         <div className="notification-prompt-overlay" role="presentation">
           <section className="notification-prompt" role="dialog" aria-modal="true" aria-labelledby="notification-prompt-title">
@@ -756,6 +790,85 @@ function ConnectionDetails({ relayState, onClose }: { relayState: ReturnType<typ
   )
 }
 
+function NewSessionDialog({
+  relays,
+  isConnected,
+  onCreate,
+  onClose,
+}: {
+  relays: RelayInfo[]
+  isConnected: (relayId: string) => boolean
+  onCreate: (relayId: string) => Promise<void>
+  onClose: () => void
+}) {
+  const available = useMemo(
+    () => relays.filter((relay) => isConnected(relay.id) && relaySupportsSessionCreate(relay)),
+    [isConnected, relays],
+  )
+  const [relayId, setRelayId] = useState(() => available[0]?.id ?? "")
+  const [creating, setCreating] = useState(false)
+  const [error, setError] = useState<string>()
+  const closeRef = useRef<HTMLButtonElement>(null)
+  const dialogRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    if (!available.some((relay) => relay.id === relayId)) setRelayId(available[0]?.id ?? "")
+  }, [available, relayId])
+  useEffect(() => {
+    closeRef.current?.focus()
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape" && !creating) onClose()
+      if (event.key !== "Tab") return
+      const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>("button, select, [tabindex]:not([tabindex='-1'])") ?? [])]
+        .filter((element) => !element.hasAttribute("disabled"))
+      if (!focusable.length) return
+      const first = focusable[0]!
+      const last = focusable.at(-1)!
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+    }
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [creating, onClose])
+
+  const create = async () => {
+    if (!relayId || creating) return
+    setCreating(true)
+    setError(undefined)
+    try {
+      await onCreate(relayId)
+    } catch (cause) {
+      const message = (cause as Error).message
+      setError(promptDeliveryState(message) === "uncertain"
+        ? "Session creation outcome is uncertain. Refresh sessions before trying again."
+        : message)
+      setCreating(false)
+    }
+  }
+
+  return (
+    <div className="connection-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !creating) onClose() }}>
+      <section ref={dialogRef} className="connection-dialog new-session-dialog" role="dialog" aria-modal="true" aria-labelledby="new-session-title">
+        <header><h2 id="new-session-title">New session</h2><button ref={closeRef} className="icon-button" title="Close" aria-label="Close new session" onClick={onClose} disabled={creating}><X size={18} /></button></header>
+        <div className="new-session-body">
+          <label htmlFor="new-session-workspace">Workspace</label>
+          <select id="new-session-workspace" value={relayId} onChange={(event) => setRelayId(event.target.value)} disabled={creating}>
+            {relays.map((relay) => {
+              const connected = isConnected(relay.id)
+              const supported = relaySupportsSessionCreate(relay)
+              const suffix = !connected ? " (offline)" : !supported ? " (update plugin)" : ""
+              return <option key={relay.id} value={relay.id} disabled={!connected || !supported}>{relay.name} - {folderName(relay.workspace)}{suffix}</option>
+            })}
+          </select>
+          {relayId && <small>{relays.find((relay) => relay.id === relayId)?.workspace}</small>}
+          {error && <p className="form-error" role="alert">{error}</p>}
+        </div>
+        <footer><button className="notification-secondary" onClick={onClose} disabled={creating}>Cancel</button><button className="notification-primary" onClick={() => void create()} disabled={!relayId || creating}>{creating ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} Create</button></footer>
+      </section>
+    </div>
+  )
+}
+
 function SessionDetail({
   session,
   agents,
@@ -767,6 +880,8 @@ function SessionDetail({
   saveCache,
   onBack,
   onError,
+  focusPrompt,
+  onPromptFocused,
 }: {
   session: SessionSummary
   agents: AgentSummary[]
@@ -778,6 +893,8 @@ function SessionDetail({
   saveCache: <T>(resource: string, value: T) => Promise<void>
   onBack: () => void
   onError: (error?: string) => void
+  focusPrompt?: boolean
+  onPromptFocused: () => void
 }) {
   const [messages, setMessages] = useState<SessionMessage[]>([])
   const messageCacheRef = useRef<MessageCache<SessionMessage>>(emptyMessageCache())
@@ -903,6 +1020,15 @@ function SessionDetail({
   useEffect(() => {
     setAgent(session.agent ?? agents[0]?.name ?? "")
   }, [session.id, session.agent, agents])
+
+  useEffect(() => {
+    if (!focusPrompt) return
+    const frame = requestAnimationFrame(() => {
+      promptRef.current?.focus()
+      onPromptFocused()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [focusPrompt, onPromptFocused, session.id])
 
   useEffect(() => {
     if (messageCacheReadySession !== session.id) return
