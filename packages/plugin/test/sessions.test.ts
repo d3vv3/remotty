@@ -8,41 +8,25 @@ describe("selectOpenSessions", () => {
     { id: "history", time: { updated: 1 } },
   ]
 
-  it("keeps the selected session and background work", () => {
-    expect(selectOpenSessions(sessions, { background: { type: "busy" } }, "current").sessions).toEqual([
-      sessions[0],
-      sessions[1],
-    ])
+  it("shows every root session in recency order", () => {
+    expect(selectOpenSessions(sessions, "current").sessions).toEqual(sessions)
   })
 
-  it("does not present historical sessions before OpenCode selects one", () => {
-    const result = selectOpenSessions(sessions, {})
+  it("shows historical sessions before OpenCode selects one", () => {
+    const result = selectOpenSessions(sessions)
     expect(result.activeSessionId).toBeUndefined()
-    expect(result.sessions).toEqual([])
-  })
-
-  it("shows work that starts before a session selection event", () => {
-    const result = selectOpenSessions(sessions, { background: { type: "busy" } })
-    expect(result.activeSessionId).toBeUndefined()
-    expect(result.sessions).toEqual([sessions[1]])
-  })
-
-  it("keeps an observed session visible after it becomes idle", () => {
-    const visible = new Set(["background"])
-    const result = selectOpenSessions(sessions, {}, undefined, visible)
-    expect(result.sessions).toEqual([sessions[1]])
+    expect(result.sessions).toEqual(sessions)
   })
 
   it("excludes subagent sessions even while they are busy", () => {
     const subagent = { id: "subagent", parentID: "current", time: { updated: 4 } }
     const result = selectOpenSessions(
       [subagent, ...sessions],
-      { subagent: { type: "busy" }, background: { type: "busy" } },
       "subagent",
     )
 
     expect(result.activeSessionId).toBeUndefined()
-    expect(result.sessions).toEqual([sessions[1]])
+    expect(result.sessions).toEqual(sessions)
   })
 
   it("retains a newly selected session until the API list catches up", () => {

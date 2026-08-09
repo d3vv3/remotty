@@ -1,6 +1,6 @@
 {
   "name": "opencode-remotty",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Remote PWA control surface for local OpenCode sessions",
   "type": "module",
   "bin": {

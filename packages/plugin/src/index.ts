@@ -40,9 +40,11 @@ import { PerRecipientQueue } from "./sendQueue.js"
 type JsonObject = Record<string, unknown>
 type SdkResult<T> = { data?: T; error?: unknown }
 type RawSdkClient = {
-  get: <T>(options: { url: string }) => Promise<SdkResult<T>>
+  get: <T>(options: { url: string; query?: Record<string, unknown> }) => Promise<SdkResult<T>>
   post: <T>(options: { url: string; body?: unknown }) => Promise<SdkResult<T>>
 }
+
+const SESSION_LIST_LIMIT = 1_000
 
 const toWebSocketUrl = (brokerUrl: string) => {
   const url = new URL(brokerUrl)
@@ -99,7 +101,6 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
   let sequence = 0
   let reconnectDelay = 1_000
   let activeSessionId: string | undefined
-  const visibleSessionIds = new Set<string>()
   let transportReady = false
   const recentReadFrames = new Set<string>()
   const recentReadFrameQueue: string[] = []
@@ -189,18 +190,21 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
   const rawClient = (client as unknown as { _client: RawSdkClient })._client
 
   const snapshot = async (target?: DeviceRecord) => {
-    const [listedSessions, statuses, vcs, agents, permissions, questions] = await Promise.all([
-      sdkData(client.session.list()) as Promise<Array<JsonObject>>,
+    const [listedRoots, listedHierarchy, statuses, vcs, agents, permissions, questions] = await Promise.all([
+      sdkData(rawClient.get<Array<JsonObject>>({ url: "/session", query: { roots: true, limit: SESSION_LIST_LIMIT } })),
+      sdkData(rawClient.get<Array<JsonObject>>({ url: "/session", query: { limit: SESSION_LIST_LIMIT } })),
       sdkData(client.session.status()) as Promise<Record<string, { type: "idle" | "busy" | "retry" }>>,
       (sdkData(client.vcs.get()) as Promise<{ branch?: string | null }>).catch((): { branch?: string } => ({})),
       (sdkData(client.app.agents()) as Promise<Array<JsonObject>>).catch(() => []),
       sdkData(rawClient.get<PermissionRequest[]>({ url: "/permission" })).catch(() => []),
       sdkData(rawClient.get<QuestionRequest[]>({ url: "/question" })).catch(() => []),
     ])
-    const sessions = includeActiveSession(listedSessions, knownSessions, activeSessionId)
-    const selected = selectOpenSessions(sessions, statuses, activeSessionId, visibleSessionIds)
-    for (const session of selected.sessions) visibleSessionIds.add(String(session.id))
-    knownSessions = sessions
+    if (listedRoots.length >= SESSION_LIST_LIMIT) void log("warn", `Root session list reached the ${SESSION_LIST_LIMIT}-session relay limit`)
+    if (listedHierarchy.length >= SESSION_LIST_LIMIT) void log("warn", `Session hierarchy reached the ${SESSION_LIST_LIMIT}-session relay limit`)
+    const sessions = includeActiveSession(listedRoots, knownSessions, activeSessionId)
+    const selected = selectOpenSessions(sessions, activeSessionId)
+    const hierarchyIds = new Set(listedHierarchy.map((session) => session.id))
+    knownSessions = [...listedHierarchy, ...sessions.filter((session) => !hierarchyIds.has(session.id))]
     activeSessionId = selected.activeSessionId
     const summaries: SessionSummary[] = selected.sessions.map((session) => {
       const summary = session.summary as JsonObject | undefined
@@ -273,7 +277,6 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
           const sessionId = String(created.id ?? "")
           if (!sessionId) throw new Error("OpenCode created a session without an id")
           knownSessions = [...knownSessions.filter((session) => session.id !== sessionId), created]
-          visibleSessionIds.add(sessionId)
           activeSessionId = sessionId
           await snapshot()
           await reply(device, command.requestId, { sessionId })
@@ -588,7 +591,6 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
         knownSessions = [...knownSessions.filter((session) => session.id !== info.id), info]
       } else if (eventType === "session.deleted" && info?.id) {
         knownSessions = knownSessions.filter((session) => session.id !== info.id)
-        visibleSessionIds.delete(String(info.id))
       }
       const routedProperties = ["permission.updated", "permission.asked", "question.asked"].includes(eventType) &&
         typeof properties.sessionID === "string"

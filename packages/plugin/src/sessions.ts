@@ -6,8 +6,6 @@ export type SessionLike = {
 
 type SessionRequest = { sessionID: string; targetSessionID?: string }
 
-type SessionState = { type: "idle" | "busy" | "retry" }
-
 const sessionTime = (session: SessionLike) => {
   const time = session.time as { updated?: unknown; created?: unknown } | undefined
   return Number(time?.updated ?? time?.created ?? 0)
@@ -21,9 +19,7 @@ export const includeActiveSession = <T extends SessionLike>(sessions: T[], known
 
 export const selectOpenSessions = <T extends SessionLike>(
   sessions: T[],
-  statuses: Record<string, SessionState>,
   activeSessionId?: string,
-  visibleSessionIds: ReadonlySet<string> = new Set(),
 ) => {
   const ordered = sessions
     .filter((session) => typeof session.parentID !== "string" || !session.parentID)
@@ -33,10 +29,7 @@ export const selectOpenSessions = <T extends SessionLike>(
     : undefined
   return {
     activeSessionId: active,
-    sessions: ordered.filter((session) => {
-      const status = statuses[String(session.id)]?.type
-      return session.id === active || visibleSessionIds.has(String(session.id)) || status === "busy" || status === "retry"
-    }),
+    sessions: ordered,
   }
 }
 
