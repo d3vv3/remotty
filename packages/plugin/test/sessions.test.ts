@@ -49,6 +49,13 @@ describe("selectOpenSessions", () => {
       targetSessionID: "grandchild",
     }])
   })
+
+  it("routes snapshot questions through the full session hierarchy", () => {
+    expect(routeSessionRequests([{ id: "question", sessionID: "child" }], [
+      { id: "root" },
+      { id: "child", parentID: "root" },
+    ])).toEqual([{ id: "question", sessionID: "root", targetSessionID: "child" }])
+  })
 })
 
 describe("sessionDirectory", () => {

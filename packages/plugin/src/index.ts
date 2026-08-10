@@ -37,6 +37,7 @@ import { messageDeltaPlan, messagePlan } from "./messageSync.js"
 import { openCodeMessageId } from "./messageId.js"
 import { promptBody } from "./prompt.js"
 import { PerRecipientQueue } from "./sendQueue.js"
+import { normalizePermissionRequest, normalizePermissionRequests, permissionNotification, permissionReplyId, permissionReplyRequest } from "./permissions.js"
 
 type JsonObject = Record<string, unknown>
 type SdkResult<T> = { data?: T; error?: unknown }
@@ -191,13 +192,14 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
   const rawClient = (client as unknown as { _client: RawSdkClient })._client
 
   const snapshot = async (target?: DeviceRecord) => {
-    const [listedRoots, listedHierarchy, statuses, vcs, agents, permissions, questions] = await Promise.all([
+    const [listedRoots, listedHierarchy, statuses, vcs, agents, standardPermissions, v2Permissions, questions] = await Promise.all([
       sdkData(rawClient.get<Array<JsonObject>>({ url: "/session", query: { roots: true, limit: SESSION_LIST_LIMIT } })),
       sdkData(rawClient.get<Array<JsonObject>>({ url: "/session", query: { limit: SESSION_LIST_LIMIT } })),
       sdkData(client.session.status()) as Promise<Record<string, { type: "idle" | "busy" | "retry" }>>,
       (sdkData(client.vcs.get()) as Promise<{ branch?: string | null }>).catch((): { branch?: string } => ({})),
       (sdkData(client.app.agents()) as Promise<Array<JsonObject>>).catch(() => []),
-      sdkData(rawClient.get<PermissionRequest[]>({ url: "/permission" })).catch(() => []),
+      sdkData(rawClient.get<unknown>({ url: "/permission" })).catch(() => []),
+      sdkData(rawClient.get<unknown>({ url: "/api/permission/request" })).catch(() => []),
       sdkData(rawClient.get<QuestionRequest[]>({ url: "/question" })).catch(() => []),
     ])
     if (listedRoots.length >= SESSION_LIST_LIMIT) void log("warn", `Root session list reached the ${SESSION_LIST_LIMIT}-session relay limit`)
@@ -207,6 +209,13 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
     const hierarchyIds = new Set(listedHierarchy.map((session) => session.id))
     knownSessions = [...listedHierarchy, ...sessions.filter((session) => !hierarchyIds.has(session.id))]
     activeSessionId = selected.activeSessionId
+    const permissionWarning = () => {
+      void log("warn", "Unsupported OpenCode permission payload")
+    }
+    const permissions = [...new Map([
+      ...normalizePermissionRequests(standardPermissions, permissionWarning),
+      ...normalizePermissionRequests(v2Permissions, permissionWarning),
+    ].map((permission) => [permission.id, permission])).values()]
     const summaries: SessionSummary[] = selected.sessions.map((session) => {
       const summary = session.summary as JsonObject | undefined
       const time = session.time as JsonObject | undefined
@@ -228,8 +237,8 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
       relay,
       sessions: summaries,
       agents: primaryAgentSummaries(agents),
-      permissions: routeSessionRequests(permissions, sessions),
-      questions: routeSessionRequests(questions, sessions),
+      permissions: routeSessionRequests(permissions, knownSessions),
+      questions: routeSessionRequests(questions, knownSessions),
     }
     await sendOrderedState(() => ({ ...message, sequence: sequence++ }), target)
   }
@@ -309,10 +318,10 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
           await reply(device, command.requestId, await sdkData(client.session.abort({ path: { id: command.sessionId } })))
           break
         case "permission.reply":
-          await reply(device, command.requestId, await sdkData(client.postSessionIdPermissionsPermissionId({
-            path: { id: command.sessionId, permissionID: command.permissionId },
-            body: { response: command.response },
-          })))
+          const permissionReply = permissionReplyRequest(command)
+          await reply(device, command.requestId, await ("url" in permissionReply
+            ? sdkData(rawClient.post({ url: permissionReply.url, body: permissionReply.body }))
+            : sdkData(client.postSessionIdPermissionsPermissionId(permissionReply))))
           break
         case "question.reply":
           await reply(device, command.requestId, await sdkData(rawClient.post({
@@ -516,7 +525,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
   }
   const revocationTimer = setInterval(() => { void pushRevocations().catch(() => undefined) }, 5_000)
 
-  const sendPushForEvent = async (eventType: string, properties: JsonObject) => {
+  const sendPushForEvent = async (eventType: string, properties: JsonObject, permission?: PermissionRequest) => {
     const completedSessionId = completionSessionForEvent(eventType, properties, completionState)
     if (completedSessionId) {
       const session = await (sdkData(client.session.get({ path: { id: completedSessionId } })) as Promise<JsonObject>)
@@ -528,30 +537,10 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
         typeof session?.title === "string" ? session.title : undefined,
         workspaceId,
       ), "push")
-    } else if (["permission.updated", "permission.asked"].includes(eventType)) {
-      const permissionId = String(properties.id ?? properties.requestID ?? "")
-      const sessionId = String(properties.sessionID ?? "")
-      if (!permissionId || !sessionId) return
-      const patterns = Array.isArray(properties.patterns) ? properties.patterns.map(String) : []
-      await broadcast({
-        type: "notification.show",
-        title: "Permission required",
-        body: patterns[0] ?? String(properties.permission ?? "OpenCode is waiting for approval"),
-        tag: `${relayId}:permission-${permissionId}`,
-        actions: [
-          { action: "reject", title: "Reject" },
-          { action: "once", title: "Allow once" },
-          { action: "always", title: "Always allow" },
-        ],
-        data: {
-          sessionId,
-          permissionId,
-          workspaceRelayId: relayId, workspaceId,
-          ...(typeof properties.targetSessionID === "string" ? { targetSessionId: properties.targetSessionID } : {}),
-        },
-      }, "push")
-    } else if (eventType === "permission.replied") {
-      const permissionId = String(properties.requestID ?? properties.permissionID ?? "")
+    } else if (permission) {
+      await broadcast(permissionNotification(relayId, workspaceId, permission), "push")
+    } else if (["permission.replied", "permission.v2.replied"].includes(eventType)) {
+      const permissionId = permissionReplyId(properties)
       const sessionId = String(properties.sessionID ?? "")
       if (permissionId) await broadcast({
         type: "notification.close",
@@ -594,17 +583,23 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
       } else if (eventType === "session.deleted" && info?.id) {
         knownSessions = knownSessions.filter((session) => session.id !== info.id)
       }
-      const routedProperties = ["permission.updated", "permission.asked", "question.asked"].includes(eventType) &&
-        typeof properties.sessionID === "string"
-        ? routeSessionRequests([properties as JsonObject & { sessionID: string }], knownSessions)[0] ?? properties
-        : properties
+      const permissionEvent = ["permission.updated", "permission.asked", "permission.v2.asked"].includes(eventType)
+      const normalizedPermission = permissionEvent
+        ? normalizePermissionRequest(properties)
+        : undefined
+      if (permissionEvent && !normalizedPermission) void log("warn", "Unsupported OpenCode permission payload")
+      const routedProperties = normalizedPermission
+        ? routeSessionRequests([normalizedPermission], knownSessions)[0]!
+        : eventType === "question.asked" && typeof properties.sessionID === "string"
+          ? routeSessionRequests([properties as JsonObject & { sessionID: string }], knownSessions)[0] ?? properties
+          : properties
       await sendOrderedState(() => ({
           type: "relay.event",
           sequence: sequence++,
           instanceId,
           event: { type: eventType, properties: routedProperties },
         }))
-      await sendPushForEvent(eventType, routedProperties)
+      await sendPushForEvent(eventType, routedProperties, normalizedPermission ? routedProperties as PermissionRequest : undefined)
       if (eventType === "tui.session.select") activeSessionId = String(properties.sessionID)
       if (eventType === "session.created") {
         const info = properties.info as JsonObject | undefined

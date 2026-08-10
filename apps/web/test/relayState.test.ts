@@ -64,6 +64,25 @@ describe("relay snapshot aggregation and routing", () => {
       .toBe("relay-b")
   })
 
+  it("excludes disconnected slices before deduplicating and routing sessions", () => {
+    const connected = slice("connected", "session-a", 1)
+    const disconnected = slice("disconnected", "session-a", 100)
+    disconnected.relay.workspace = connected.relay.workspace
+    disconnected.sessions[0]!.status = "busy"
+    connected.permissions = [{ id: "permission-a", sessionID: "session-a", permission: "bash", patterns: [], metadata: {}, always: [] }]
+    disconnected.permissions = [{ id: "permission-b", sessionID: "session-a", permission: "write", patterns: [], metadata: {}, always: [] }]
+    disconnected.questions = [{ id: "question-a", sessionID: "session-a", questions: [] }]
+
+    const state = aggregateRelaySlices(new Map([["connected", connected], ["disconnected", disconnected]]), ["connected"])
+
+    expect(state.relays.map((relay) => relay.id)).toEqual(["connected", "disconnected"])
+    expect(state.sessions).toMatchObject([{ id: "session-a", status: "idle", workspaceRelayId: "connected" }])
+    expect(state.permissions.map((permission) => permission.id)).toEqual(["permission-a"])
+    expect(state.questions).toEqual([])
+    expect(state.sessionRelays).toEqual(new Map([["session-a", "connected"]]))
+    expect(commandRelayId({ type: "session.messages", sessionId: "session-a" }, ["connected"], state.sessionRelays)).toBe("connected")
+  })
+
   it("rejects rollback within a relay stream and from an older relay instance", () => {
     const current = slice("relay-a", "session-a", 1)
     current.relay.instanceId = "instance-2"

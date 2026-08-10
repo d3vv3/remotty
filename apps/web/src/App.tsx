@@ -1428,6 +1428,7 @@ function PermissionPanel({ permission, request, onError }: { permission: Permiss
       sessionId: permission.targetSessionID ?? permission.sessionID,
       permissionId: permission.id,
       response,
+      ...(permission.replyDialect ? { replyDialect: permission.replyDialect } : {}),
     }).catch((error) => onError(error.message))
 
   return (

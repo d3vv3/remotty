@@ -49,10 +49,15 @@ export const acceptsRelayPosition = (
   return current.relay.instanceId !== nextRelay.instanceId || nextSequence > (current.sequence ?? -1)
 }
 
-export const aggregateRelaySlices = (slices: Iterable<[string, RelaySlice]>): AggregatedRelayState => {
+export const aggregateRelaySlices = (
+  slices: Iterable<[string, RelaySlice]>,
+  connectedRelayIds?: Iterable<string>,
+): AggregatedRelayState => {
   const entries = [...slices]
+  const connected = new Set(connectedRelayIds ?? entries.map(([relayId]) => relayId))
   const relays = entries.map(([, slice]) => slice.relay)
-  const candidates = entries
+  const activeEntries = entries.filter(([relayId]) => connected.has(relayId))
+  const candidates = activeEntries
     .flatMap(([relayId, slice]) => slice.sessions.map((session) => ({ ...session, workspaceRelayId: relayId, workspaceId: stableWorkspaceKey(slice.relay) })))
     .sort((left, right) => {
       const recency = right.updatedAt - left.updatedAt
@@ -71,18 +76,18 @@ export const aggregateRelaySlices = (slices: Iterable<[string, RelaySlice]>): Ag
   for (const session of sessions) {
     if (!sessionRelays.has(session.id)) sessionRelays.set(session.id, session.workspaceRelayId)
   }
-  const agents = entries.flatMap(([relayId, slice]) =>
+  const agents = activeEntries.flatMap(([relayId, slice]) =>
     slice.agents
       .filter((agent) => agent.mode === "primary")
       .map((agent) => ({ ...agent, workspaceRelayId: relayId })))
   return {
-    relay: relays[0],
+    relay: activeEntries[0]?.[1].relay ?? relays[0],
     relays,
     sessions,
     agents,
-    permissions: entries.flatMap(([relayId, slice]) =>
+    permissions: activeEntries.flatMap(([relayId, slice]) =>
       slice.permissions.map((permission) => ({ ...permission, workspaceRelayId: relayId }))),
-    questions: entries.flatMap(([relayId, slice]) =>
+    questions: activeEntries.flatMap(([relayId, slice]) =>
       slice.questions.map((question) => ({ ...question, workspaceRelayId: relayId }))),
     sessionRelays,
   }

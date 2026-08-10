@@ -1,5 +1,5 @@
 const DB_NAME = "remotty-e2ee-v2"
-const DB_VERSION = 1
+const DB_VERSION = 2
 const MAX_FRAME_AGE_MS = 5 * 60 * 1000
 const encoder = new TextEncoder()
 const decoder = new TextDecoder("utf-8", { fatal: true })
@@ -11,6 +11,7 @@ const openDatabase = () => new Promise((resolve, reject) => {
     if (!database.objectStoreNames.contains("identities")) database.createObjectStore("identities", { keyPath: "key" })
     if (!database.objectStoreNames.contains("meta")) database.createObjectStore("meta", { keyPath: "key" })
     if (!database.objectStoreNames.contains("messages")) database.createObjectStore("messages", { keyPath: "key" })
+    if (!database.objectStoreNames.contains("cache")) database.createObjectStore("cache", { keyPath: "key" })
   }
   request.onsuccess = () => resolve(request.result)
   request.onerror = () => reject(request.error)
@@ -149,7 +150,7 @@ const notificationData = (value, identityKey) => {
   if (!value || typeof value !== "object" || typeof value.workspaceRelayId !== "string") throw new Error("Invalid notification data")
   const data = { workspaceRelayId: value.workspaceRelayId, identityKey }
   if (typeof value.workspaceId === "string") data.workspaceId = value.workspaceId
-  for (const key of ["sessionId", "targetSessionId", "permissionId", "questionId"]) {
+  for (const key of ["sessionId", "targetSessionId", "permissionId", "questionId", "replyDialect"]) {
     if (typeof value[key] === "string") data[key] = value[key]
   }
   return data
@@ -183,7 +184,9 @@ const handlePush = async (frame) => {
 
 self.addEventListener("push", (event) => {
   if (!event.data) return
-  event.waitUntil(Promise.resolve().then(() => event.data.json()).then(handlePush).catch(() => undefined))
+  event.waitUntil(Promise.resolve().then(() => event.data.json()).then(handlePush).catch((error) => {
+    console.error("Remotty notification processing failed", error?.name ?? "Error")
+  }))
 })
 
 self.addEventListener("message", (event) => {
@@ -248,6 +251,7 @@ const sendPermissionAction = async (action, data) => {
     sessionId: typeof data.targetSessionId === "string" ? data.targetSessionId : data.sessionId,
     permissionId: data.permissionId,
     response: action,
+    ...(data.replyDialect === "v2" || data.replyDialect === "standard" ? { replyDialect: data.replyDialect } : {}),
   }, identity, data.workspaceRelayId)
   await fetch(actionEndpoint(identity), {
     method: "POST",
@@ -287,7 +291,9 @@ self.addEventListener("notificationclick", (event) => {
   const data = event.notification.data
   const mode = notificationClickMode(event.action)
   if (mode === "action") {
-    event.waitUntil(sendPermissionAction(event.action, data).catch(() => undefined))
+    event.waitUntil(sendPermissionAction(event.action, data).catch((error) => {
+      console.error("Remotty notification action failed", error?.name ?? "Error")
+    }))
     return
   }
   event.waitUntil(openApplication(data))

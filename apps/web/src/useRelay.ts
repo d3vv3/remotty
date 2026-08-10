@@ -188,7 +188,7 @@ export function useRelay(initialBundle?: PairingBundle) {
   const authenticatedRef = useRef(false)
 
   const publishSlices = useCallback(() => {
-    const state = aggregateRelaySlices(slicesRef.current)
+    const state = aggregateRelaySlices(slicesRef.current, connectedRelaysRef.current)
     sessionRelaysRef.current = state.sessionRelays
     setRelay(state.relay)
     setRelays(state.relays)
@@ -281,12 +281,12 @@ export function useRelay(initialBundle?: PairingBundle) {
         : (properties.status as { type?: SessionSummary["status"] })?.type
       slice.sessions = slice.sessions.map((session) => session.id === sessionID && status ? { ...session, status } : session)
     }
-    if (["permission.updated", "permission.asked"].includes(event.type)) {
+    if (["permission.updated", "permission.asked", "permission.v2.asked"].includes(event.type)) {
       const parsed = permissionRequestSchema.safeParse(properties)
       if (parsed.success) slice.permissions = [...slice.permissions.filter((item) => item.id !== parsed.data.id), parsed.data]
     }
-    if (event.type === "permission.replied") {
-      const permissionId = String(properties.requestID ?? properties.permissionID ?? "")
+    if (["permission.replied", "permission.v2.replied"].includes(event.type)) {
+      const permissionId = String(properties.id ?? properties.requestID ?? properties.permissionID ?? "")
       slice.permissions = slice.permissions.filter((item) => item.id !== permissionId)
       if (permissionId) closeNotification(`${relayId}:permission-${permissionId}`)
     }
@@ -621,6 +621,7 @@ export function useRelay(initialBundle?: PairingBundle) {
             setServiceConnected(true)
             reconnectAttemptRef.current = 0
             connectedRelaysRef.current = new Set(control.data.connectedRelayIds)
+            publishSlices()
             setConnection(control.data.connectedRelayIds.length ? "online" : "offline")
             const current = identityRef.current
             if (current?.enrolled) {
@@ -639,7 +640,10 @@ export function useRelay(initialBundle?: PairingBundle) {
             else if (control.data.connectedRelayIds.length) void enroll().catch((cause) => setError((cause as Error).message))
             else setError("No OpenCode workspace is connected. On your computer run `opencode plugin opencode-remotty --global --force`, restart OpenCode, and keep this page open. Pairing resumes automatically.")
           } else if (control.data.type === "broker.relay-status") {
-            if (control.data.connected) connectedRelaysRef.current.add(control.data.relayId)
+            if (control.data.connected) {
+              connectedRelaysRef.current.add(control.data.relayId)
+              publishSlices()
+            }
             else {
               const relayId = control.data.relayId
               connectedRelaysRef.current.delete(relayId)

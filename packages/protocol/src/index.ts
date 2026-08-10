@@ -33,6 +33,7 @@ export const permissionRequestSchema = z.object({
   id: z.string(),
   sessionID: z.string(),
   targetSessionID: z.string().optional(),
+  replyDialect: z.enum(["standard", "v2"]).optional(),
   permission: z.string(),
   patterns: z.array(z.string()),
   metadata: z.record(z.string(), z.unknown()).default({}),
@@ -218,6 +219,7 @@ export const clientCommandSchema = z.discriminatedUnion("type", [
     sessionId: z.string(),
     permissionId: z.string(),
     response: z.enum(["once", "always", "reject"]),
+    replyDialect: z.enum(["standard", "v2"]).optional(),
   }),
   z.object({
     type: z.literal("question.reply"),

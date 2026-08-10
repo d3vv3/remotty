@@ -40,6 +40,9 @@ const workerCrypto = () => {
 
 describe("notification service worker security boundary", () => {
   it("posts only an opaque frame for permission actions", () => {
+    expect(source).toContain('const DB_VERSION = 2')
+    expect(source).toContain('database.createObjectStore("cache", { keyPath: "key" })')
+    expect(source).toContain("console.error(\"Remotty notification processing failed\"")
     expect(source).toContain("body: JSON.stringify({ roomToken: identity.roomToken, frame })")
     expect(source).not.toContain("code: data.code")
     expect(source).not.toContain("brokerUrl: data.brokerUrl")
@@ -104,7 +107,7 @@ describe("notification service worker security boundary", () => {
     tamperedCiphertext[0] ^= 1
     await expect(worker.verifyAndOpen({ ...frame, ciphertext: tamperedCiphertext.toString("base64url") }, identity)).rejects.toThrow()
 
-    const command = { type: "permission.reply", requestId: "request-1", sessionId: "session-1", permissionId: "permission-1", response: "once" }
+    const command = { type: "permission.reply", requestId: "request-1", sessionId: "session-1", permissionId: "permission-1", response: "once", replyDialect: "v2" }
     const sealed = await worker.sealCommand(command, identity, "relay-1")
     await expect(openJsonPayload(sealed as never, {
       recipient: "relay-1",
