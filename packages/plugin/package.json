@@ -52,14 +52,18 @@
     "plugin",
     "remote",
     "pwa",
-    "push-notifications"
+    "push-notifications",
+    "remote-control",
+    "coding-agent",
+    "e2ee",
+    "terminal"
   ],
   "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/d3vv3/remotty.git"
   },
-  "homepage": "https://github.com/d3vv3/remotty#readme",
+  "homepage": "https://remotty.devve.space/install/",
   "bugs": {
     "url": "https://github.com/d3vv3/remotty/issues"
   },

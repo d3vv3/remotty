@@ -638,7 +638,7 @@ export function useRelay(initialBundle?: PairingBundle) {
               }
             }
             else if (control.data.connectedRelayIds.length) void enroll().catch((cause) => setError((cause as Error).message))
-            else setError("No OpenCode workspace is connected. On your computer run `opencode plugin opencode-remotty --global --force`, restart OpenCode, and keep this page open. Pairing resumes automatically.")
+            else setError("No OpenCode workspace is connected. On your computer run `opencode plugin opencode-remotty --global --force`, quit OpenCode, then run `opencode --continue` and keep this page open. Pairing resumes automatically.")
           } else if (control.data.type === "broker.relay-status") {
             if (control.data.connected) {
               connectedRelaysRef.current.add(control.data.relayId)

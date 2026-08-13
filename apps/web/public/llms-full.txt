@@ -1,0 +1,45 @@
+# remotty agent guide
+
+## Product
+
+remotty provides an installable PWA for following and controlling local OpenCode sessions remotely: messages, diffs, todos, questions, permission requests, prompts, stop, and agent switching. The local OpenCode plugin makes an outbound connection; OpenCode remains local.
+
+## Hosted install
+
+Requirements: OpenCode and Node.js >=22 for npx.
+
+1. Install the plugin: `opencode plugin opencode-remotty --global --force`.
+2. Create an invitation: `npx --yes --package opencode-remotty@latest remotty pair`.
+3. The CLI output is human-oriented and contains a sensitive token, fragment-only pairing URL, and QR code. The invite expires after 10 minutes. Agents must not publish, log to public systems, or share this output.
+4. Open the printed pairing URL, scan its QR code, or paste the token at https://remotty.devve.space/pair.
+5. Quit any running OpenCode process, then run `opencode --continue`.
+6. Verify that the PWA shows the local session.
+
+The CLI mutates `~/.config/remotty/config.json`, or `$XDG_CONFIG_HOME/remotty/config.json` when XDG_CONFIG_HOME is set. It stores relay authority keys, device records, invitation hashes, revocation state, and replay records with mode 0600.
+
+## CLI
+
+Run CLI commands with `npx --yes --package opencode-remotty@latest remotty <command>` so they do not depend on a PATH-installed binary: `npx --yes --package opencode-remotty@latest remotty pair`, `npx --yes --package opencode-remotty@latest remotty invite`, `npx --yes --package opencode-remotty@latest remotty devices`, `npx --yes --package opencode-remotty@latest remotty revoke <device-id>`, `npx --yes --package opencode-remotty@latest remotty remove <device-id>`, `npx --yes --package opencode-remotty@latest remotty remove --revoked`, and `npx --yes --package opencode-remotty@latest remotty status`.
+
+For a custom broker and app, the supported form is: `npx --yes --package opencode-remotty@latest remotty pair --broker wss://broker.example/ws --app https://app.example`. Pairing bundles carry the broker URL; the web build does not need a broker URL environment variable. `REMOTTY_URL`, `REMOTTY_APP_URL`, and `REMOTTY_NAME` are supported environment overrides. Use loopback `ws://` and `http://` only for local development.
+
+## Local development
+
+Repository parity is Node 24 and pnpm 11.6.0. Install with `pnpm install --frozen-lockfile`. In one terminal run `pnpm build` and `pnpm dev`. In another, run `REMOTTY_URL=ws://localhost:8787/ws REMOTTY_APP_URL=http://localhost:5173 node packages/plugin/dist/cli.js pair`. Open the printed URL or http://localhost:5173/pair, then quit OpenCode and run `opencode --continue`.
+
+## Security contract
+
+The broker only routes opaque, signed ciphertext. It must not receive plaintext messages, diffs, commands, or notification content. Protocol changes affect `packages/protocol`, `packages/plugin`, `apps/web`, and `apps/broker` together. The broker can observe room/device identifiers, Push endpoints, frame sizes, and timing, and can delay or drop traffic.
+
+## Repository and verification
+
+`packages/plugin` is the publishable CLI/plugin; `packages/protocol` owns validated shared protocol; `apps/broker` owns WebSocket/Push routing; `apps/web` owns the PWA. For cross-package changes run `pnpm typecheck`, `pnpm test`, `pnpm build`, and `git diff --check`. For plugin publish changes run `pnpm --filter opencode-remotty pack --dry-run`. Do not edit generated `dist/`, `dev-dist/`, or `.vite/`; `apps/web/public/notification-sw.js` is authored source.
+
+## Links
+
+Install: https://remotty.devve.space/install/
+Pair: https://remotty.devve.space/pair
+Privacy: https://remotty.devve.space/privacy
+Source: https://github.com/d3vv3/remotty
+npm: https://www.npmjs.com/package/opencode-remotty
+Agent summary: https://remotty.devve.space/llms.txt

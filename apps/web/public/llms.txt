@@ -1,0 +1,7 @@
+# remotty
+
+remotty is an OpenCode plugin and encrypted PWA remote control surface. Install guide: https://remotty.devve.space/install/
+
+Requirements: OpenCode and Node >=22. Install plugin: `opencode plugin opencode-remotty --global --force`. Run CLI commands with `npx --yes --package opencode-remotty@latest remotty <command>`; create an invite with `npx --yes --package opencode-remotty@latest remotty pair`. The human-oriented CLI output includes a sensitive 10-minute token, pairing URL, and QR code; agents must not publish it. Pair in https://remotty.devve.space/pair, then quit OpenCode and run `opencode --continue`.
+
+The broker routes opaque ciphertext only. Full guide: https://remotty.devve.space/llms-full.txt. Source: https://github.com/d3vv3/remotty. Privacy: https://remotty.devve.space/privacy.

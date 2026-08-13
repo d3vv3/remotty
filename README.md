@@ -13,7 +13,7 @@ The local OpenCode plugin makes an outbound WebSocket connection to the broker. 
 
 ## Install the OpenCode plugin
 
-Install with one command. It registers the plugin in the OpenCode configuration; no manual `tui.json` edit is needed:
+Requirements: OpenCode and Node `>=22` for `npx`. Install the plugin; it registers itself in OpenCode's global configuration, so no manual `tui.json` edit is needed:
 
 ```sh
 opencode plugin opencode-remotty --global --force
@@ -22,14 +22,26 @@ opencode plugin opencode-remotty --global --force
 Create the relay identity and a ten-minute encrypted device invite:
 
 ```sh
-npx opencode-remotty pair
+npx --yes --package opencode-remotty@latest remotty pair
 ```
 
-Restart OpenCode. Paste the printed invite token into the PWA or open the clickable pairing link.
+The command mutates `~/.config/remotty/config.json` (or `$XDG_CONFIG_HOME/remotty/config.json`) and prints a sensitive ten-minute token, pairing link, and QR code. Do not share or publish them. Open the link, scan the QR code, or paste the token into the [pairing page](https://remotty.devve.space/pair). Quit any running OpenCode process, then start it again:
 
-The pairing command prints the invite token, the pairing link, and a QR code. Copy the token, open the link, or scan the code with your phone camera or the scanner beside the pairing input.
+```sh
+opencode --continue
+```
 
-The CLI writes relay authority keys, device records, and invitation hashes to `~/.config/remotty/config.json` with mode `0600`. These environment variables override non-secret settings:
+Each command uses `npx --yes --package opencode-remotty@latest remotty` so it does not depend on a PATH-installed binary. For example:
+
+```sh
+npx --yes --package opencode-remotty@latest remotty invite
+npx --yes --package opencode-remotty@latest remotty devices
+npx --yes --package opencode-remotty@latest remotty status
+```
+
+See the [install guide](https://remotty.devve.space/install/) for hosted and custom-broker commands.
+
+The CLI writes relay authority keys, device records, and invitation hashes to its config file with mode `0600`. These environment variables override non-secret settings:
 
 ```sh
 REMOTTY_URL=wss://your-remotty-domain.example/ws
@@ -38,16 +50,21 @@ REMOTTY_NAME=workstation
 
 ## Run locally
 
-Requirements: Node 22 or later, pnpm 11, and OpenCode.
+Requirements: Node 24 for repository parity, pnpm 11.6.0, and OpenCode. Use two terminals:
 
 ```sh
-pnpm install
+pnpm install --frozen-lockfile
 pnpm build
-node packages/plugin/dist/cli.js pair
 pnpm dev
 ```
 
-Open `http://localhost:5173/pair` and enter the encrypted invite.
+In the second terminal, pair the built local CLI with both local endpoints:
+
+```sh
+REMOTTY_URL=ws://localhost:8787/ws REMOTTY_APP_URL=http://localhost:5173 node packages/plugin/dist/cli.js pair
+```
+
+Open the printed link or `http://localhost:5173/pair`. Quit any running OpenCode process, then run `opencode --continue`. The pairing bundle carries the broker URL; the web build does not need a broker URL environment variable.
 
 ## Deploy
 
@@ -57,9 +74,9 @@ Copy `.env.production.example` to `.env`, set the hostname and stable VAPID keys
 docker compose up -d --build
 ```
 
-The Compose file expects an external `traefik` network. It routes `/ws`, `/push/*`, and `/health` to the broker. It routes all other paths to the PWA.
+The Compose file expects an external `traefik` network. It routes `/ws`, `/push/*`, and `/health` to the broker. Known public and PWA paths route to the web app; unknown web paths return 404.
 
-The web build uses `wss://${REMOTTY_HOST}/ws` as its broker URL.
+Pairing bundles carry the broker URL, so the web image has no broker URL build argument.
 
 Set stable VAPID keys on the broker so Push subscriptions survive deployment:
 
@@ -78,10 +95,9 @@ The broker does not receive plaintext chat messages, diffs, commands, or notific
 
 The room identifier is the relay authority fingerprint and grants no command authority. P-256 ECDH, HKDF-SHA-256, AES-256-GCM, and ECDSA protect application payloads end to end. The relay rejects stale, replayed, unsigned, unknown-device, and revoked-device commands. The broker still sees room and device identifiers, Push endpoints, frame sizes, and timing, and it can delay or drop traffic.
 
-Use `remotty invite`, `remotty devices`, and `remotty revoke <device-id>` to manage browser access.
-The device ID is the SHA-256 fingerprint of its signing public key, not a random UUID. The device list also shows a browser, operating-system, and short-fingerprint label. Active devices refresh old labels when they connect.
+Use `npx --yes --package opencode-remotty@latest remotty invite`, `npx --yes --package opencode-remotty@latest remotty devices`, and `npx --yes --package opencode-remotty@latest remotty revoke <device-id>` to manage browser access. The device ID is the SHA-256 fingerprint of its signing public key, not a random UUID; the list includes a browser, operating-system, and short-fingerprint label.
 
-A running relay pushes the revocation to the device within seconds, and the device unpairs itself. A revoked device that is offline stays in the list as a tombstone until it connects once more. Use `remotty remove <device-id>` or `remotty remove --revoked` to delete records that never reconnect.
+A running relay pushes a revocation to the device within seconds, and the device unpairs itself. A revoked offline device remains as a tombstone until it connects once more. Use `npx --yes --package opencode-remotty@latest remotty remove <device-id>` or `npx --yes --package opencode-remotty@latest remotty remove --revoked` to delete records that never reconnect.
 
 The hosted service privacy design is available at `https://remotty.devve.space/privacy`.
 
@@ -91,12 +107,20 @@ The hosted service privacy design is available at `https://remotty.devve.space/p
 pnpm typecheck
 pnpm test
 pnpm build
-pnpm pack:plugin
 ```
+
+For publishable plugin changes, run `pnpm --filter opencode-remotty pack --dry-run` to inspect the package without publishing.
 
 ## Release
 
-Increment `packages/plugin/package.json`. A push to `main` creates `vX.Y.Z`, creates a GitHub release, verifies the monorepo, and publishes `opencode-remotty` through npm trusted publishing.
+A push to `main` checks whether `packages/plugin/package.json` differs from the published npm version. A version change triggers verification, trusted npm publishing, a `vX.Y.Z` tag, and a GitHub release. Version changes therefore carry a release risk; verify the package and release intent before merging.
+
+## Documentation
+
+- [Install guide](https://remotty.devve.space/install/)
+- [Agent discovery](https://remotty.devve.space/llms.txt)
+- [Contributing](CONTRIBUTING.md)
+- [Repository agent guide](AGENTS.md)
 
 ## License
 

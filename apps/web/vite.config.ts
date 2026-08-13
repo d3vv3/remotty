@@ -10,7 +10,10 @@ export default defineConfig({
     VitePWA({
       registerType: "prompt",
       devOptions: { enabled: true },
-      workbox: { importScripts: ["/notification-sw.js"] },
+      workbox: {
+        importScripts: ["/notification-sw.js"],
+        navigateFallbackAllowlist: [/^\/(?:privacy|pair|app)?$/],
+      },
       manifest: {
         name: "remotty",
         short_name: "remotty",

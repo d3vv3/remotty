@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Install, pair, and operate remotty with OpenCode." />
+    <meta name="robots" content="index,follow" />
+    <link rel="canonical" href="https://remotty.devve.space/install/" />
+    <link rel="stylesheet" href="/install/install.css" />
+    <title>Install remotty</title>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/">remotty</a>
+      <nav aria-label="Primary"><a href="/pair">Pair</a><a href="/privacy">Privacy</a><a href="https://github.com/d3vv3/remotty">GitHub</a></nav>
+    </header>
+    <main>
+      <section class="intro">
+        <p class="eyebrow">OpenCode remote control</p>
+        <h1>Install and pair.</h1>
+        <p>Connect an installable PWA to a local OpenCode session. Pairing is local, encrypted, and does not require an account.</p>
+      </section>
+      <section class="requirements" aria-labelledby="requirements-title">
+        <h2 id="requirements-title">Requirements</h2>
+        <ul><li>OpenCode installed on the computer running the session.</li><li>Node.js 22 or newer for the one-off <code>npx</code> command.</li><li>A browser on the device to pair. HTTPS is required outside localhost.</li></ul>
+      </section>
+      <section class="steps" aria-labelledby="hosted-title">
+        <p class="eyebrow">Hosted service</p>
+        <h2 id="hosted-title">Pair a device</h2>
+        <ol>
+          <li><strong>Install the OpenCode plugin.</strong><pre><code>opencode plugin opencode-remotty --global --force</code></pre></li>
+          <li><strong>Create a device invite.</strong><pre><code>npx --yes --package opencode-remotty@latest remotty pair</code></pre><p class="warning">The output contains a sensitive ten-minute token, a pairing URL, and a QR code. Do not share, paste into tickets, or publish any of it.</p></li>
+          <li><strong>Open the printed pairing URL, scan its QR code, or paste the token on the <a href="/pair">pairing page</a>.</strong></li>
+          <li><strong>Quit the running OpenCode process, then restart it</strong> so the installed plugin starts with the paired relay configuration.<pre><code>opencode --continue</code></pre></li>
+          <li><strong>Verify the connection</strong> by opening the PWA and checking that the local OpenCode session appears.</li>
+        </ol>
+      </section>
+      <section class="steps" aria-labelledby="custom-title">
+        <p class="eyebrow">Custom broker or PWA</p>
+        <h2 id="custom-title">Set both endpoints explicitly</h2>
+        <p>Use the CLI's supported <code>--broker</code> and <code>--app</code> options when the broker or browser app is not hosted by remotty.</p>
+        <pre><code>npx --yes --package opencode-remotty@latest remotty pair --broker wss://broker.example/ws --app https://app.example</code></pre>
+        <p>Use <code>ws://</code> and <code>http://</code> only for loopback local development.</p>
+      </section>
+      <section class="commands" aria-labelledby="commands-title">
+        <h2 id="commands-title">Commands</h2>
+        <pre><code>npx --yes --package opencode-remotty@latest remotty pair
+npx --yes --package opencode-remotty@latest remotty invite
+npx --yes --package opencode-remotty@latest remotty devices
+npx --yes --package opencode-remotty@latest remotty revoke &lt;device-id&gt;
+npx --yes --package opencode-remotty@latest remotty remove &lt;device-id&gt;
+npx --yes --package opencode-remotty@latest remotty remove --revoked
+npx --yes --package opencode-remotty@latest remotty status</code></pre>
+        <p>For an upgrade, reinstall the plugin with <code>opencode plugin opencode-remotty --global --force</code>, quit OpenCode, then run <code>opencode --continue</code>.</p>
+      </section>
+      <section class="details" aria-labelledby="troubleshooting-title">
+        <h2 id="troubleshooting-title">Configuration and troubleshooting</h2>
+        <p>The CLI stores relay authority keys, device records, invitation hashes, and revocation state in <code>~/.config/remotty/config.json</code>, or <code>$XDG_CONFIG_HOME/remotty/config.json</code> when <code>XDG_CONFIG_HOME</code> is set. It creates the file with mode <code>0600</code>.</p>
+        <ul><li>Invite expired: run <code>npx --yes --package opencode-remotty@latest remotty invite</code> and pair again.</li><li>Wrong hosted endpoint: create a new invite with the correct <code>--broker</code> and <code>--app</code> values.</li><li>Plugin does not appear: rerun the OpenCode plugin install command, quit OpenCode, then run <code>opencode --continue</code>.</li><li>Device access should end: use <code>npx --yes --package opencode-remotty@latest remotty devices</code> to find its ID, then <code>npx --yes --package opencode-remotty@latest remotty revoke &lt;device-id&gt;</code>.</li></ul>
+      </section>
+    </main>
+    <footer><a href="/pair">Pair</a><a href="/privacy">Privacy</a><a href="https://github.com/d3vv3/remotty">GitHub</a><a href="https://www.npmjs.com/package/opencode-remotty">npm</a><a href="/llms.txt">llms.txt</a></footer>
+  </body>
+</html>

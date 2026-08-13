@@ -529,6 +529,7 @@ function LandingPage() {
         <nav className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-5 sm:px-8">
           <PublicBrand />
           <div className="flex items-center gap-2 sm:gap-4">
+            <a className="hidden h-10 items-center gap-2 px-2 font-mono text-[10px] font-bold uppercase text-[#b5bdb9] hover:text-[#42e8d4] sm:inline-flex" href="/install/">Install</a>
             <a className="inline-flex h-10 items-center gap-2 px-2 font-mono text-[10px] font-bold uppercase text-[#b5bdb9] hover:text-[#42e8d4]" href="/privacy"><LockKeyhole size={15} /> Privacy</a>
             <a className="hidden size-10 place-items-center rounded-sm border border-[#3a4140] text-[#8d9692] hover:border-[#42e8d4] hover:text-[#42e8d4] sm:grid" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer" title="View remotty on GitHub"><Github size={18} /></a>
             <a className="inline-flex h-10 items-center gap-2 rounded-sm border border-[#efff91] bg-[#d8ff3e] px-4 font-mono text-xs font-bold uppercase text-[#080909] shadow-[3px_3px_0_#42e8d4] hover:translate-x-px hover:translate-y-px hover:shadow-[2px_2px_0_#42e8d4]" href="/pair">Pair <ArrowRight size={15} /></a>
@@ -545,7 +546,7 @@ function LandingPage() {
             <p className="mt-5 max-w-2xl text-sm leading-7 text-[#b5bdb9] sm:text-base">Watch OpenCode work, answer questions, approve commands, inspect diffs, and send the next instruction from an installable mobile PWA.</p>
             <div className="mt-8 flex flex-wrap justify-center gap-3 lg:justify-start">
             <a className="inline-flex h-12 items-center gap-2 rounded-sm border border-[#efff91] bg-[#d8ff3e] px-6 font-mono text-xs font-bold uppercase text-[#080909] shadow-[4px_4px_0_#42e8d4]" href="/pair">Pair a device <ArrowRight size={16} /></a>
-            <a className="inline-flex h-12 items-center gap-2 rounded-sm border border-[#3a4140] bg-[#141718] px-6 font-mono text-xs font-bold uppercase text-[#f4f2eb] hover:border-[#42e8d4] hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer"><Github size={16} /> GitHub</a>
+            <a className="inline-flex h-12 items-center gap-2 rounded-sm border border-[#3a4140] bg-[#141718] px-6 font-mono text-xs font-bold uppercase text-[#f4f2eb] hover:border-[#42e8d4] hover:text-[#42e8d4]" href="/install/"><Terminal size={16} /> Install</a>
             </div>
           </div>
           <div className="mt-12 flex justify-center lg:absolute lg:bottom-7 lg:right-16 lg:mt-0 xl:right-24"><PhonePreview /></div>
@@ -574,14 +575,14 @@ function LandingPage() {
           <h2 className="mt-3 font-mono text-3xl font-bold sm:text-5xl">Pair without an account.</h2>
           <div className="mt-10 grid border-y border-[#3a4140] md:grid-cols-3">
             <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:pr-8"><b className="font-mono text-xs text-[#ff635d]">01</b><h3 className="mt-4 font-mono text-sm font-bold">Install the plugin</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">opencode plugin opencode-remotty --global --force</code></div>
-            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:px-8"><b className="font-mono text-xs text-[#ff635d]">02</b><h3 className="mt-4 font-mono text-sm font-bold">Create an invite</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">npx opencode-remotty pair</code></div>
-            <div className="py-7 md:pl-8"><b className="font-mono text-xs text-[#ff635d]">03</b><h3 className="mt-4 font-mono text-sm font-bold">Scan and continue</h3><p className="mt-4 text-xs leading-6 text-[#8d9692]">Restart OpenCode. Scan the QR code or paste the encrypted invite into the pairing page.</p></div>
+            <div className="border-b border-[#292d2d] py-7 md:border-b-0 md:border-r md:px-8"><b className="font-mono text-xs text-[#ff635d]">02</b><h3 className="mt-4 font-mono text-sm font-bold">Create an invite</h3><code className="mt-4 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[10px] text-[#42e8d4]">npx --yes --package opencode-remotty@latest remotty pair</code></div>
+            <div className="py-7 md:pl-8"><b className="font-mono text-xs text-[#ff635d]">03</b><h3 className="mt-4 font-mono text-sm font-bold">Scan and continue</h3><p className="mt-4 text-xs leading-6 text-[#8d9692]">Scan the QR code or paste the encrypted invite into the pairing page. Quit OpenCode, then run <code>opencode --continue</code>.</p></div>
           </div>
         </div>
       </section>
 
       <footer className="bg-[#090a0b] py-10">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 sm:flex-row sm:items-center sm:justify-between sm:px-8"><PublicBrand /><div className="flex flex-wrap gap-5 font-mono text-[10px] uppercase text-[#8d9692]"><a className="hover:text-[#42e8d4]" href="/pair">Pair</a><a className="hover:text-[#42e8d4]" href="/privacy">Privacy</a><a className="hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer">Source</a><a className="hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty/blob/main/LICENSE" target="_blank" rel="noreferrer">AGPL-3.0</a></div></div>
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 sm:flex-row sm:items-center sm:justify-between sm:px-8"><PublicBrand /><div className="flex flex-wrap gap-5 font-mono text-[10px] uppercase text-[#8d9692]"><a className="hover:text-[#42e8d4]" href="/install/">Install</a><a className="hover:text-[#42e8d4]" href="/pair">Pair</a><a className="hover:text-[#42e8d4]" href="/privacy">Privacy</a><a className="hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer">Source</a><a className="hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty/blob/main/LICENSE" target="_blank" rel="noreferrer">AGPL-3.0</a></div></div>
       </footer>
     </main>
   )
@@ -603,7 +604,7 @@ function PairingScreen({ onConnect, error }: { onConnect: (bundle: PairingBundle
   return (
     <main className="h-dvh overflow-y-auto bg-[#090a0b] text-[#f4f2eb]">
       <header className="border-b-2 border-[#d8ff3e] bg-[#0b0d0e]">
-        <nav className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-5 sm:px-8"><PublicBrand /><div className="flex items-center gap-5"><a className="font-mono text-[10px] uppercase text-[#8d9692] hover:text-[#42e8d4]" href="/privacy">Privacy</a><a className="inline-flex items-center gap-2 font-mono text-[10px] uppercase text-[#8d9692] hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer"><Github size={15} /> GitHub</a></div></nav>
+        <nav className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-5 sm:px-8"><PublicBrand /><div className="flex items-center gap-5"><a className="font-mono text-[10px] uppercase text-[#8d9692] hover:text-[#42e8d4]" href="/install/">Install</a><a className="font-mono text-[10px] uppercase text-[#8d9692] hover:text-[#42e8d4]" href="/privacy">Privacy</a><a className="inline-flex items-center gap-2 font-mono text-[10px] uppercase text-[#8d9692] hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer"><Github size={15} /> GitHub</a></div></nav>
       </header>
       <section className="mx-auto grid min-h-[calc(100svh-64px)] w-full max-w-6xl items-center gap-12 px-5 py-12 sm:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(400px,.85fr)]">
         <div>
@@ -623,8 +624,8 @@ function PairingScreen({ onConnect, error }: { onConnect: (bundle: PairingBundle
         <div className="border-y border-[#3a4140] bg-[#0c0f10]">
           <div className="flex h-12 items-center gap-2 border-b border-[#292d2d] px-4 font-mono text-[10px] font-bold uppercase text-[#d8ff3e]"><Terminal size={18} /> Install and pair</div>
           <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">01</b><div><strong className="text-xs">Add the OpenCode plugin</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">opencode plugin opencode-remotty --global --force</code></div></div>
-          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">02</b><div><strong className="text-xs">Create an encrypted device invite</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">npx opencode-remotty pair</code></div></div>
-          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 p-4"><b className="font-mono text-[10px] text-[#ff635d]">03</b><div><strong className="text-xs">Restart OpenCode</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">opencode --continue</code></div></div>
+          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">02</b><div><strong className="text-xs">Create an encrypted device invite</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">npx --yes --package opencode-remotty@latest remotty pair</code></div></div>
+          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 p-4"><b className="font-mono text-[10px] text-[#ff635d]">03</b><div><strong className="text-xs">Restart OpenCode</strong><p className="mt-2 text-xs text-[#8d9692]">Quit the running OpenCode process, then run:</p><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">opencode --continue</code></div></div>
         </div>
       </section>
       {scannerOpen && <PairingScanner onClose={() => setScannerOpen(false)} onScan={(bundle) => { setScannerOpen(false); onConnect(bundle) }} />}

@@ -4,7 +4,7 @@ remotty is a remote PWA control surface for OpenCode sessions.
 
 ## Install
 
-Install with one command. It registers the plugin in the OpenCode configuration; no manual `tui.json` edit is needed:
+Requirements: OpenCode and Node `>=22` for `npx`. Install with one command. It registers the plugin in the OpenCode configuration; no manual `tui.json` edit is needed:
 
 ```sh
 opencode plugin opencode-remotty --global --force
@@ -13,23 +13,23 @@ opencode plugin opencode-remotty --global --force
 Create the relay identity and an encrypted device invite:
 
 ```sh
-npx opencode-remotty pair
+npx --yes --package opencode-remotty@latest remotty pair
 ```
 
-The CLI prints the raw invite token, a clickable fragment-only pairing link, and a terminal QR code, each separated by a blank line for easy copying. The one-time invite expires after ten minutes.
+The command mutates `~/.config/remotty/config.json` (or `$XDG_CONFIG_HOME/remotty/config.json`) and prints a sensitive token, clickable fragment-only pairing link, and terminal QR code. Do not share or publish this output. The one-time invite expires after ten minutes.
 
-Restart OpenCode after installation.
+Open the pairing link, scan its QR code, or paste the token into `https://remotty.devve.space/pair`. Quit any running OpenCode process, then run `opencode --continue` after installation and pairing.
 
 ## Commands
 
 ```sh
-npx opencode-remotty pair
-npx opencode-remotty invite
-npx opencode-remotty devices
-npx opencode-remotty revoke <device-id>
-npx opencode-remotty remove <device-id>
-npx opencode-remotty remove --revoked
-npx opencode-remotty status
+npx --yes --package opencode-remotty@latest remotty pair
+npx --yes --package opencode-remotty@latest remotty invite
+npx --yes --package opencode-remotty@latest remotty devices
+npx --yes --package opencode-remotty@latest remotty revoke <device-id>
+npx --yes --package opencode-remotty@latest remotty remove <device-id>
+npx --yes --package opencode-remotty@latest remotty remove --revoked
+npx --yes --package opencode-remotty@latest remotty status
 ```
 
 The plugin keeps relay authority keys, invitation hashes, device keys, revocation state, and replay records in `~/.config/remotty/config.json` with mode `0600`. The broker routes only opaque encrypted frames.

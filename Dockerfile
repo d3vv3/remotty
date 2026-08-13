@@ -13,8 +13,6 @@ RUN pnpm install --frozen-lockfile
 
 COPY apps apps
 COPY packages packages
-ARG VITE_REMOTTY_URL
-ENV VITE_REMOTTY_URL=$VITE_REMOTTY_URL
 RUN pnpm --filter @remotty/broker build && pnpm --filter @remotty/web build
 
 FROM nginxinc/nginx-unprivileged:alpine3.23 AS web

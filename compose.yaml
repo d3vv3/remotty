@@ -18,8 +18,6 @@ services:
     build:
       context: .
       target: web
-      args:
-        VITE_REMOTTY_URL: wss://${REMOTTY_HOST}/ws
     networks:
       - traefik
     deploy:

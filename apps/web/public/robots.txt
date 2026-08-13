@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /app
+Disallow: /pair
+
+Sitemap: https://remotty.devve.space/sitemap.xml
