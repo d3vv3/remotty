@@ -44,6 +44,8 @@ describe("public discovery artifacts", () => {
     for (const route of ["location = / {", "location = /privacy {", "location = /pair {", "location = /app {"]) expect(nginx).toContain(route)
     expect(nginx).toContain("location /install/ {")
     expect(nginx).toContain("location = /install {")
+    expect(nginx).toContain("absolute_redirect off;")
+    expect(nginx).toContain("return 301 /install/;")
     expect(nginx).toContain("try_files $uri =404;")
     expect(nginx).not.toContain("$uri/ /index.html")
     const finalGenericLocation = nginx.slice(nginx.lastIndexOf("location / {"))
