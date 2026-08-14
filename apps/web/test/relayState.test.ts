@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { acceptsRelayPosition, aggregateRelaySlices, bumpSessionRevisions, commandRelayId, normalizeRelaySlice, relaySupportsSessionCreate, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, workspaceSessionKey, type RelaySlice } from "../src/relayState"
+import { acceptsRelayPosition, aggregateRelaySlices, bumpSessionRevisions, commandRelayId, normalizeRelaySlice, relaySupportsSessionCreate, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, visibleSubagents, workspaceSessionKey, type RelaySlice } from "../src/relayState"
 
 const slice = (id: string, sessionId: string, updatedAt: number): RelaySlice => ({
   relay: { id, name: id, hostname: "host", platform: "linux", arch: "x64", workspace: `/${id}` },
@@ -20,6 +20,36 @@ const slice = (id: string, sessionId: string, updatedAt: number): RelaySlice => 
 })
 
 describe("relay snapshot aggregation and routing", () => {
+  it("shows all active subagents before the three newest inactive children without mutating the input", () => {
+    const children = [
+      { id: "idle-old", status: "idle", updatedAt: 1 },
+      { id: "busy-old", status: "busy", updatedAt: 4 },
+      { id: "idle-new", status: "idle", updatedAt: 6 },
+      { id: "retry", status: "retry", updatedAt: 3 },
+      { id: "idle-mid", status: "idle", updatedAt: 5 },
+      { id: "busy-new", status: "busy", updatedAt: 7 },
+      { id: "idle-fourth", status: "idle", updatedAt: 2 },
+    ] as const
+
+    expect(visibleSubagents(children).map((child) => child.id)).toEqual([
+      "busy-new", "busy-old", "retry", "idle-new", "idle-mid", "idle-fourth",
+    ])
+    expect(children.map((child) => child.id)).toEqual([
+      "idle-old", "busy-old", "idle-new", "retry", "idle-mid", "busy-new", "idle-fourth",
+    ])
+  })
+
+  it("limits inactive-only subagents by recency", () => {
+    const children = [
+      { id: "old", status: "idle", updatedAt: 1 },
+      { id: "new", status: "completed", updatedAt: 4 },
+      { id: "middle", status: "idle", updatedAt: 3 },
+      { id: "recent", status: "idle", updatedAt: 2 },
+    ] as const
+
+    expect(visibleSubagents(children).map((child) => child.id)).toEqual(["new", "middle", "recent"])
+  })
+
   it("aggregates snapshots and associates sessions with workspace relays", () => {
     const state = aggregateRelaySlices(new Map([
       ["relay-a", slice("relay-a", "session-a", 1)],

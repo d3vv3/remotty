@@ -45,6 +45,13 @@ export const bumpSessionRevisions = (
 export type ResourceRevisions = Record<string, { messages: number; todos: number; diffs: number }>
 /** Cached snapshots predate subagent support; normalize before aggregation. */
 export const normalizeRelaySlice = (slice: Omit<RelaySlice, "subagents"> & { subagents?: SubagentSummary[] }): RelaySlice => ({ ...slice, subagents: slice.subagents ?? [] })
+/** Shows all active children, followed by a bounded inactive history, without changing the source array. */
+export const visibleSubagents = <T extends Pick<SubagentSummary, "status" | "updatedAt">>(items: readonly T[], recentLimit = 3): T[] => {
+  const newestFirst = (left: T, right: T) => right.updatedAt - left.updatedAt
+  const active = items.filter((item) => item.status === "busy" || item.status === "retry").sort(newestFirst)
+  const inactive = items.filter((item) => item.status !== "busy" && item.status !== "retry").sort(newestFirst)
+  return [...active, ...inactive.slice(0, recentLimit)]
+}
 export const bumpResourceRevisions = (current: ResourceRevisions, relay: Pick<RelayInfo, "workspaceId" | "hostname" | "workspace">, sessionIds: Iterable<string>, resources: Array<keyof ResourceRevisions[string]>) => {
   const next = { ...current }
   for (const id of sessionIds) {

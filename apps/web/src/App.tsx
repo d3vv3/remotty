@@ -44,7 +44,7 @@ import { CURRENT_IDENTITY_MARKER, loadCurrentIdentity } from "./deviceStore"
 import { useRelay } from "./useRelay"
 import { pairingBundleFrom, routeForEnrollment, routeForStoredIdentity } from "./pairing"
 import { NOTIFICATION_PROMPT_SEEN, shouldOfferPushNotifications } from "./notificationPrompt"
-import { relaySupportsSessionCreate, stableWorkspaceKey, workspaceSessionKey, type RoutedSession, type RoutedSubagent } from "./relayState"
+import { relaySupportsSessionCreate, stableWorkspaceKey, visibleSubagents, workspaceSessionKey, type RoutedSession, type RoutedSubagent } from "./relayState"
 import { connectionLabel, mergeByMessageId, promptDeliveryState } from "./resilience"
 import { commitManifestForRefresh, emptyMessageCache, messageInventory, migrateMessageCache, replaceCanonicalMessages, stageMessage, visibleCachedMessages, type MessageCache } from "./messageCache"
 import { clearSubmittedDraft, resourceArray, retainedSessionState, type SessionResourceRevisions } from "./sessionState"
@@ -958,6 +958,8 @@ function SessionDetail({
   const persistenceRef = useRef<Promise<void>>(Promise.resolve())
   const selectedAgent = agents.find((item) => item.name === agent)
   const selectedAgentStyle = { "--agent-color": selectedAgent?.color ?? "var(--cyan)" } as CSSProperties
+  const visibleSubagentEntries = useMemo(() => visibleSubagents(subagents), [subagents])
+  const showComposer = tab !== "subagents"
   const persistMessageCache = useCallback((cache: MessageCache<SessionMessage>) => {
     messageCacheRef.current = cache
     setMessages(visibleCachedMessages(cache))
@@ -1112,9 +1114,9 @@ function SessionDetail({
     setAgent(session.agent && agents.some((item) => item.name === session.agent) ? session.agent : agents[0]?.name ?? "")
   }, [session.agent, agents, agent])
   useEffect(() => {
-    if (!selectedChildId || subagents.some((child) => child.id === selectedChildId)) return
-    setSelectedChildId(subagents[0]?.id)
-  }, [selectedChildId, subagents])
+    if (!selectedChildId || visibleSubagentEntries.some((child) => child.id === selectedChildId)) return
+    setSelectedChildId(visibleSubagentEntries[0]?.id)
+  }, [selectedChildId, visibleSubagentEntries])
 
   useEffect(() => {
     if (!focusPrompt) return
@@ -1319,7 +1321,7 @@ function SessionDetail({
         <button type="button" role="tab" aria-selected={tab === "activity"} className={tab === "activity" ? "active" : ""} onClick={() => selectTab("activity")}>Activity</button>
         <button type="button" role="tab" aria-selected={tab === "todos"} className={tab === "todos" ? "active" : ""} onClick={() => selectTab("todos")}>Todos <span>{todos.filter((todo) => todo.status !== "completed" && todo.status !== "cancelled").length}</span></button>
         <button type="button" role="tab" aria-selected={tab === "changes"} className={tab === "changes" ? "active" : ""} onClick={() => selectTab("changes")}>Changes <span>{diffs.length}</span></button>
-        {(supportsSubagents || subagents.length > 0) && <button type="button" role="tab" aria-selected={tab === "subagents"} className={tab === "subagents" ? "active" : ""} onClick={() => selectTab("subagents")}>Subagents <span>{subagents.length}</span></button>}
+        {(supportsSubagents || visibleSubagentEntries.length > 0) && <button type="button" role="tab" aria-selected={tab === "subagents"} className={tab === "subagents" ? "active" : ""} onClick={() => selectTab("subagents")}>Subagents <span>{visibleSubagentEntries.length}</span></button>}
       </div>
 
       <div
@@ -1366,19 +1368,19 @@ function SessionDetail({
             {diffState === "ok" && diffs.length === 0 && <div className="empty-state"><p>The working tree matches the latest commit.</p></div>}
             {diffState === "error" && <div className="empty-state"><p>Workspace changes could not be loaded.</p></div>}
           </div>
-        ) : <SubagentActivity subagents={subagents} selectedChildId={selectedChildId} onSelect={setSelectedChildId} request={request} revisions={subagentRevisions} />}
+        ) : <SubagentActivity subagents={visibleSubagentEntries} selectedChildId={selectedChildId} onSelect={setSelectedChildId} request={request} revisions={subagentRevisions} />}
       </div>
 
-      <div className="input-dock">
+      {(permission || question || showComposer) && <div className="input-dock">
         {permission && <PermissionPanel permission={permission} request={request} onError={onError} />}
         {question && <QuestionPanel requestInfo={question} request={request} onError={onError} />}
-        {(session.status === "busy" || session.status === "retry") && (
+        {showComposer && (session.status === "busy" || session.status === "retry") && (
           <div className="work-strip" role="status">
             <span className="work-pulse"><i /><i /><i /></span>
             <strong>{isThinking ? "Thinking" : "Working"}</strong>
           </div>
         )}
-        <form className="composer" onSubmit={submit}>
+        {showComposer && <form className="composer" onSubmit={submit}>
           <textarea
             ref={promptRef}
             value={prompt}
@@ -1391,8 +1393,8 @@ function SessionDetail({
           <button className="primary-button" type="submit" disabled={!prompt.trim() || sending || messageCacheReadySession !== session.id} aria-label="Send prompt">
             {sending ? <LoaderCircle className="spin" size={19} /> : <Send size={19} />}
           </button>
-        </form>
-      </div>
+        </form>}
+      </div>}
     </div>
   )
 }
