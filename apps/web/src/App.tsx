@@ -45,7 +45,7 @@ import { useRelay } from "./useRelay"
 import { pairingBundleFrom, routeForEnrollment, routeForStoredIdentity } from "./pairing"
 import { NOTIFICATION_PROMPT_SEEN, shouldOfferPushNotifications } from "./notificationPrompt"
 import { relaySupportsSessionCreate, stableWorkspaceKey, visibleSubagents, workspaceSessionKey, type RoutedSession, type RoutedSubagent } from "./relayState"
-import { connectionLabel, mergeByMessageId, promptDeliveryState } from "./resilience"
+import { connectionLabel, exactConnectionTime, mergeByMessageId, promptDeliveryState } from "./resilience"
 import { commitManifestForRefresh, emptyMessageCache, messageInventory, migrateMessageCache, replaceCanonicalMessages, stageMessage, visibleCachedMessages, type MessageCache } from "./messageCache"
 import { clearSubmittedDraft, resourceArray, retainedSessionState, type SessionResourceRevisions } from "./sessionState"
 import { SubagentActivity } from "./SubagentActivity"
@@ -779,6 +779,7 @@ function SessionRow({ session, needsInput, offline, selected, onSelect }: { sess
 function ConnectionDetails({ relayState, onClose }: { relayState: ReturnType<typeof useRelay>; onClose: () => void }) {
   const closeRef = useRef<HTMLButtonElement>(null)
   const dialogRef = useRef<HTMLElement>(null)
+  const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     closeRef.current?.focus()
     const escape = (event: globalThis.KeyboardEvent) => {
@@ -794,6 +795,10 @@ function ConnectionDetails({ relayState, onClose }: { relayState: ReturnType<typ
     window.addEventListener("keydown", escape)
     return () => window.removeEventListener("keydown", escape)
   }, [onClose])
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(timer)
+  }, [])
   const refresh = () => { void relayState.request({ type: "snapshot.request" }).catch((error) => relayState.setError(error.message)) }
   return (
     <div className="connection-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
@@ -802,9 +807,9 @@ function ConnectionDetails({ relayState, onClose }: { relayState: ReturnType<typ
         <div className="connection-dialog-body"><div className="connection-row"><span>Remotty service</span><b>{relayState.serviceConnected ? "Connected" : "Unreachable"}</b></div>
         {relayState.relays.map((relay) => {
           const health = relayState.relayHealth[relay.id]
-          return <div className="connection-row" key={relay.id}><span>Your computer<small>{relay.name} . {relay.workspace}</small></span><b>{relayState.isRelayConnected(relay.id) ? "Connected" : "Offline"}<small>{health?.rtt ? `${health.rtt} ms` : health?.lastContact ? `Last contact ${relativeTime(health.lastContact)}` : ""}</small></b></div>
+          return <div className="connection-row" key={relay.id}><span>Your computer<small>{relay.name} . {relay.workspace}</small></span><b>{relayState.isRelayConnected(relay.id) ? "Connected" : "Offline"}<small>{health?.rtt !== undefined ? `${health.rtt} ms` : health?.lastContact ? `Last contact ${exactConnectionTime(health.lastContact, now)}` : ""}</small></b></div>
         })}
-        <div className="connection-row"><span>OpenCode data</span><b>{relayState.lastSyncedAt && Date.now() - relayState.lastSyncedAt < 60_000 ? "Current" : "Stale"}<small>{relayState.lastSyncedAt ? `Updated ${relativeTime(relayState.lastSyncedAt)}` : "Not yet synced"}</small></b></div></div>
+        <div className="connection-row"><span>OpenCode data</span><b>{relayState.lastSyncedAt && now - relayState.lastSyncedAt < 60_000 ? "Current" : "Stale"}<small>{relayState.lastSyncedAt ? `Updated ${exactConnectionTime(relayState.lastSyncedAt, now)}` : "Not yet synced"}</small></b></div></div>
         <footer><button className="notification-secondary" onClick={onClose}>Close</button><button className="notification-primary" onClick={refresh}><RefreshCw size={15} /> Refresh</button></footer>
       </section>
     </div>
@@ -1325,7 +1330,7 @@ function SessionDetail({
       </div>
 
       <div
-        className="detail-content"
+        className={`detail-content ${tab === "subagents" ? "subagent-content" : ""}`}
         ref={detailContentRef}
         onScroll={(event) => {
           const element = event.currentTarget
@@ -1371,7 +1376,7 @@ function SessionDetail({
         ) : <SubagentActivity subagents={visibleSubagentEntries} selectedChildId={selectedChildId} onSelect={setSelectedChildId} request={request} revisions={subagentRevisions} />}
       </div>
 
-      {(permission || question || showComposer) && <div className="input-dock">
+      {(permission || question || showComposer) && <div className={`input-dock ${tab === "subagents" ? "subagent-dock" : ""}`}>
         {permission && <PermissionPanel permission={permission} request={request} onError={onError} />}
         {question && <QuestionPanel requestInfo={question} request={request} onError={onError} />}
         {showComposer && (session.status === "busy" || session.status === "retry") && (

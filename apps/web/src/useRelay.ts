@@ -31,7 +31,7 @@ import {
   type DeviceIdentity,
 } from "./deviceStore"
 import { acceptsRelayPosition, aggregateRelaySlices, bumpResourceRevisions, bumpSessionRevisions, commandRelayId, normalizeRelaySlice, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, type RelaySlice, type ResourceRevisions } from "./relayState"
-import { addChunk, assembledMessages, completeChunks, createChunkAssembly, exactManifestMessages, hasSequenceGap, healthSummary, orderByManifest, readOnlyCommand, reconnectDelay, requestInactivityMs, retryPlan, validManifest, type ChunkAssembly } from "./resilience"
+import { addChunk, assembledMessages, completeChunks, createChunkAssembly, exactManifestMessages, HANDSHAKE_TIMEOUT_MS, hasSequenceGap, healthSummary, orderByManifest, readOnlyCommand, reconnectDelay, requestInactivityMs, retryPlan, shouldExpireHandshakeWatchdog, shouldReconnectTransportOnResume, validManifest, type ChunkAssembly } from "./resilience"
 import { verifyDeltaSnapshot } from "./messageCache"
 import { retainedSessionState } from "./sessionState"
 
@@ -209,6 +209,9 @@ export function useRelay(initialBundle?: PairingBundle) {
   const snapshotInvalidationRef = useRef(new Set<string>())
   const socketGenerationRef = useRef(0)
   const authenticatedRef = useRef(false)
+  const hiddenAtRef = useRef<number | undefined>(undefined)
+  const lastTransportActivityRef = useRef<number | undefined>(undefined)
+  const lastRecoveryAtRef = useRef(0)
 
   const publishSlices = useCallback(() => {
     const state = aggregateRelaySlices(slicesRef.current, connectedRelaysRef.current)
@@ -628,13 +631,34 @@ export function useRelay(initialBundle?: PairingBundle) {
     }
   }, [applyEvent, publishSlices, rememberMessage, requestSnapshots, sendCommandFrame])
 
+  const retireTransport = useCallback((message: string) => {
+    const socket = socketRef.current
+    if (!socket) return
+    const generation = socketGenerationRef.current
+    socketRef.current = undefined
+    authenticatedRef.current = false
+    for (const [requestId, pending] of pendingRef.current) {
+      if (pending.generation !== generation) continue
+      window.clearTimeout(pending.timeout)
+      pending.reject(new Error(message))
+      pendingRef.current.delete(requestId)
+    }
+    connectedRelaysRef.current.clear()
+    recoveryInFlightRef.current.clear()
+    snapshotInvalidationRef.current.clear()
+    setRelayHealth({})
+    setServiceConnected(false)
+    publishSlices()
+    socket.close(1000, "Connection replaced")
+  }, [publishSlices])
+
   const connectIdentity = useCallback((identity: DeviceIdentity) => {
+    retireTransport("Connection interrupted")
     const epoch = ++connectionEpochRef.current
     identityRef.current = identity
     setEnrolled(identity.enrolled)
-    socketRef.current?.close(1000, "Connection replaced")
     setConnection("connecting")
-    setError(undefined)
+    lastTransportActivityRef.current = Date.now()
     const open = () => {
       if (connectionEpochRef.current !== epoch) return
       const broker = new URL(identity.brokerUrl)
@@ -643,9 +667,16 @@ export function useRelay(initialBundle?: PairingBundle) {
       socketRef.current = socket
       const generation = ++socketGenerationRef.current
       authenticatedRef.current = false
+      lastTransportActivityRef.current = Date.now()
       let enrollmentSent = false
       let helloStarted = false
       let encryptedFrameQueue: Promise<void> = Promise.resolve()
+      const handshakeWatchdog = window.setTimeout(() => {
+        if (socketRef.current !== socket || connectionEpochRef.current !== epoch ||
+          !shouldExpireHandshakeWatchdog(generation, socketGenerationRef.current, authenticatedRef.current)) return
+        setError("Connection handshake timed out.")
+        socket.close(4000, "Connection handshake timed out")
+      }, HANDSHAKE_TIMEOUT_MS)
 
       const enroll = async () => {
         const current = identityRef.current
@@ -675,8 +706,12 @@ export function useRelay(initialBundle?: PairingBundle) {
         if (socketRef.current === socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(frame))
       }
 
+      socket.addEventListener("open", () => {
+        if (socketRef.current === socket && connectionEpochRef.current === epoch) lastTransportActivityRef.current = Date.now()
+      })
       socket.addEventListener("message", (message) => {
         if (socketRef.current !== socket) return
+        lastTransportActivityRef.current = Date.now()
         let value: unknown
         try {
           value = JSON.parse(String(message.data))
@@ -704,6 +739,9 @@ export function useRelay(initialBundle?: PairingBundle) {
             }).catch((cause) => setError((cause as Error).message))
           } else if (control.data.type === "broker.ready") {
             authenticatedRef.current = true
+            window.clearTimeout(handshakeWatchdog)
+            lastTransportActivityRef.current = Date.now()
+            setError((current) => current === "Connection handshake timed out." || current === "Cannot reach the relay broker." ? undefined : current)
             setServiceConnected(true)
             reconnectAttemptRef.current = 0
             connectedRelaysRef.current = new Set(control.data.connectedRelayIds)
@@ -764,6 +802,7 @@ export function useRelay(initialBundle?: PairingBundle) {
         if (socketRef.current === socket) setError("Cannot reach the relay broker.")
       })
       socket.addEventListener("close", (event) => {
+        window.clearTimeout(handshakeWatchdog)
         if (socketRef.current !== socket || connectionEpochRef.current !== epoch) return
         if (event.code === 4001) {
           for (const [requestId, pending] of pendingRef.current) {
@@ -798,7 +837,7 @@ export function useRelay(initialBundle?: PairingBundle) {
       })
     }
     open()
-  }, [handleEncryptedFrame, publishSlices, requestSnapshots])
+  }, [handleEncryptedFrame, publishSlices, requestSnapshots, retireTransport])
 
   const connect = useCallback(async (bundle: PairingBundle) => {
     try {
@@ -955,15 +994,32 @@ export function useRelay(initialBundle?: PairingBundle) {
   }, [connect, connectIdentity, initialBundle, publishSlices])
 
   useEffect(() => {
-    const reconnect = () => {
+    const reconnect = (options: { persisted?: boolean; online?: boolean } = {}) => {
       const identity = identityRef.current
-      if (identity && socketRef.current?.readyState !== WebSocket.OPEN) connectIdentity(identity)
+      const now = Date.now()
+      const socket = socketRef.current
+      const socketOpen = socket?.readyState === WebSocket.OPEN
+      const socketConnecting = socket?.readyState === WebSocket.CONNECTING
+      if (!identity || !shouldReconnectTransportOnResume(socketConnecting, { socketOpen, now, hiddenAt: hiddenAtRef.current, lastTransportActivity: lastTransportActivityRef.current, ...options })) return
+      if (now - lastRecoveryAtRef.current < 1_000) return
+      lastRecoveryAtRef.current = now
+      connectIdentity(identity)
+      hiddenAtRef.current = undefined
     }
-    window.addEventListener("online", reconnect)
-    window.addEventListener("pageshow", reconnect)
-    const visibility = () => { if (document.visibilityState === "visible") reconnect() }
+    const online = () => reconnect({ online: true })
+    const pageShow = (event: PageTransitionEvent) => reconnect({ persisted: event.persisted })
+    const visibility = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenAtRef.current = Date.now()
+        return
+      }
+      reconnect()
+      hiddenAtRef.current = undefined
+    }
+    window.addEventListener("online", online)
+    window.addEventListener("pageshow", pageShow)
     document.addEventListener("visibilitychange", visibility)
-    return () => { window.removeEventListener("online", reconnect); window.removeEventListener("pageshow", reconnect); document.removeEventListener("visibilitychange", visibility) }
+    return () => { window.removeEventListener("online", online); window.removeEventListener("pageshow", pageShow); document.removeEventListener("visibilitychange", visibility) }
   }, [connectIdentity])
 
   useEffect(() => {

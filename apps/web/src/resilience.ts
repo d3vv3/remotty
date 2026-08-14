@@ -5,6 +5,46 @@ export const reconnectDelay = (attempt: number, random = Math.random) => {
   return Math.round(base * (0.8 + random() * 0.4))
 }
 
+export const RESUME_SUSPENSION_MS = 5_000
+export const HANDSHAKE_TIMEOUT_MS = 10_000
+
+export const isTransportActivityStale = (lastActivityAt: number | undefined, now: number, threshold = RESUME_SUSPENSION_MS) =>
+  lastActivityAt === undefined || now - lastActivityAt >= threshold
+
+export const shouldReplaceTransportOnResume = ({
+  socketOpen,
+  now,
+  hiddenAt,
+  lastTransportActivity,
+  persisted = false,
+  online = false,
+}: {
+  socketOpen: boolean
+  now: number
+  hiddenAt?: number
+  lastTransportActivity?: number
+  persisted?: boolean
+  online?: boolean
+}) => {
+  if (!socketOpen || online) return true
+  if (persisted) return isTransportActivityStale(lastTransportActivity, now)
+  if (hiddenAt !== undefined) return now - hiddenAt >= RESUME_SUSPENSION_MS
+  return false
+}
+
+export const shouldReconnectTransportOnResume = (socketConnecting: boolean, resume: Parameters<typeof shouldReplaceTransportOnResume>[0]) =>
+  !socketConnecting && shouldReplaceTransportOnResume(resume)
+
+export const shouldExpireHandshakeWatchdog = (generation: number, currentGeneration: number, authenticated: boolean) =>
+  generation === currentGeneration && !authenticated
+
+export const exactConnectionTime = (time: number, now: number) => {
+  const elapsed = Math.max(0, now - time)
+  if (elapsed < 1_000) return `${Math.floor(elapsed)} ms ago`
+  const seconds = Math.floor(elapsed / 1_000)
+  return `${seconds} ${seconds === 1 ? "second" : "seconds"} ago`
+}
+
 export const hasSequenceGap = (current: number | undefined, next: number) =>
   current !== undefined && next > current + 1
 

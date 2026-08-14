@@ -152,7 +152,7 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .detail-placeholder h2 { margin: 18px 0 6px; color: var(--ink); font-family: var(--mono); font-size: 16px; }
 .detail-placeholder p { margin: 0; color: var(--muted); font-size: 12px; }
 .session-detail { height: 100%; display: flex; flex-direction: column; background: #090a0be8; }
-.detail-header { min-height: 86px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 14px 24px; border-bottom: 1px solid var(--line); background: #101213f5; }
+.detail-header { min-height: 86px; flex: 0 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 14px 24px; border-bottom: 1px solid var(--line); background: #101213f5; }
 .detail-header h2 { max-width: 700px; margin: 0; overflow: hidden; font-family: var(--mono); font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .detail-header p { max-width: 700px; margin: 7px 0 0; overflow: hidden; color: var(--muted); font-family: var(--mono); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .title-line { display: flex; align-items: center; gap: 11px; }
@@ -173,7 +173,7 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .agent-color { width: 7px; height: 26px; border-radius: 2px; }
 .danger-button { height: 38px; display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; color: #fff; border: 1px solid var(--coral); border-radius: 4px; background: #33191a; font-family: var(--mono); font-size: 11px; font-weight: 700; text-transform: uppercase; }
 .danger-button:hover { color: #110909; background: var(--coral); }
-.tabs { height: 46px; display: flex; gap: 6px; overflow-x: auto; padding: 6px 20px 0; border-bottom: 1px solid var(--line); background: #0e1011f5; }
+.tabs { height: 46px; flex: 0 0 auto; display: flex; gap: 6px; overflow-x: auto; padding: 6px 20px 0; border-bottom: 1px solid var(--line); background: #0e1011f5; }
 .tabs button { flex: 0 0 auto; }
 .tabs button { position: relative; min-width: 90px; padding: 0 14px; color: var(--muted); border: 1px solid transparent; border-bottom: 0; border-radius: 4px 4px 0 0; background: transparent; font-family: var(--mono); font-size: 11px; text-transform: uppercase; }
 .tabs button.active { color: #080909; border-color: var(--acid); background: var(--acid); }
@@ -186,15 +186,18 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .work-pulse i:nth-child(3) { height: 7px; animation-delay: .36s; }
 @keyframes work-pulse { to { height: 14px; background: var(--cyan); } }
 .detail-content { min-height: 0; flex: 1; overflow: auto; scrollbar-color: var(--line-bright) transparent; }
-.subagent-view { min-height: 100%; display: grid; grid-template-columns: minmax(190px, 280px) minmax(0, 1fr); }
-.subagent-list { overflow: auto; border-right: 1px solid var(--line); }
+.detail-content.subagent-content { min-height: 0; overflow: hidden; }
+.subagent-view { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(190px, 280px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.subagent-list, .subagent-messages { min-height: 0; overflow-y: auto; }
+.subagent-list { border-right: 1px solid var(--line); }
 .subagent-list button { width: 100%; min-height: 72px; display: grid; grid-template-columns: 10px minmax(0, 1fr); gap: 8px; padding: 12px; color: var(--ink); text-align: left; border: 0; border-bottom: 1px solid var(--line); background: transparent; }
 .subagent-list button.selected { background: var(--raised); }
 .subagent-list strong, .subagent-list small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .subagent-list small { grid-column: 2; color: var(--muted); font-family: var(--mono); font-size: 10px; }
-@media (max-width: 640px) { .subagent-view { grid-template-columns: 1fr; } .subagent-list { max-height: 180px; border-right: 0; border-bottom: 1px solid var(--line); } }
+@media (max-width: 640px) { .subagent-view { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); } .subagent-list { max-height: 132px; border-right: 0; border-bottom: 1px solid var(--line); } }
 
 .message-list { width: 100%; min-width: 0; max-width: 920px; margin: 0 auto; padding: 24px 30px 48px; }
+.subagent-messages > .message-list { width: 100%; min-width: 0; overflow: visible; }
 .message { width: 100%; min-width: 0; max-width: 100%; display: flex; margin: 0 0 22px; }
 .message-frame { width: 100%; min-width: 0; max-width: 100%; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 13px; }
 .message-sigil { width: 31px; height: 31px; display: grid; place-items: center; border-radius: 4px; }
@@ -283,6 +286,9 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .todo-row small { color: var(--muted); font-family: var(--mono); font-size: 10px; text-transform: uppercase; }
 
 .input-dock { position: relative; flex: 0 0 auto; border-top: 1px solid var(--line-bright); background: #0d0f10f7; }
+.input-dock.subagent-dock { min-height: 0; max-height: min(52dvh, max(0px, calc(100dvh - 64px - env(safe-area-inset-top) - 86px - 46px - 160px))); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+.subagent-dock .permission-panel, .subagent-dock .question-panel { max-height: none; }
+.subagent-dock .permission-panel, .subagent-dock .question-panel:not(.collapsed) { overflow: visible; }
 .composer { display: grid; grid-template-columns: minmax(0, 1fr) 42px; align-items: end; gap: 10px; padding: 13px 22px calc(14px + env(safe-area-inset-bottom)); background: #0d0f10f7; }
 .composer textarea { width: 100%; height: 42px; min-height: 42px; max-height: 82px; resize: none; overflow-y: hidden; padding: 10px 13px; color: var(--ink); caret-color: var(--acid); border: 1px solid var(--line-bright); border-radius: 4px; outline: none; background: #171a1b; font-family: var(--mono); font-size: 12px; line-height: 20px; }
 .composer textarea::placeholder { color: #68706d; }
@@ -369,6 +375,7 @@ button:disabled { cursor: not-allowed; opacity: .38; }
   .danger-button { width: 38px; justify-content: center; gap: 0; padding: 0; font-size: 0; }
   .tabs { padding-right: 12px; padding-left: 12px; }
   .tabs button { min-width: 82px; padding: 0 10px; }
+  .input-dock.subagent-dock { max-height: min(52dvh, max(0px, calc(100dvh - 56px - env(safe-area-inset-top) - 76px - 46px - 132px - 112px))); }
   .message-list { padding: 18px 12px 32px; }
   .message { margin-bottom: 16px; }
   .message.assistant .message-frame, .message.system .message-frame { width: 96%; padding: 14px 13px 14px 10px; }

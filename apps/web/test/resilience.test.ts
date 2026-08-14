@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { addChunk, assembledMessages, completeChunks, connectionLabel, createChunkAssembly, exactManifestMessages, hasSequenceGap, healthSummary, mergeByMessageId, orderByManifest, promptDeliveryState, reconcileCanonicalMessages, reconnectDelay, requestInactivityMs, retryPlan, validManifest } from "../src/resilience"
+import { addChunk, assembledMessages, completeChunks, connectionLabel, createChunkAssembly, exactConnectionTime, exactManifestMessages, hasSequenceGap, healthSummary, isTransportActivityStale, mergeByMessageId, orderByManifest, promptDeliveryState, reconcileCanonicalMessages, reconnectDelay, requestInactivityMs, retryPlan, shouldExpireHandshakeWatchdog, shouldReconnectTransportOnResume, shouldReplaceTransportOnResume, validManifest } from "../src/resilience"
 import { commandForRelayCapabilities } from "../src/useRelay"
 
 describe("bad network helpers", () => {
@@ -14,6 +14,36 @@ describe("bad network helpers", () => {
     expect(connectionLabel("online", 1, true)).toBe("Unstable")
     expect(hasSequenceGap(4, 6)).toBe(true)
     expect(hasSequenceGap(4, 5)).toBe(false)
+  })
+
+  it("replaces unhealthy transports after resumptions without replacing brief open sockets", () => {
+    expect(shouldReplaceTransportOnResume({ socketOpen: false, now: 10_000 })).toBe(true)
+    expect(shouldReplaceTransportOnResume({ socketOpen: true, now: 10_000, hiddenAt: 6_000, lastTransportActivity: 5_000 })).toBe(false)
+    expect(shouldReplaceTransportOnResume({ socketOpen: true, now: 10_000, hiddenAt: 5_000 })).toBe(true)
+    expect(shouldReplaceTransportOnResume({ socketOpen: true, now: 10_000, persisted: true, lastTransportActivity: 9_999 })).toBe(false)
+    expect(shouldReplaceTransportOnResume({ socketOpen: true, now: 10_000, persisted: true, lastTransportActivity: 5_000 })).toBe(true)
+    expect(shouldReplaceTransportOnResume({ socketOpen: true, now: 10_000, online: true, lastTransportActivity: 9_999 })).toBe(true)
+    expect(shouldReplaceTransportOnResume({ socketOpen: true, now: 10_000, lastTransportActivity: 5_000 })).toBe(false)
+    expect(shouldReplaceTransportOnResume({ socketOpen: true, now: 10_000, hiddenAt: 9_999, lastTransportActivity: 9_999 })).toBe(false)
+    expect(shouldReconnectTransportOnResume(true, { socketOpen: false, now: 10_000, online: true })).toBe(false)
+    expect(shouldReconnectTransportOnResume(true, { socketOpen: true, now: 10_000, persisted: true, lastTransportActivity: 5_000 })).toBe(false)
+    expect(isTransportActivityStale(5_000, 10_000)).toBe(true)
+    expect(isTransportActivityStale(9_999, 10_000)).toBe(false)
+  })
+
+  it("expires only an unauthenticated watchdog that owns the socket generation", () => {
+    expect(shouldExpireHandshakeWatchdog(3, 3, false)).toBe(true)
+    expect(shouldExpireHandshakeWatchdog(3, 4, false)).toBe(false)
+    expect(shouldExpireHandshakeWatchdog(3, 3, true)).toBe(false)
+  })
+
+  it("formats exact modal connection timing", () => {
+    expect(exactConnectionTime(10_000, 10_000)).toBe("0 ms ago")
+    expect(exactConnectionTime(9_001, 10_000)).toBe("999 ms ago")
+    expect(exactConnectionTime(9_000, 10_000)).toBe("1 second ago")
+    expect(exactConnectionTime(-49_000, 10_000)).toBe("59 seconds ago")
+    expect(exactConnectionTime(-51_000, 10_000)).toBe("61 seconds ago")
+    expect(exactConnectionTime(11_000, 10_000)).toBe("0 ms ago")
   })
 
   it("merges chunk retries and optimistic messages by stable id", () => {
@@ -99,7 +129,7 @@ describe("bad network helpers", () => {
     expect(validManifest({ manifest: true, ids: ["same", "same"], total: 2 })).toBeUndefined()
   })
 
-  it("marks interrupted prompt acknowledgement as uncertain", () => {
+  it("classifies state-changing interruptions as uncertain delivery", () => {
     expect(promptDeliveryState("Connection interrupted")).toBe("uncertain")
     expect(promptDeliveryState("OpenCode request failed")).toBe("failed")
     expect(promptDeliveryState("The workspace relay disconnected")).toBe("uncertain")
