@@ -21,7 +21,7 @@ import {
 import { primaryAgentSummaries } from "./agents.js"
 import { workspaceGitDiff, workspaceGitPatch } from "./gitChanges.js"
 import { readConfig, type DeviceRecord, type RelayConfig } from "./config.js"
-import { completionNotification, completionSessionForEvent, shouldNotifySessionCompletion, type CompletionState } from "./notifications.js"
+import { completionNotification, completionSessionForEvent, questionNotification, shouldNotifySessionCompletion, type CompletionState } from "./notifications.js"
 import {
   consumeEnrollment,
   commandChangesState,
@@ -558,15 +558,13 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
       if (!questionId || !sessionId) return
       const questions = Array.isArray(properties.questions) ? properties.questions : []
       const first = questions[0] as JsonObject | undefined
-      await broadcast({
-        type: "notification.show",
-        title: "OpenCode has a question",
-        body: typeof first?.question === "string" ? first.question : "Open the app to answer",
-        tag: `${relayId}:question-${questionId}`,
-        actions: [],
-        openApp: true,
-        data: { sessionId, questionId, workspaceRelayId: relayId, workspaceId },
-      }, "push")
+      await broadcast(questionNotification(
+        relayId,
+        workspaceId,
+        questionId,
+        sessionId,
+        typeof first?.question === "string" ? first.question : undefined,
+      ), "push")
     } else if (["question.replied", "question.rejected"].includes(eventType)) {
       const questionId = String(properties.requestID ?? properties.questionID ?? "")
       const sessionId = String(properties.sessionID ?? "")

@@ -49,6 +49,7 @@ import { connectionLabel, exactConnectionTime, mergeByMessageId, promptDeliveryS
 import { commitManifestForRefresh, emptyMessageCache, messageInventory, migrateMessageCache, replaceCanonicalMessages, stageMessage, visibleCachedMessages, type MessageCache } from "./messageCache"
 import { clearSubmittedDraft, resourceArray, retainedSessionState, type SessionResourceRevisions } from "./sessionState"
 import { SubagentActivity } from "./SubagentActivity"
+import { resolveAgentColor } from "./agentColor"
 
 type MessagePart = {
   type: string
@@ -962,7 +963,10 @@ function SessionDetail({
   const diffGenerationRef = useRef(0)
   const persistenceRef = useRef<Promise<void>>(Promise.resolve())
   const selectedAgent = agents.find((item) => item.name === agent)
-  const selectedAgentStyle = { "--agent-color": selectedAgent?.color ?? "var(--cyan)" } as CSSProperties
+  const agentColors = useMemo(() => agents.map((item, index) => resolveAgentColor(item.color, index)), [agents])
+  const selectedAgentIndex = agents.findIndex((item) => item.name === agent)
+  const selectedAgentColor = resolveAgentColor(selectedAgent?.color, selectedAgentIndex >= 0 ? selectedAgentIndex : 0)
+  const selectedAgentStyle = { "--agent-color": selectedAgentColor } as CSSProperties
   const visibleSubagentEntries = useMemo(() => visibleSubagents(subagents), [subagents])
   const showComposer = tab !== "subagents"
   const persistMessageCache = useCallback((cache: MessageCache<SessionMessage>) => {
@@ -1292,17 +1296,17 @@ function SessionDetail({
             </button>
             {agentMenuOpen && (
               <div className="agent-menu" role="listbox">
-                {agents.map((item) => (
+                {agents.map((item, index) => (
                   <button
                     type="button"
                     role="option"
                     aria-selected={item.name === agent}
                     className={item.name === agent ? "selected" : ""}
-                    style={{ "--agent-color": item.color ?? "var(--cyan)" } as CSSProperties}
+                    style={{ "--agent-color": agentColors[index] } as CSSProperties}
                     key={item.name}
                     onClick={() => { setAgent(item.name); setAgentMenuOpen(false) }}
                   >
-                    <span className="agent-color" style={{ background: item.color ?? "var(--cyan)" }} />
+                    <span className="agent-color" style={{ background: agentColors[index] }} />
                     <span><strong>{item.name}</strong>{item.description && <small>{item.description}</small>}</span>
                     {item.name === agent && <Check size={14} />}
                   </button>
@@ -1477,7 +1481,7 @@ function QuestionPanel({ requestInfo, request, onError }: { requestInfo: Questio
 
   return (
     <section className={`question-panel ${expanded ? "" : "collapsed"}`}>
-      <button className="question-title" aria-expanded={expanded} onClick={() => setExpanded((current) => !current)}><CircleHelp size={20} /><strong>OpenCode needs input</strong><ChevronDown size={18} /></button>
+      <button className="question-title" aria-expanded={expanded} onClick={() => setExpanded((current) => !current)}><CircleHelp size={20} /><strong>Question</strong><ChevronDown size={18} /></button>
       {expanded && <>
         {requestInfo.questions.map((question, questionIndex) => (
           <div className="question-block" key={`${requestInfo.id}-${questionIndex}`}>

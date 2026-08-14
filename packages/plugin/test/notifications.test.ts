@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { completionNotification, completionSessionForEvent, shouldNotifySessionCompletion, type CompletionState } from "../src/notifications"
+import { completionNotification, completionSessionForEvent, questionNotification, shouldNotifySessionCompletion, type CompletionState } from "../src/notifications"
 
 const state = (): CompletionState => ({ busy: new Set(), notified: new Set() })
 
@@ -44,5 +44,23 @@ describe("completionNotification", () => {
     expect(shouldNotifySessionCompletion({})).toBe(true)
     expect(shouldNotifySessionCompletion({ parentID: "main-session" })).toBe(false)
     expect(shouldNotifySessionCompletion(undefined)).toBe(false)
+  })
+})
+
+describe("questionNotification", () => {
+  it("opens the question with its prompt", () => {
+    expect(questionNotification("relay-1", "workspace-1", "question-1", "session-1", "Choose a migration path")).toEqual({
+      type: "notification.show",
+      title: "Question",
+      body: "Choose a migration path",
+      tag: "relay-1:question-question-1",
+      actions: [],
+      openApp: true,
+      data: { sessionId: "session-1", questionId: "question-1", workspaceRelayId: "relay-1", workspaceId: "workspace-1" },
+    })
+  })
+
+  it("uses an actionable fallback body", () => {
+    expect(questionNotification("relay-1", "workspace-1", "question-1", "session-1").body).toBe("Open the app to answer")
   })
 })

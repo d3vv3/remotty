@@ -41,5 +41,21 @@ export const completionNotification = (relayId: string, sessionId: string, sessi
   data: { sessionId, workspaceRelayId: relayId, ...(workspaceId ? { workspaceId } : {}) },
 })
 
+export const questionNotification = (
+  relayId: string,
+  workspaceId: string,
+  questionId: string,
+  sessionId: string,
+  question?: string,
+) => ({
+  type: "notification.show" as const,
+  title: "Question",
+  body: question ?? "Open the app to answer",
+  tag: `${relayId}:question-${questionId}`,
+  actions: [],
+  openApp: true,
+  data: { sessionId, questionId, workspaceRelayId: relayId, workspaceId },
+})
+
 export const shouldNotifySessionCompletion = (session: { parentID?: unknown } | undefined) =>
   Boolean(session && (typeof session.parentID !== "string" || !session.parentID))

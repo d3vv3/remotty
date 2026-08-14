@@ -34,6 +34,7 @@ import { acceptsRelayPosition, aggregateRelaySlices, bumpResourceRevisions, bump
 import { addChunk, assembledMessages, completeChunks, createChunkAssembly, exactManifestMessages, HANDSHAKE_TIMEOUT_MS, hasSequenceGap, healthSummary, orderByManifest, readOnlyCommand, reconnectDelay, requestInactivityMs, retryPlan, shouldExpireHandshakeWatchdog, shouldReconnectTransportOnResume, validManifest, type ChunkAssembly } from "./resilience"
 import { verifyDeltaSnapshot } from "./messageCache"
 import { retainedSessionState } from "./sessionState"
+import { serializePushSubscription } from "./pushSubscription"
 
 type PendingRequest = {
   relayId: string
@@ -124,7 +125,7 @@ const registerPush = async (identity: DeviceIdentity) => {
   const response = await fetch(endpoint(identity, "push/subscribe"), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(await signedPushRequest(identity, "subscribe", { subscription: subscription.toJSON() })),
+    body: JSON.stringify(await signedPushRequest(identity, "subscribe", { subscription: serializePushSubscription(subscription) })),
   })
   if (!response.ok) throw new Error("The broker rejected the Push subscription.")
 }

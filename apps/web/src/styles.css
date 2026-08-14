@@ -24,6 +24,13 @@
   --amber: #ffbd4a;
   --red: #ff4d58;
   --green: #73e08c;
+  --opencode-agent-secondary: #5c9cf5;
+  --opencode-agent-accent: #9d7cd8;
+  --opencode-agent-success: #7fd88f;
+  --opencode-agent-warning: #f5a742;
+  --opencode-agent-primary: #fab283;
+  --opencode-agent-error: #e06c75;
+  --opencode-agent-info: #56b6c2;
   --mono: "Iosevka", "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
 }
 
