@@ -188,7 +188,10 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .detail-content { min-height: 0; flex: 1; overflow: auto; scrollbar-color: var(--line-bright) transparent; }
 .detail-content.subagent-content { min-height: 0; overflow: hidden; }
 .subagent-view { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(190px, 280px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
-.subagent-list, .subagent-messages { min-height: 0; overflow-y: auto; }
+.subagent-list { min-height: 0; overflow-y: auto; }
+.subagent-messages { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.subagent-messages > .work-strip { flex: 0 0 auto; }
+.subagent-message-scroll { min-height: 0; flex: 1 1 auto; overflow-y: auto; scrollbar-color: var(--line-bright) transparent; }
 .subagent-list { border-right: 1px solid var(--line); }
 .subagent-list button { width: 100%; min-height: 72px; display: grid; grid-template-columns: 10px minmax(0, 1fr); gap: 8px; padding: 12px; color: var(--ink); text-align: left; border: 0; border-bottom: 1px solid var(--line); background: transparent; }
 .subagent-list button.selected { background: var(--raised); }
@@ -197,7 +200,7 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 @media (max-width: 640px) { .subagent-view { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); } .subagent-list { max-height: 132px; border-right: 0; border-bottom: 1px solid var(--line); } }
 
 .message-list { width: 100%; min-width: 0; max-width: 920px; margin: 0 auto; padding: 24px 30px 48px; }
-.subagent-messages > .message-list { width: 100%; min-width: 0; overflow: visible; }
+.subagent-message-scroll > .message-list { width: 100%; min-width: 0; overflow: visible; }
 .message { width: 100%; min-width: 0; max-width: 100%; display: flex; margin: 0 0 22px; }
 .message-frame { width: 100%; min-width: 0; max-width: 100%; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 13px; }
 .message-sigil { width: 31px; height: 31px; display: grid; place-items: center; border-radius: 4px; }
