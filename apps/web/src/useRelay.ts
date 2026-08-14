@@ -30,9 +30,10 @@ import {
   saveCachedResource,
   type DeviceIdentity,
 } from "./deviceStore"
-import { acceptsRelayPosition, aggregateRelaySlices, bumpSessionRevisions, commandRelayId, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, type RelaySlice } from "./relayState"
+import { acceptsRelayPosition, aggregateRelaySlices, bumpResourceRevisions, bumpSessionRevisions, commandRelayId, normalizeRelaySlice, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, type RelaySlice, type ResourceRevisions } from "./relayState"
 import { addChunk, assembledMessages, completeChunks, createChunkAssembly, exactManifestMessages, hasSequenceGap, healthSummary, orderByManifest, readOnlyCommand, reconnectDelay, requestInactivityMs, retryPlan, validManifest, type ChunkAssembly } from "./resilience"
 import { verifyDeltaSnapshot } from "./messageCache"
+import { retainedSessionState } from "./sessionState"
 
 type PendingRequest = {
   relayId: string
@@ -46,6 +47,25 @@ type PendingRequest = {
   progress?: (messages: unknown[]) => void | Promise<void>
   manifestIds?: string[]
   deltaManifest?: MessageDeltaManifest
+  progressedMessageIds: Set<string>
+  verifiedMessageIds: Set<string>
+  progressChain: Promise<void>
+}
+
+/** Returns only records this request has not already delivered to its progress consumer. */
+export const newlyCompletedMessages = (seen: Set<string>, verified: ReadonlySet<string>, messages: unknown[]) => messages.filter((message) => {
+  const id = (message as { info?: { id?: unknown } }).info?.id
+  if (typeof id !== "string" || !verified.has(id) || seen.has(id)) return false
+  seen.add(id)
+  return true
+})
+
+/** Preserve callback order without blocking encrypted frame receipt. */
+export const queueProgress = (pending: Pick<PendingRequest, "progress" | "progressChain">, messages: unknown[], onFailure?: (cause: unknown) => void) => {
+  if (!messages.length || !pending.progress) return pending.progressChain
+  pending.progressChain = pending.progressChain.then(() => pending.progress?.(messages))
+  void pending.progressChain.catch((cause) => { onFailure?.(cause) })
+  return pending.progressChain
 }
 
 export type RelayRequest = ClientCommand extends infer Command
@@ -162,7 +182,10 @@ export function useRelay(initialBundle?: PairingBundle) {
   const [agents, setAgents] = useState<ReturnType<typeof aggregateRelaySlices>["agents"]>([])
   const [permissions, setPermissions] = useState<ReturnType<typeof aggregateRelaySlices>["permissions"]>([])
   const [questions, setQuestions] = useState<ReturnType<typeof aggregateRelaySlices>["questions"]>([])
+  const [subagents, setSubagents] = useState<ReturnType<typeof aggregateRelaySlices>["subagents"]>([])
+  const [subagentsByRoot, setSubagentsByRoot] = useState<ReturnType<typeof aggregateRelaySlices>["subagentsByRoot"]>(new Map())
   const [sessionRevisions, setSessionRevisions] = useState<Record<string, number>>({})
+  const [resourceRevisions, setResourceRevisions] = useState<ResourceRevisions>({})
   const [notificationsEnabled, setNotificationsEnabled] = useState(
     () => localStorage.getItem("remotty-notifications") === "enabled" &&
       typeof Notification !== "undefined" && Notification.permission === "granted",
@@ -196,6 +219,8 @@ export function useRelay(initialBundle?: PairingBundle) {
     setAgents(state.agents)
     setPermissions(state.permissions)
     setQuestions(state.questions)
+    setSubagents(state.subagents)
+    setSubagentsByRoot(state.subagentsByRoot)
   }, [])
 
   const rememberMessage = useCallback((messageId: string) => {
@@ -232,7 +257,7 @@ export function useRelay(initialBundle?: PairingBundle) {
         pendingRef.current.delete(requestId)
         reject(new Error("The relay did not respond."))
       }, requestInactivityMs(command.type))
-      pendingRef.current.set(requestId, { relayId, resolve, reject, timeout, command, startedAt: Date.now(), chunks: createChunkAssembly(), generation, progress })
+      pendingRef.current.set(requestId, { relayId, resolve, reject, timeout, command, startedAt: Date.now(), chunks: createChunkAssembly(), generation, progress, progressedMessageIds: new Set(), verifiedMessageIds: new Set(), progressChain: Promise.resolve() })
       void sendCommandFrame(identity, relayId, { ...command, requestId } as ClientCommand).catch((cause) => {
         window.clearTimeout(timeout)
         pendingRef.current.delete(requestId)
@@ -272,14 +297,19 @@ export function useRelay(initialBundle?: PairingBundle) {
     const info = properties.info as Record<string, unknown> | undefined
     const part = properties.part as Record<string, unknown> | undefined
     const sessionID = String(properties.sessionID ?? info?.sessionID ?? part?.sessionID ?? "")
-    if (sessionID && ["message.updated", "message.part.updated", "message.part.delta", "session.diff", "todo.updated"].includes(event.type)) {
+    const resource = ["message.updated", "message.part.updated", "message.part.delta"].includes(event.type) ? "messages"
+      : event.type === "todo.updated" ? "todos" : event.type === "session.diff" ? "diffs"
+      : ["session.idle", "session.status", "session.error"].includes(event.type) ? "messages" : undefined
+    if (sessionID && resource) {
       const revisionKey = sessionRevisionKey(slice.relay, sessionID)
       setSessionRevisions((current) => ({ ...current, [revisionKey]: (current[revisionKey] ?? 0) + 1 }))
+      setResourceRevisions((current) => bumpResourceRevisions(current, slice.relay, [sessionID], [resource]))
     }
     if (["session.status", "session.idle", "session.error"].includes(event.type)) {
       const status = event.type === "session.idle" ? "idle" : event.type === "session.error" ? "error"
         : (properties.status as { type?: SessionSummary["status"] })?.type
       slice.sessions = slice.sessions.map((session) => session.id === sessionID && status ? { ...session, status } : session)
+      slice.subagents = slice.subagents.map((session) => session.id === sessionID && status ? { ...session, status } : session)
     }
     if (["permission.updated", "permission.asked", "permission.v2.asked"].includes(event.type)) {
       const parsed = permissionRequestSchema.safeParse(properties)
@@ -299,7 +329,7 @@ export function useRelay(initialBundle?: PairingBundle) {
       slice.questions = slice.questions.filter((item) => item.id !== questionId)
       if (questionId) closeNotification(`${relayId}:question-${questionId}`)
     }
-    publishSlices()
+    if (["session.status", "session.idle", "session.error", "permission.updated", "permission.asked", "permission.v2.asked", "permission.replied", "permission.v2.replied", "question.asked", "question.replied", "question.rejected"].includes(event.type)) publishSlices()
   }, [publishSlices, requestSnapshots])
 
   const handleEncryptedFrame = useCallback(async (frameValue: unknown, epoch: number) => {
@@ -374,6 +404,9 @@ export function useRelay(initialBundle?: PairingBundle) {
           pending.reject(new Error("This browser device was revoked."))
         }
         pendingRef.current.clear()
+        retainedSessionState.clear()
+        setSessionRevisions({})
+        setResourceRevisions({})
         publishSlices()
         history.replaceState({}, "", "/pair")
         setConnection("disconnected")
@@ -385,7 +418,7 @@ export function useRelay(initialBundle?: PairingBundle) {
         const current = slicesRef.current.get(frame.sender)
         if (!acceptsRelayPosition(current, data.relay, data.sequence)) return
         slicesRef.current.set(frame.sender, current ? { ...current, relay: data.relay } : {
-          relay: data.relay, sessions: [], agents: [], permissions: [], questions: [], sequence: data.sequence,
+          relay: data.relay, sessions: [], subagents: [], agents: [], permissions: [], questions: [], sequence: data.sequence,
         })
         if (data.relay.workspaceId || data.relay.workspace) {
           const superseded: string[] = []
@@ -403,6 +436,7 @@ export function useRelay(initialBundle?: PairingBundle) {
         slicesRef.current.set(frame.sender, {
           relay: data.relay,
           sessions: data.sessions,
+          subagents: data.subagents,
           agents: data.agents,
           permissions: data.permissions,
           questions: data.questions,
@@ -416,12 +450,13 @@ export function useRelay(initialBundle?: PairingBundle) {
           if (superseded.length) setRelayHealth((current) => { const next = { ...current }; for (const id of superseded) delete next[id]; return next })
         }
         void saveCachedResource(identity, stableWorkspaceKey(data.relay), "snapshot", {
-          relay: data.relay, sessions: data.sessions, agents: data.agents, permissions: data.permissions, questions: data.questions, sequence: data.sequence,
+          relay: data.relay, sessions: data.sessions, subagents: data.subagents, agents: data.agents, permissions: data.permissions, questions: data.questions, sequence: data.sequence,
         })
         setLastSyncedAt(Date.now())
         recoveryInFlightRef.current.delete(frame.sender)
         if (snapshotInvalidationRef.current.delete(frame.sender)) {
           setSessionRevisions((current) => bumpSessionRevisions(current, data.relay, data.sessions.map((session) => session.id)))
+          setResourceRevisions((current) => bumpResourceRevisions(current, data.relay, [...data.sessions, ...data.subagents].map((session) => session.id), ["messages", "todos", "diffs"]))
         }
         publishSlices()
       } else if (data.type === "relay.event") {
@@ -434,8 +469,18 @@ export function useRelay(initialBundle?: PairingBundle) {
         pending.chunks.total = data.manifest.chunkCount
         if (data.manifest.chunkCount === 0) {
           window.clearTimeout(pending.timeout)
-          pendingRef.current.delete(data.requestId)
-          pending.resolve({ deltaManifest: data.manifest, messages: [] })
+          pending.timeout = window.setTimeout(() => { pendingRef.current.delete(data.requestId); pending.reject(new Error("Message progress timed out.")) }, requestInactivityMs(pending.command.type))
+          void pending.progressChain.then(() => {
+            if (pendingRef.current.get(data.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
+            window.clearTimeout(pending.timeout)
+            pendingRef.current.delete(data.requestId)
+            pending.resolve({ deltaManifest: data.manifest, messages: [] })
+          }).catch((cause) => {
+            if (pendingRef.current.get(data.requestId) !== pending) return
+            window.clearTimeout(pending.timeout)
+            pendingRef.current.delete(data.requestId)
+            pending.reject(cause instanceof Error ? cause : new Error(String(cause)))
+          })
           return
         }
         window.clearTimeout(pending.timeout)
@@ -452,6 +497,7 @@ export function useRelay(initialBundle?: PairingBundle) {
           const actual = await canonicalJsonFingerprint(canonicalMessageValue(jsonValue(record.message)))
           if (pendingRef.current.get(chunk.requestId) !== pending || pending.generation !== socketGenerationRef.current || actual !== record.fingerprint) return
           records.push(record.message)
+          pending.verifiedMessageIds.add(record.id)
         }
         const fragment = chunk.fragments[0]
         if (chunk.fragments.length > 1 || (fragment && (!upserts.has(fragment.messageId) || expected.get(fragment.messageId) !== fragment.fingerprint))) return
@@ -459,7 +505,21 @@ export function useRelay(initialBundle?: PairingBundle) {
         window.clearTimeout(pending.timeout)
         pending.timeout = window.setTimeout(() => { pendingRef.current.delete(chunk.requestId); pending.reject(new Error("The relay stopped sending messages.")) }, requestInactivityMs(pending.command.type))
         const messages = orderByManifest(assembledMessages(pending.chunks), pending.deltaManifest.manifest.map((entry) => entry.id))
-        if (messages.length) await pending.progress?.(messages)
+        for (const message of messages) {
+          const id = (message as { info?: { id?: unknown } }).info?.id
+          if (typeof id !== "string" || pending.verifiedMessageIds.has(id)) continue
+          const fingerprint = expected.get(id)
+          if (!fingerprint || await canonicalJsonFingerprint(canonicalMessageValue(jsonValue(message))) !== fingerprint) return
+          if (pendingRef.current.get(chunk.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
+          pending.verifiedMessageIds.add(id)
+        }
+        const progress = newlyCompletedMessages(pending.progressedMessageIds, pending.verifiedMessageIds, messages)
+        queueProgress(pending, progress, (cause) => {
+          if (pendingRef.current.get(chunk.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
+          window.clearTimeout(pending.timeout)
+          pendingRef.current.delete(chunk.requestId)
+          pending.reject(cause instanceof Error ? cause : new Error(String(cause)))
+        })
         if (pendingRef.current.get(chunk.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
         if (completeChunks(pending.chunks)) {
           const messages = assembledMessages(pending.chunks)
@@ -475,15 +535,23 @@ export function useRelay(initialBundle?: PairingBundle) {
             if (!message || !fingerprint) {
               window.clearTimeout(pending.timeout); pendingRef.current.delete(chunk.requestId); pending.reject(new Error("The relay sent an incomplete delta transfer.")); return
             }
-            const actual = await canonicalJsonFingerprint(canonicalMessageValue(jsonValue(message)))
-            if (pendingRef.current.get(chunk.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
-            if (actual !== fingerprint) {
+            if (!pending.verifiedMessageIds.has(id) && await canonicalJsonFingerprint(canonicalMessageValue(jsonValue(message))) !== fingerprint) {
               window.clearTimeout(pending.timeout); pendingRef.current.delete(chunk.requestId); pending.reject(new Error("The relay sent an invalid delta transfer.")); return
             }
+            if (pendingRef.current.get(chunk.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
+            pending.verifiedMessageIds.add(id)
           }
-          window.clearTimeout(pending.timeout)
-          pendingRef.current.delete(chunk.requestId)
-          pending.resolve({ deltaManifest: pending.deltaManifest, messages })
+          void pending.progressChain.then(() => {
+            if (pendingRef.current.get(chunk.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
+            window.clearTimeout(pending.timeout)
+            pendingRef.current.delete(chunk.requestId)
+            pending.resolve({ deltaManifest: pending.deltaManifest, messages })
+          }).catch((cause) => {
+            if (pendingRef.current.get(chunk.requestId) !== pending) return
+            window.clearTimeout(pending.timeout)
+            pendingRef.current.delete(chunk.requestId)
+            pending.reject(cause instanceof Error ? cause : new Error(String(cause)))
+          })
         }
       } else if (data.type === "rpc.result") {
         const pending = pendingRef.current.get(data.requestId)
@@ -526,14 +594,32 @@ export function useRelay(initialBundle?: PairingBundle) {
         window.clearTimeout(pending.timeout)
         pending.timeout = window.setTimeout(() => { pendingRef.current.delete(data.requestId); pending.reject(new Error("The relay stopped sending messages.")) }, requestInactivityMs(pending.command.type))
         const partial = assembledMessages(pending.chunks)
-        if (partial.length) await pending.progress?.(pending.manifestIds ? orderByManifest(partial, pending.manifestIds) : partial)
-        if (completeChunks(pending.chunks)) {
+        for (const message of partial) {
+          const id = (message as { info?: { id?: unknown } }).info?.id
+          if (typeof id === "string") pending.verifiedMessageIds.add(id)
+        }
+        const progress = newlyCompletedMessages(pending.progressedMessageIds, pending.verifiedMessageIds, pending.manifestIds ? orderByManifest(partial, pending.manifestIds) : partial)
+        queueProgress(pending, progress, (cause) => {
+          if (pendingRef.current.get(data.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
           window.clearTimeout(pending.timeout)
           pendingRef.current.delete(data.requestId)
+          pending.reject(cause instanceof Error ? cause : new Error(String(cause)))
+        })
+        if (completeChunks(pending.chunks)) {
           const messages = assembledMessages(pending.chunks)
           const ordered = pending.manifestIds ? exactManifestMessages(messages, pending.manifestIds) : messages
-          if (!ordered) { pending.reject(new Error("The relay sent an incomplete message transfer.")); return }
-          pending.resolve(ordered)
+          if (!ordered) { pendingRef.current.delete(data.requestId); pending.reject(new Error("The relay sent an incomplete message transfer.")); return }
+          void pending.progressChain.then(() => {
+            if (pendingRef.current.get(data.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
+            window.clearTimeout(pending.timeout)
+            pendingRef.current.delete(data.requestId)
+            pending.resolve(ordered)
+          }).catch((cause) => {
+            if (pendingRef.current.get(data.requestId) !== pending) return
+            window.clearTimeout(pending.timeout)
+            pendingRef.current.delete(data.requestId)
+            pending.reject(cause instanceof Error ? cause : new Error(String(cause)))
+          })
         }
       }
     } catch (cause) {
@@ -741,6 +827,9 @@ export function useRelay(initialBundle?: PairingBundle) {
     snapshotInvalidationRef.current.clear()
     slicesRef.current.clear()
     sessionRelaysRef.current.clear()
+    retainedSessionState.clear()
+    setSessionRevisions({})
+    setResourceRevisions({})
     publishSlices()
     setConnection("disconnected")
     setServiceConnected(false)
@@ -840,7 +929,7 @@ export function useRelay(initialBundle?: PairingBundle) {
       if (identity) {
         const cached = await loadCachedResources<RelaySlice>(identity, "snapshot")
         if (!cancelled) {
-          for (const record of cached) slicesRef.current.set(record.value.relay.id, record.value)
+          for (const record of cached) slicesRef.current.set(record.value.relay.id, normalizeRelaySlice(record.value))
           publishSlices()
           connectIdentity(identity)
         }
@@ -916,7 +1005,10 @@ export function useRelay(initialBundle?: PairingBundle) {
     agents,
     permissions,
     questions,
+    subagents,
+    subagentsByRoot,
     sessionRevisions,
+    resourceRevisions,
     notificationsEnabled,
     error,
     serviceConnected,

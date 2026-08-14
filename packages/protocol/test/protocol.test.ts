@@ -121,7 +121,7 @@ describe("relay protocol", () => {
         sessions: [],
         questions: [],
       }),
-    ).toMatchObject({ type: "relay.snapshot" })
+    ).toMatchObject({ type: "relay.snapshot", subagents: [] })
   })
 
   it("normalizes a detached workspace branch", () => {

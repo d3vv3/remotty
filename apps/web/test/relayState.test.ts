@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { acceptsRelayPosition, aggregateRelaySlices, bumpSessionRevisions, commandRelayId, relaySupportsSessionCreate, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, type RelaySlice } from "../src/relayState"
+import { acceptsRelayPosition, aggregateRelaySlices, bumpSessionRevisions, commandRelayId, normalizeRelaySlice, relaySupportsSessionCreate, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, workspaceSessionKey, type RelaySlice } from "../src/relayState"
 
 const slice = (id: string, sessionId: string, updatedAt: number): RelaySlice => ({
   relay: { id, name: id, hostname: "host", platform: "linux", arch: "x64", workspace: `/${id}` },
@@ -15,7 +15,8 @@ const slice = (id: string, sessionId: string, updatedAt: number): RelaySlice => 
   }],
   agents: [{ name: "build", mode: "primary" }],
   permissions: [],
-  questions: [],
+    questions: [],
+    subagents: [],
 })
 
 describe("relay snapshot aggregation and routing", () => {
@@ -79,8 +80,38 @@ describe("relay snapshot aggregation and routing", () => {
     expect(state.sessions).toMatchObject([{ id: "session-a", status: "idle", workspaceRelayId: "connected" }])
     expect(state.permissions.map((permission) => permission.id)).toEqual(["permission-a"])
     expect(state.questions).toEqual([])
-    expect(state.sessionRelays).toEqual(new Map([["session-a", "connected"]]))
+    expect(state.sessionRelays.get("session-a")).toBe("connected")
     expect(commandRelayId({ type: "session.messages", sessionId: "session-a" }, ["connected"], state.sessionRelays)).toBe("connected")
+  })
+
+  it("keeps child summaries out of the main list while routing their commands", () => {
+    const current = slice("relay-a", "root", 1)
+    current.relay.capabilities = { subagents: 1 }
+    current.subagents = [{ ...current.sessions[0]!, id: "child", parentSessionId: "root", rootSessionId: "root" }]
+    const state = aggregateRelaySlices(new Map([["relay-a", current]]))
+    expect(state.sessions.map((session) => session.id)).toEqual(["root"])
+    expect(state.subagentsByRoot.get(workspaceSessionKey(stableWorkspaceKey(current.relay), "root"))?.map((session) => session.id)).toEqual(["child"])
+    expect(commandRelayId({ type: "session.messages", sessionId: "child" }, ["relay-a"], state.sessionRelays)).toBe("relay-a")
+  })
+
+  it("keeps same-id subagents scoped to their workspace root", () => {
+    const first = slice("first", "root", 1)
+    const second = slice("second", "root", 2)
+    first.relay.workspaceId = "workspace-one"
+    second.relay.workspaceId = "workspace-two"
+    first.subagents = [{ ...first.sessions[0]!, id: "child", parentSessionId: "root", rootSessionId: "root" }]
+    second.subagents = [{ ...second.sessions[0]!, id: "child", parentSessionId: "root", rootSessionId: "root" }]
+    const state = aggregateRelaySlices(new Map([["first", first], ["second", second]]))
+    expect(state.subagentsByRoot.get("workspace-one:root")?.[0]?.workspaceRelayId).toBe("first")
+    expect(state.subagentsByRoot.get("workspace-two:root")?.[0]?.workspaceRelayId).toBe("second")
+    expect(commandRelayId({ type: "session.messages", sessionId: "child", workspaceId: "workspace-one" }, ["first", "second"], state.sessionRelays)).toBe("first")
+    expect(commandRelayId({ type: "session.messages", sessionId: "child", workspaceId: "workspace-two" }, ["first", "second"], state.sessionRelays)).toBe("second")
+  })
+
+  it("normalizes legacy cached slices without subagents", () => {
+    const legacy = slice("relay-a", "root", 1)
+    const { subagents: _subagents, ...withoutSubagents } = legacy
+    expect(normalizeRelaySlice(withoutSubagents).subagents).toEqual([])
   })
 
   it("rejects rollback within a relay stream and from an older relay instance", () => {

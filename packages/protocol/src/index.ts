@@ -20,6 +20,11 @@ export const sessionSummarySchema = z.object({
   files: z.number().default(0),
 })
 export type SessionSummary = z.infer<typeof sessionSummarySchema>
+export const subagentSummarySchema = sessionSummarySchema.extend({
+  parentSessionId: z.string(),
+  rootSessionId: z.string(),
+})
+export type SubagentSummary = z.infer<typeof subagentSummarySchema>
 
 export const agentSummarySchema = z.object({
   name: z.string(),
@@ -52,7 +57,7 @@ export const relayInfoSchema = z.object({
   instanceId: z.string().optional(),
   instanceStartedAt: z.number().int().nonnegative().optional(),
   workspaceId: z.string().optional(),
-  capabilities: z.object({ ping: z.boolean().optional(), messageChunks: z.boolean().optional(), messageDelta: z.literal(1).optional(), promptMessageId: z.literal(1).optional(), relayPromptMessageId: z.literal(1).optional(), sessionCreate: z.literal(1).optional(), workspaceDiff: z.literal(1).optional() }).optional(),
+  capabilities: z.object({ ping: z.boolean().optional(), messageChunks: z.boolean().optional(), messageDelta: z.literal(1).optional(), promptMessageId: z.literal(1).optional(), relayPromptMessageId: z.literal(1).optional(), sessionCreate: z.literal(1).optional(), workspaceDiff: z.literal(1).optional(), subagents: z.literal(1).optional() }).optional(),
 })
 export type RelayInfo = z.infer<typeof relayInfoSchema>
 /** Largest canonical message body accepted by both relay planning and browser reassembly. */
@@ -124,6 +129,7 @@ export const relayMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("relay.snapshot"),
     relay: relayInfoSchema,
     sessions: z.array(sessionSummarySchema),
+    subagents: z.array(subagentSummarySchema).default([]),
     agents: z.array(agentSummarySchema).default([]),
     permissions: z.array(permissionRequestSchema).default([]),
     questions: z.array(questionRequestSchema).default([]),
@@ -245,6 +251,7 @@ export const brokerMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("broker.snapshot"),
     relays: z.array(relayInfoSchema),
     sessions: z.array(sessionSummarySchema),
+    subagents: z.array(subagentSummarySchema).default([]),
     agents: z.array(agentSummarySchema),
     permissions: z.array(permissionRequestSchema),
     questions: z.array(questionRequestSchema),

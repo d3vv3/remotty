@@ -70,6 +70,14 @@ describe("message sync chunks", () => {
     expect(await deltaSnapshotId(initial.manifest.manifest)).toBe(initial.manifest.snapshotId)
   })
 
+  it("packs many small changed records into bounded newest-first chunks", async () => {
+    const messages = Array.from({ length: 12 }, (_, index) => ({ info: { id: `m${index}` }, parts: [{ text: "x".repeat(30) }] }))
+    const plan = await messageDeltaPlan(messages, [], 1_000)
+    expect(plan.chunks.length).toBeLessThan(messages.length)
+    expect(plan.chunks[0]?.records.map((record) => record.id)).toContain("m11")
+    for (const chunk of plan.chunks) expect(Buffer.byteLength(JSON.stringify({ type: "session.messages.chunk", chunk: { ...chunk, requestId: "r".repeat(100) } }))).toBeLessThanOrEqual(1_000)
+  })
+
   it("seals a realistic large Unicode delta chunk well below the broker relay frame limit", async () => {
     const [senderSigning, senderEncryption, recipientEncryption] = await Promise.all([
       generateSigningKeyPair(), generateEncryptionKeyPair(), generateEncryptionKeyPair(),

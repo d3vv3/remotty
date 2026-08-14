@@ -32,7 +32,7 @@ import {
   validateEnrollmentFrame,
   workspaceRelayId,
 } from "./security.js"
-import { includeActiveSession, routeSessionRequests, selectOpenSessions, sessionDirectory } from "./sessions.js"
+import { includeActiveSession, routeSessionRequests, selectOpenSessions, selectSubagents, sessionDirectory } from "./sessions.js"
 import { messageDeltaPlan, messagePlan } from "./messageSync.js"
 import { openCodeMessageId } from "./messageId.js"
 import { promptBody } from "./prompt.js"
@@ -95,7 +95,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
     instanceId,
     instanceStartedAt,
     workspaceId,
-    capabilities: { ping: true, messageChunks: true, messageDelta: 1, relayPromptMessageId: 1, sessionCreate: 1, workspaceDiff: 1 },
+    capabilities: { ping: true, messageChunks: true, messageDelta: 1, relayPromptMessageId: 1, sessionCreate: 1, workspaceDiff: 1, subagents: 1 },
   }
 
   let socket: WebSocket | undefined
@@ -216,7 +216,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
       ...normalizePermissionRequests(standardPermissions, permissionWarning),
       ...normalizePermissionRequests(v2Permissions, permissionWarning),
     ].map((permission) => [permission.id, permission])).values()]
-    const summaries: SessionSummary[] = selected.sessions.map((session) => {
+    const summaryFor = (session: JsonObject): SessionSummary => {
       const summary = session.summary as JsonObject | undefined
       const time = session.time as JsonObject | undefined
       return {
@@ -231,11 +231,16 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
         deletions: Number(summary?.deletions ?? 0),
         files: Number(summary?.files ?? 0),
       }
-    })
+    }
+    const summaries: SessionSummary[] = selected.sessions.map(summaryFor)
+    const subagents = selectSubagents(selected.sessions, knownSessions).map((session) => ({
+      ...summaryFor(session), parentSessionId: session.parentSessionId, rootSessionId: session.rootSessionId,
+    }))
     const message: RelayMessage = {
       type: "relay.snapshot",
       relay,
       sessions: summaries,
+      subagents,
       agents: primaryAgentSummaries(agents),
       permissions: routeSessionRequests(permissions, knownSessions),
       questions: routeSessionRequests(questions, knownSessions),

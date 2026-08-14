@@ -44,9 +44,11 @@ import { CURRENT_IDENTITY_MARKER, loadCurrentIdentity } from "./deviceStore"
 import { useRelay } from "./useRelay"
 import { pairingBundleFrom, routeForEnrollment, routeForStoredIdentity } from "./pairing"
 import { NOTIFICATION_PROMPT_SEEN, shouldOfferPushNotifications } from "./notificationPrompt"
-import { relaySupportsSessionCreate, stableWorkspaceKey, type RoutedSession } from "./relayState"
+import { relaySupportsSessionCreate, stableWorkspaceKey, workspaceSessionKey, type RoutedSession, type RoutedSubagent } from "./relayState"
 import { connectionLabel, mergeByMessageId, promptDeliveryState } from "./resilience"
 import { commitManifestForRefresh, emptyMessageCache, messageInventory, migrateMessageCache, replaceCanonicalMessages, stageMessage, visibleCachedMessages, type MessageCache } from "./messageCache"
+import { clearSubmittedDraft, resourceArray, retainedSessionState, type SessionResourceRevisions } from "./sessionState"
+import { SubagentActivity } from "./SubagentActivity"
 
 type MessagePart = {
   type: string
@@ -172,12 +174,18 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
   const sessionGroups = useMemo(() => {
     const groups = new Map<string, RoutedSession[]>()
     for (const session of relayState.sessions) {
-      groups.set(session.directory, [...(groups.get(session.directory) ?? []), session])
+      const group = groups.get(session.directory)
+      if (group) group.push(session)
+      else groups.set(session.directory, [session])
     }
     return [...groups.entries()].sort(
       ([, left], [, right]) => Math.max(...right.map((session) => session.updatedAt)) - Math.max(...left.map((session) => session.updatedAt)),
     )
   }, [relayState.sessions])
+  const attentionKeys = useMemo(() => new Set([
+    ...relayState.permissions.map((item) => `${item.workspaceRelayId}:${item.sessionID}`),
+    ...relayState.questions.map((item) => `${item.workspaceRelayId}:${item.sessionID}`),
+  ]), [relayState.permissions, relayState.questions])
 
   useEffect(() => {
     if (!relayState.error) return
@@ -325,7 +333,7 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
                     key={sessionKey(session)}
                     session={session}
                     selected={sessionKey(session) === selectedKey}
-                    needsInput={relayState.permissions.some((item) => item.sessionID === session.id && item.workspaceRelayId === session.workspaceRelayId) || relayState.questions.some((item) => item.sessionID === session.id && item.workspaceRelayId === session.workspaceRelayId)}
+                    needsInput={attentionKeys.has(`${session.workspaceRelayId}:${session.id}`)}
                     offline={!relayState.isRelayConnected(session.workspaceRelayId)}
                     onSelect={() => { relayState.setError(undefined); setSelectedKey(sessionKey(session)) }}
                   />
@@ -350,8 +358,13 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
             <SessionDetail
               key={sessionKey(selected)}
               session={selected}
+              sessionKey={sessionKey(selected)}
               agents={relayState.agents.filter((agent) => agent.workspaceRelayId === selected.workspaceRelayId)}
               revision={relayState.sessionRevisions[sessionKey(selected)] ?? 0}
+              resourceRevisions={relayState.resourceRevisions[sessionKey(selected)] ?? { messages: 0, todos: 0, diffs: 0 }}
+              subagents={relayState.subagentsByRoot.get(sessionKey(selected)) ?? []}
+              subagentRevisions={Object.fromEntries((relayState.subagentsByRoot.get(sessionKey(selected)) ?? []).map((child) => [child.id, relayState.resourceRevisions[workspaceSessionKey(child.workspaceId, child.id)]?.messages ?? 0]))}
+              supportsSubagents={relayState.relays.find((relay) => relay.id === selected.workspaceRelayId)?.capabilities?.subagents === 1}
               permission={relayState.permissions.find((permission) => permission.sessionID === selected.id && permission.workspaceRelayId === selected.workspaceRelayId)}
               question={relayState.questions.find((question) => question.sessionID === selected.id && question.workspaceRelayId === selected.workspaceRelayId)}
               request={(command, progress) => relayState.request(command, selected.workspaceRelayId, progress as ((messages: unknown[]) => void) | undefined)}
@@ -786,12 +799,12 @@ function ConnectionDetails({ relayState, onClose }: { relayState: ReturnType<typ
     <div className="connection-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
       <section ref={dialogRef} className="connection-dialog" id="connection-status-dialog" role="dialog" aria-modal="true" aria-labelledby="connection-title">
         <header><h2 id="connection-title">Connection status</h2><button ref={closeRef} className="icon-button" title="Close" aria-label="Close connection status" onClick={onClose}><X size={18} /></button></header>
-        <div className="connection-row"><span>Remotty service</span><b>{relayState.serviceConnected ? "Connected" : "Unreachable"}</b></div>
+        <div className="connection-dialog-body"><div className="connection-row"><span>Remotty service</span><b>{relayState.serviceConnected ? "Connected" : "Unreachable"}</b></div>
         {relayState.relays.map((relay) => {
           const health = relayState.relayHealth[relay.id]
           return <div className="connection-row" key={relay.id}><span>Your computer<small>{relay.name} . {relay.workspace}</small></span><b>{relayState.isRelayConnected(relay.id) ? "Connected" : "Offline"}<small>{health?.rtt ? `${health.rtt} ms` : health?.lastContact ? `Last contact ${relativeTime(health.lastContact)}` : ""}</small></b></div>
         })}
-        <div className="connection-row"><span>OpenCode data</span><b>{relayState.lastSyncedAt && Date.now() - relayState.lastSyncedAt < 60_000 ? "Current" : "Stale"}<small>{relayState.lastSyncedAt ? `Updated ${relativeTime(relayState.lastSyncedAt)}` : "Not yet synced"}</small></b></div>
+        <div className="connection-row"><span>OpenCode data</span><b>{relayState.lastSyncedAt && Date.now() - relayState.lastSyncedAt < 60_000 ? "Current" : "Stale"}<small>{relayState.lastSyncedAt ? `Updated ${relativeTime(relayState.lastSyncedAt)}` : "Not yet synced"}</small></b></div></div>
         <footer><button className="notification-secondary" onClick={onClose}>Close</button><button className="notification-primary" onClick={refresh}><RefreshCw size={15} /> Refresh</button></footer>
       </section>
     </div>
@@ -880,8 +893,13 @@ function NewSessionDialog({
 
 function SessionDetail({
   session,
+  sessionKey,
   agents,
   revision,
+  resourceRevisions,
+  subagents,
+  subagentRevisions,
+  supportsSubagents,
   permission,
   question,
   request,
@@ -893,8 +911,13 @@ function SessionDetail({
   onPromptFocused,
 }: {
   session: SessionSummary
+  sessionKey: string
   agents: AgentSummary[]
   revision: number
+  resourceRevisions: SessionResourceRevisions
+  subagents: RoutedSubagent[]
+  subagentRevisions: Record<string, number>
+  supportsSubagents?: boolean
   permission?: PermissionRequest
   question?: QuestionRequest
   request: (command: any, progress?: (messages: SessionMessage[]) => void) => Promise<unknown>
@@ -905,17 +928,19 @@ function SessionDetail({
   focusPrompt?: boolean
   onPromptFocused: () => void
 }) {
-  const [messages, setMessages] = useState<SessionMessage[]>([])
-  const messageCacheRef = useRef<MessageCache<SessionMessage>>(emptyMessageCache())
-  const [diffs, setDiffs] = useState<FileDiff[]>([])
-  const [diffState, setDiffState] = useState<"idle" | "loading" | "ok" | "not_git" | "error">("idle")
-  const [diffTruncated, setDiffTruncated] = useState(false)
+  const retained = retainedSessionState.read(sessionKey)
+  const [messages, setMessages] = useState<SessionMessage[]>(() => retained?.messages as SessionMessage[] ?? [])
+  const messageCacheRef = useRef<MessageCache<SessionMessage>>(retained?.messageCache as MessageCache<SessionMessage> ?? emptyMessageCache())
+  const [diffs, setDiffs] = useState<FileDiff[]>(() => retained?.diffs as FileDiff[] ?? [])
+  const [diffState, setDiffState] = useState<"idle" | "loading" | "ok" | "not_git" | "error">(() => retained?.diffState ?? "idle")
+  const [diffTruncated, setDiffTruncated] = useState(() => retained?.diffTruncated ?? false)
   const [diffVersion, setDiffVersion] = useState(0)
-  const [todos, setTodos] = useState<SessionTodo[]>([])
-  const [prompt, setPrompt] = useState("")
+  const [todos, setTodos] = useState<SessionTodo[]>(() => retained?.todos as SessionTodo[] ?? [])
+  const [prompt, setPrompt] = useState(() => retained?.draft ?? "")
   const [sending, setSending] = useState(false)
-  const [tab, setTab] = useState<"activity" | "todos" | "changes">("activity")
-  const [agent, setAgent] = useState(session.agent ?? agents[0]?.name ?? "")
+  const [tab, setTab] = useState<"activity" | "todos" | "changes" | "subagents">(() => retained?.tab ?? "activity")
+  const [agent, setAgent] = useState(() => retained?.agent ?? session.agent ?? agents[0]?.name ?? "")
+  const [selectedChildId, setSelectedChildId] = useState(() => retained?.selectedChildId)
   const [agentMenuOpen, setAgentMenuOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [messageCacheReadySession, setMessageCacheReadySession] = useState<string>()
@@ -927,30 +952,35 @@ function SessionDetail({
   const lastScrollTopRef = useRef(0)
   const snapshotRef = useRef<Record<string, string>>({})
   const generationRef = useRef(0)
-  const refreshGenerationRef = useRef(0)
+  const messageRefreshGenerationRef = useRef(0)
+  const todosRefreshGenerationRef = useRef(0)
   const diffGenerationRef = useRef(0)
+  const persistenceRef = useRef<Promise<void>>(Promise.resolve())
   const selectedAgent = agents.find((item) => item.name === agent)
   const selectedAgentStyle = { "--agent-color": selectedAgent?.color ?? "var(--cyan)" } as CSSProperties
   const persistMessageCache = useCallback((cache: MessageCache<SessionMessage>) => {
     messageCacheRef.current = cache
     setMessages(visibleCachedMessages(cache))
-    return saveCache("messages", cache)
-  }, [saveCache])
+    retainedSessionState.write(sessionKey, { messageCache: cache, messages: visibleCachedMessages(cache) })
+    // Serialize IndexedDB writes so an older progress save cannot win a newer commit.
+    persistenceRef.current = persistenceRef.current.catch(() => undefined).then(() => saveCache("messages", cache))
+    return persistenceRef.current
+  }, [saveCache, sessionKey])
   const persistLocalMessages = useCallback((messages: SessionMessage[]) =>
     persistMessageCache({ ...messageCacheRef.current, local: { ...messageCacheRef.current.local, messages: messages.filter((message) => message.info.delivery !== undefined) } }), [persistMessageCache])
 
-  const refreshDiffs = async () => {
+  const refreshDiffs = async (): Promise<boolean> => {
     const generation = ++diffGenerationRef.current
     setDiffState("loading")
     try {
       const result = await request({ type: "workspace.diff", sessionId: session.id })
-      if (!mountedRef.current || generation !== diffGenerationRef.current) return
+      if (!mountedRef.current || generation !== diffGenerationRef.current) return false
       if (Array.isArray(result)) {
         setDiffs(result as FileDiff[])
         setDiffTruncated(false)
         setDiffVersion((version) => version + 1)
         setDiffState("ok")
-        return
+        return true
       }
       const workspace = result as WorkspaceDiff
       if (!workspace || !Array.isArray(workspace.files) || !["ok", "not_git"].includes(workspace.state)) throw new Error("The relay returned an invalid workspace diff.")
@@ -958,70 +988,73 @@ function SessionDetail({
       setDiffTruncated(Boolean(workspace.truncated))
       setDiffVersion((version) => version + 1)
       setDiffState(workspace.state)
+      return true
     } catch (error) {
-      if (!mountedRef.current || generation !== diffGenerationRef.current) return
+      if (!mountedRef.current || generation !== diffGenerationRef.current) return false
       setDiffState("error")
       onError((error as Error).message)
+      return false
     }
   }
 
-  const refresh = async () => {
-    const refreshGeneration = ++refreshGenerationRef.current
+  const refresh = async (resources: Array<"messages" | "todos"> = ["messages", "todos"]): Promise<Record<"messages" | "todos", boolean>> => {
     const load = async <T,>(
-      key: string,
+      key: "messages" | "todos",
       command: Record<string, unknown>,
       update: (value: T[]) => void,
-    ) => {
+    ): Promise<boolean> => {
+      const generationRef = key === "messages" ? messageRefreshGenerationRef : todosRefreshGenerationRef
+      const generation = ++generationRef.current
+      const owns = () => mountedRef.current && generation === generationRef.current
       try {
         const progress = key === "messages" ? async (partial: SessionMessage[]) => {
-          if (!mountedRef.current || refreshGeneration !== refreshGenerationRef.current) return
+          if (!owns()) return
           let cache = messageCacheRef.current
           for (const message of partial) {
-            if (!mountedRef.current || refreshGeneration !== refreshGenerationRef.current) return
+            if (!owns()) return
             cache = await stageMessage(cache, message)
-            if (!mountedRef.current || refreshGeneration !== refreshGenerationRef.current) return
+            if (!owns()) return
           }
-          if (mountedRef.current && refreshGeneration === refreshGenerationRef.current) await persistMessageCache(cache)
+          if (owns()) await persistMessageCache(cache)
         } : undefined
         const result = await request(key === "messages" ? { ...command, sync: { version: 1, known: messageInventory(messageCacheRef.current) } } : command, progress)
-        if (mountedRef.current && refreshGeneration === refreshGenerationRef.current) {
-          const delta = result && typeof result === "object" && "deltaManifest" in result
+        if (!owns()) return false
+        {
+          const delta = result && typeof result === "object" && "deltaManifest" in result && Array.isArray((result as { messages?: unknown }).messages)
             ? result as { deltaManifest: any; messages: SessionMessage[] }
             : undefined
-          const next = (delta ? delta.messages : Array.isArray(result) ? result : []) as T[]
+          const values = resourceArray(result)
+          if (!values) return false
+          const next = values as T[]
           const snapshot = JSON.stringify(next)
           if (key === "messages" || snapshotRef.current[key] !== snapshot) {
             snapshotRef.current[key] = snapshot
             if (key === "messages") {
               if (delta) {
-                let cache = messageCacheRef.current
-                for (const message of delta.messages) {
-                  if (refreshGeneration !== refreshGenerationRef.current) return
-                  cache = await stageMessage(cache, message)
-                  if (refreshGeneration !== refreshGenerationRef.current) return
-                }
-                const committed = commitManifestForRefresh(cache, refreshGeneration, refreshGenerationRef.current, delta.deltaManifest)
+                const committed = commitManifestForRefresh(messageCacheRef.current, generation, messageRefreshGenerationRef.current, delta.deltaManifest)
                 if (!committed) throw new Error("Delta transfer was incomplete")
-                void persistMessageCache(committed)
+                await persistMessageCache(committed)
               } else {
                 const committed = await replaceCanonicalMessages(messageCacheRef.current, next as SessionMessage[])
-                if (refreshGeneration === refreshGenerationRef.current) await persistMessageCache(committed)
+                if (!owns()) return false
+                await persistMessageCache(committed)
               }
             }
             else update(next)
             if (key !== "messages") void saveCache(key, next)
           }
         }
+        return owns()
       } catch {
-        return
+        return false
       }
     }
-    await Promise.all([
-      load<SessionMessage>("messages", { type: "session.messages", sessionId: session.id }, setMessages),
-      load<SessionTodo>("todos", { type: "session.todos", sessionId: session.id }, setTodos),
-    ])
-    if (!mountedRef.current) return
+    const outcomes = await Promise.all(resources.map(async (resource) => [resource, resource === "messages"
+      ? await load<SessionMessage>("messages", { type: "session.messages", sessionId: session.id }, setMessages)
+      : await load<SessionTodo>("todos", { type: "session.todos", sessionId: session.id }, setTodos)] as const))
+    if (!mountedRef.current) return { messages: false, todos: false }
     setLoading(false)
+    return Object.fromEntries(outcomes) as Record<"messages" | "todos", boolean>
   }
 
   useEffect(() => {
@@ -1033,13 +1066,19 @@ function SessionDetail({
 
   useEffect(() => {
     const generation = ++generationRef.current
-    ++refreshGenerationRef.current
+    ++messageRefreshGenerationRef.current
+    ++todosRefreshGenerationRef.current
     ++diffGenerationRef.current
     setMessageCacheReadySession(undefined)
     setLoading(true)
-    setDiffs([])
-    setDiffState("idle")
-    setDiffTruncated(false)
+    const remembered = retainedSessionState.read(sessionKey)
+    if (remembered?.messageCache) {
+      messageCacheRef.current = remembered.messageCache as MessageCache<SessionMessage>
+      setMessages(visibleCachedMessages(messageCacheRef.current))
+      setMessageCacheReadySession(session.id)
+      setLoading(false)
+      return
+    }
     void Promise.all([
       loadCache<unknown>("messages").then(async (cached) => {
         if (generation !== generationRef.current) return
@@ -1057,7 +1096,11 @@ function SessionDetail({
       }),
       loadCache<SessionTodo[]>("todos").then((cached) => cached && generation === generationRef.current && setTodos((current) => current.length ? current : cached.value)),
     ]).then(() => { if (generation === generationRef.current) setLoading(false) })
-  }, [loadCache, session.id])
+  }, [loadCache, session.id, sessionKey])
+
+  useEffect(() => {
+    retainedSessionState.write(sessionKey, { draft: prompt, tab, agent, selectedChildId, messages, messageCache: messageCacheRef.current, todos, diffs, diffState, diffTruncated })
+  }, [agent, diffState, diffTruncated, diffs, messages, prompt, selectedChildId, sessionKey, tab, todos])
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock((value) => value + 1), 30_000)
@@ -1065,8 +1108,13 @@ function SessionDetail({
   }, [])
 
   useEffect(() => {
-    setAgent(session.agent ?? agents[0]?.name ?? "")
-  }, [session.id, session.agent, agents])
+    if (agent && agents.some((item) => item.name === agent)) return
+    setAgent(session.agent && agents.some((item) => item.name === session.agent) ? session.agent : agents[0]?.name ?? "")
+  }, [session.agent, agents, agent])
+  useEffect(() => {
+    if (!selectedChildId || subagents.some((child) => child.id === selectedChildId)) return
+    setSelectedChildId(subagents[0]?.id)
+  }, [selectedChildId, subagents])
 
   useEffect(() => {
     if (!focusPrompt) return
@@ -1079,15 +1127,33 @@ function SessionDetail({
 
   useEffect(() => {
     if (messageCacheReadySession !== session.id) return
-    const timeout = window.setTimeout(() => void refresh(), revision ? 350 : 0)
+    const retainedRevision = retainedSessionState.read(sessionKey)?.refreshed?.messages
+    if (retainedRevision === resourceRevisions.messages) { setLoading(false); return }
+    const timeout = window.setTimeout(() => void refresh(["messages"]).then((outcome) => {
+      if (!outcome.messages) return
+      retainedSessionState.write(sessionKey, { refreshed: { ...(retainedSessionState.read(sessionKey)?.refreshed ?? {}), messages: resourceRevisions.messages } })
+    }), revision ? 350 : 0)
     return () => window.clearTimeout(timeout)
-  }, [session.id, session.status, revision, messageCacheReadySession])
+  }, [session.id, session.status, revision, resourceRevisions.messages, messageCacheReadySession, sessionKey])
+
+  useEffect(() => {
+    if (tab !== "todos") return
+    if (retainedSessionState.read(sessionKey)?.refreshed?.todos === resourceRevisions.todos) return
+    void refresh(["todos"]).then((outcome) => {
+      if (!outcome.todos) return
+      retainedSessionState.write(sessionKey, { refreshed: { ...(retainedSessionState.read(sessionKey)?.refreshed ?? {}), todos: resourceRevisions.todos } })
+    })
+  }, [tab, resourceRevisions.todos, sessionKey])
 
   useEffect(() => {
     if (tab !== "changes") return
-    const timeout = window.setTimeout(() => void refreshDiffs(), revision ? 500 : 0)
+    if (retainedSessionState.read(sessionKey)?.refreshed?.diffs === resourceRevisions.diffs) return
+    const timeout = window.setTimeout(() => void refreshDiffs().then((success) => {
+      if (!success) return
+      retainedSessionState.write(sessionKey, { refreshed: { ...(retainedSessionState.read(sessionKey)?.refreshed ?? {}), diffs: resourceRevisions.diffs } })
+    }), revision ? 500 : 0)
     return () => window.clearTimeout(timeout)
-  }, [tab, revision, session.id])
+  }, [tab, revision, session.id, resourceRevisions.diffs, sessionKey])
 
   const visibleMessages = useMemo(
     () => messages.filter((message) => message.parts.some((part) => part.type === "text" || part.type === "tool")),
@@ -1105,7 +1171,11 @@ function SessionDetail({
   useLayoutEffect(() => {
     if (tab !== "activity" || !followOutputRef.current || document.activeElement === promptRef.current) return
     const frame = requestAnimationFrame(() => {
-      if (detailContentRef.current) detailContentRef.current.scrollTop = detailContentRef.current.scrollHeight
+      if (detailContentRef.current) {
+        detailContentRef.current.scrollTop = detailContentRef.current.scrollHeight
+        lastScrollTopRef.current = detailContentRef.current.scrollTop
+        followOutputRef.current = true
+      }
     })
     return () => cancelAnimationFrame(frame)
   }, [tab, visibleMessages])
@@ -1113,7 +1183,8 @@ function SessionDetail({
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     if (!prompt.trim() || sending || messageCacheReadySession !== session.id) return
-    const text = prompt.trim()
+    const rawSubmitted = prompt
+    const text = rawSubmitted.trim()
     const messageId = crypto.randomUUID()
     const knownMessageIds = [...new Set([
       ...messageCacheRef.current.canonical.manifest.map((entry) => entry.id),
@@ -1146,7 +1217,7 @@ function SessionDetail({
         void persistLocalMessages(next)
         return next
       })
-      setPrompt("")
+      setPrompt((current) => clearSubmittedDraft(current, rawSubmitted))
     } catch (error) {
       const delivery = promptDeliveryState((error as Error).message)
       setMessages((current) => {
@@ -1175,6 +1246,19 @@ function SessionDetail({
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return
     event.preventDefault()
     event.currentTarget.form?.requestSubmit()
+  }
+  const selectTab = (next: "activity" | "todos" | "changes" | "subagents") => {
+    if (next === "activity") {
+      followOutputRef.current = true
+      requestAnimationFrame(() => {
+        if (detailContentRef.current) {
+          detailContentRef.current.scrollTop = detailContentRef.current.scrollHeight
+          lastScrollTopRef.current = detailContentRef.current.scrollTop
+          followOutputRef.current = true
+        }
+      })
+    }
+    setTab(next)
   }
 
   return (
@@ -1232,9 +1316,10 @@ function SessionDetail({
       </header>
 
       <div className="tabs" role="tablist">
-        <button type="button" role="tab" aria-selected={tab === "activity"} className={tab === "activity" ? "active" : ""} onClick={() => setTab("activity")}>Activity</button>
-        <button type="button" role="tab" aria-selected={tab === "todos"} className={tab === "todos" ? "active" : ""} onClick={() => { setTab("todos"); void refresh() }}>Todos <span>{todos.filter((todo) => todo.status !== "completed" && todo.status !== "cancelled").length}</span></button>
-        <button type="button" role="tab" aria-selected={tab === "changes"} className={tab === "changes" ? "active" : ""} onClick={() => setTab("changes")}>Changes <span>{diffs.length}</span></button>
+        <button type="button" role="tab" aria-selected={tab === "activity"} className={tab === "activity" ? "active" : ""} onClick={() => selectTab("activity")}>Activity</button>
+        <button type="button" role="tab" aria-selected={tab === "todos"} className={tab === "todos" ? "active" : ""} onClick={() => selectTab("todos")}>Todos <span>{todos.filter((todo) => todo.status !== "completed" && todo.status !== "cancelled").length}</span></button>
+        <button type="button" role="tab" aria-selected={tab === "changes"} className={tab === "changes" ? "active" : ""} onClick={() => selectTab("changes")}>Changes <span>{diffs.length}</span></button>
+        {(supportsSubagents || subagents.length > 0) && <button type="button" role="tab" aria-selected={tab === "subagents"} className={tab === "subagents" ? "active" : ""} onClick={() => selectTab("subagents")}>Subagents <span>{subagents.length}</span></button>}
       </div>
 
       <div
@@ -1270,7 +1355,7 @@ function SessionDetail({
             ))}
             {todos.length === 0 && <div className="empty-state"><p>No todos in this session.</p></div>}
           </div>
-        ) : (
+        ) : tab === "changes" ? (
           <div className="change-list">
             {diffState === "loading" && <div className="empty-state"><LoaderCircle className="spin" size={22} /></div>}
             {diffs.map((diff) => (
@@ -1281,7 +1366,7 @@ function SessionDetail({
             {diffState === "ok" && diffs.length === 0 && <div className="empty-state"><p>The working tree matches the latest commit.</p></div>}
             {diffState === "error" && <div className="empty-state"><p>Workspace changes could not be loaded.</p></div>}
           </div>
-        )}
+        ) : <SubagentActivity subagents={subagents} selectedChildId={selectedChildId} onSelect={setSelectedChildId} request={request} revisions={subagentRevisions} />}
       </div>
 
       <div className="input-dock">

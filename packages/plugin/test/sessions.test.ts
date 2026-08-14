@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { includeActiveSession, rootSessionId, routeSessionRequests, selectOpenSessions, sessionDirectory } from "../src/sessions"
+import { includeActiveSession, rootSessionId, routeSessionRequests, selectOpenSessions, selectSubagents, sessionDirectory } from "../src/sessions"
 
 describe("selectOpenSessions", () => {
   const sessions = [
@@ -55,6 +55,12 @@ describe("selectOpenSessions", () => {
       { id: "root" },
       { id: "child", parentID: "root" },
     ])).toEqual([{ id: "question", sessionID: "root", targetSessionID: "child" }])
+  })
+
+  it("groups nested descendants under their transmitted root and excludes invalid hierarchy", () => {
+    const roots = [{ id: "root" }]
+    const children = selectSubagents(roots, [...roots, { id: "child", parentID: "root" }, { id: "nested", parentID: "child" }, { id: "orphan", parentID: "gone" }, { id: "cycle", parentID: "cycle" }])
+    expect(children.map((item) => [item.id, item.parentSessionId, item.rootSessionId])).toEqual([["child", "root", "root"], ["nested", "child", "root"]])
   })
 })
 

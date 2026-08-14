@@ -74,19 +74,32 @@ export const messageDeltaPlan = async <T extends MessageLike & { info?: { id?: s
   const individual = upsertRecords.map((record, index) => ({ index, record }))
   individual.sort((left, right) => right.index - left.index)
   const chunks: MessageDeltaChunk[] = []
+  let packed: MessageDeltaChunk["records"] = []
+  const flushPacked = () => {
+    if (!packed.length) return
+    chunks.push({ requestId: "", snapshotId, index: chunks.length, total: 0, records: packed, fragments: [] })
+    packed = []
+  }
   for (const { record } of individual) {
     const serialized = JSON.stringify(record.message)
     if (new TextEncoder().encode(serialized).byteLength > MAX_CANONICAL_MESSAGE_BYTES) throw new Error("Message exceeds the canonical message size limit")
-    if (encodedSize({ records: [record], fragments: [] }) <= maxBytes) {
-      chunks.push({ requestId: "", snapshotId, index: chunks.length, total: 0, records: [{ id: record.id, fingerprint: record.fingerprint, message: record.message }], fragments: [] })
+    const deltaRecord = { id: record.id, fingerprint: record.fingerprint, message: record.message }
+    // Keep room for request/snapshot/index fields added around this payload.
+    const recordBudget = Math.max(1, maxBytes - 200)
+    if (encodedSize({ records: [...packed, deltaRecord], fragments: [] }) <= recordBudget) {
+      packed.push(deltaRecord)
       continue
     }
+    flushPacked()
+    if (encodedSize({ records: [deltaRecord], fragments: [] }) <= recordBudget) { packed.push(deltaRecord); continue }
     const bytes = new TextEncoder().encode(serialized)
+    flushPacked()
     const fragmentBytes = Math.max(1, Math.floor((maxBytes - 1_500) * 0.7))
     const total = Math.ceil(bytes.length / fragmentBytes)
     if (total > MAX_MESSAGE_CHUNKS) throw new Error("Message exceeds the chunk limit")
     for (let index = 0; index < total; index += 1) chunks.push({ requestId: "", snapshotId, index: chunks.length, total: 0, records: [], fragments: [{ messageId: record.id, fingerprint: record.fingerprint, index, total, bytes: base64(bytes.slice(index * fragmentBytes, (index + 1) * fragmentBytes)) }] })
   }
+  flushPacked()
   if (chunks.length > MAX_MESSAGE_CHUNKS) throw new Error("Message response exceeds the chunk limit")
   for (const [index, chunk] of chunks.entries()) { chunk.index = index; chunk.total = chunks.length }
   return { manifest: { version: 1, scope: { kind: "tail", limit: 80 }, manifest: manifestEntries, upserts: upsertRecords.map((record) => record.id), chunkCount: chunks.length, snapshotId }, chunks }
