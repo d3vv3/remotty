@@ -45,28 +45,55 @@ type PendingRequest = {
   startedAt: number
   chunks: ChunkAssembly
   generation: number
-  progress?: (messages: unknown[]) => void | Promise<void>
+  progress?: (messages: unknown[], isActive: () => boolean) => void | Promise<void>
   manifestIds?: string[]
   deltaManifest?: MessageDeltaManifest
-  progressedMessageIds: Set<string>
   verifiedMessageIds: Set<string>
   progressChain: Promise<void>
+  progressSignature?: string
+  completionScheduled: boolean
 }
 
-/** Returns only records this request has not already delivered to its progress consumer. */
-export const newlyCompletedMessages = (seen: Set<string>, verified: ReadonlySet<string>, messages: unknown[]) => messages.filter((message) => {
-  const id = (message as { info?: { id?: unknown } }).info?.id
-  if (typeof id !== "string" || !verified.has(id) || seen.has(id)) return false
-  seen.add(id)
-  return true
-})
+/** Keeps the manifest-provided order while omitting unverified or duplicate message ids. */
+export const verifiedCanonicalMessages = <T>(messages: T[], verified: ReadonlySet<string>) => {
+  const seen = new Set<string>()
+  return messages.filter((message) => {
+    const id = (message as { info?: { id?: unknown } }).info?.id
+    if (typeof id !== "string" || !id || !verified.has(id) || seen.has(id)) return false
+    seen.add(id)
+    return true
+  })
+}
+
+export const legacyManifestCompatible = (chunks: ChunkAssembly, total: number) =>
+  chunks.total === undefined || chunks.total === total
+
+/** Computes legacy progress only after its canonical manifest is available. */
+export const legacyChunkState = (chunks: ChunkAssembly, manifestIds: string[] | undefined, verified: ReadonlySet<string>) => {
+  const messages = assembledMessages(chunks)
+  if (!manifestIds) return { progress: [] as unknown[], complete: false as const }
+  const progress = verifiedCanonicalMessages(orderByManifest(messages, manifestIds), verified)
+  if (!completeChunks(chunks)) return { progress, complete: false as const }
+  return { progress, complete: true as const, messages: exactManifestMessages(messages, manifestIds) }
+}
 
 /** Preserve callback order without blocking encrypted frame receipt. */
-export const queueProgress = (pending: Pick<PendingRequest, "progress" | "progressChain">, messages: unknown[], onFailure?: (cause: unknown) => void) => {
+export const queueProgress = (pending: Pick<PendingRequest, "progress" | "progressChain">, messages: unknown[], onFailure?: (cause: unknown) => void, isActive: () => boolean = () => true) => {
   if (!messages.length || !pending.progress) return pending.progressChain
-  pending.progressChain = pending.progressChain.then(() => pending.progress?.(messages))
+  pending.progressChain = pending.progressChain.then(() => isActive() ? pending.progress?.(messages, isActive) : undefined)
   void pending.progressChain.catch((cause) => { onFailure?.(cause) })
   return pending.progressChain
+}
+
+const progressSignature = (messages: unknown[]) => JSON.stringify(messages.map((message) => (message as { info?: { id?: unknown } }).info?.id))
+
+/** Queues a canonical snapshot only when it differs from this request's prior progress. */
+export const queueProgressSnapshot = (pending: Pick<PendingRequest, "progress" | "progressChain" | "progressSignature" | "completionScheduled">, messages: unknown[], isActive: () => boolean, onFailure?: (cause: unknown) => void) => {
+  if (!messages.length || !pending.progress || pending.completionScheduled) return pending.progressChain
+  const signature = progressSignature(messages)
+  if (signature === pending.progressSignature) return pending.progressChain
+  pending.progressSignature = signature
+  return queueProgress(pending, messages, onFailure, isActive)
 }
 
 export type RelayRequest = ClientCommand extends infer Command
@@ -252,7 +279,7 @@ export function useRelay(initialBundle?: PairingBundle) {
     socket.send(JSON.stringify(frame))
   }, [])
 
-  const requestFromRelay = useCallback((identity: DeviceIdentity, relayId: string, command: RelayRequest, progress?: (messages: unknown[]) => void | Promise<void>) => {
+  const requestFromRelay = useCallback((identity: DeviceIdentity, relayId: string, command: RelayRequest, progress?: (messages: unknown[], isActive: () => boolean) => void | Promise<void>) => {
     if (!connectedRelaysRef.current.has(relayId)) return Promise.reject(new Error("The workspace relay is offline."))
     const requestId = crypto.randomUUID()
     return new Promise<unknown>((resolve, reject) => {
@@ -261,7 +288,7 @@ export function useRelay(initialBundle?: PairingBundle) {
         pendingRef.current.delete(requestId)
         reject(new Error("The relay did not respond."))
       }, requestInactivityMs(command.type))
-      pendingRef.current.set(requestId, { relayId, resolve, reject, timeout, command, startedAt: Date.now(), chunks: createChunkAssembly(), generation, progress, progressedMessageIds: new Set(), verifiedMessageIds: new Set(), progressChain: Promise.resolve() })
+      pendingRef.current.set(requestId, { relayId, resolve, reject, timeout, command, startedAt: Date.now(), chunks: createChunkAssembly(), generation, progress, verifiedMessageIds: new Set(), progressChain: Promise.resolve(), completionScheduled: false })
       void sendCommandFrame(identity, relayId, { ...command, requestId } as ClientCommand).catch((cause) => {
         window.clearTimeout(timeout)
         pendingRef.current.delete(requestId)
@@ -517,9 +544,10 @@ export function useRelay(initialBundle?: PairingBundle) {
           if (pendingRef.current.get(chunk.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
           pending.verifiedMessageIds.add(id)
         }
-        const progress = newlyCompletedMessages(pending.progressedMessageIds, pending.verifiedMessageIds, messages)
-        queueProgress(pending, progress, (cause) => {
-          if (pendingRef.current.get(chunk.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
+        const progress = verifiedCanonicalMessages(messages, pending.verifiedMessageIds)
+        const isActive = () => pendingRef.current.get(chunk.requestId) === pending && pending.generation === socketGenerationRef.current
+        queueProgressSnapshot(pending, progress, isActive, (cause) => {
+          if (!isActive()) return
           window.clearTimeout(pending.timeout)
           pendingRef.current.delete(chunk.requestId)
           pending.reject(cause instanceof Error ? cause : new Error(String(cause)))
@@ -545,6 +573,8 @@ export function useRelay(initialBundle?: PairingBundle) {
             if (pendingRef.current.get(chunk.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
             pending.verifiedMessageIds.add(id)
           }
+          if (pending.completionScheduled) return
+          pending.completionScheduled = true
           void pending.progressChain.then(() => {
             if (pendingRef.current.get(chunk.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
             window.clearTimeout(pending.timeout)
@@ -571,10 +601,44 @@ export function useRelay(initialBundle?: PairingBundle) {
         if (pending.command.type === "session.messages" &&
           validManifest(data.result)) {
           const manifest = validManifest(data.result)!
+          if (!legacyManifestCompatible(pending.chunks, manifest.total)) {
+            window.clearTimeout(pending.timeout)
+            pendingRef.current.delete(data.requestId)
+            pending.reject(new Error("The relay sent an incompatible message manifest."))
+            return
+          }
           pending.manifestIds = manifest.ids
           pending.chunks.total = manifest.total
           window.clearTimeout(pending.timeout)
           pending.timeout = window.setTimeout(() => { pendingRef.current.delete(data.requestId); pending.reject(new Error("The relay stopped sending messages.")) }, requestInactivityMs(pending.command.type))
+          const state = legacyChunkState(pending.chunks, pending.manifestIds, pending.verifiedMessageIds)
+          const isActive = () => pendingRef.current.get(data.requestId) === pending && pending.generation === socketGenerationRef.current
+          queueProgressSnapshot(pending, state.progress, isActive, (cause) => {
+            if (!isActive()) return
+            window.clearTimeout(pending.timeout)
+            pendingRef.current.delete(data.requestId)
+            pending.reject(cause instanceof Error ? cause : new Error(String(cause)))
+          })
+          if (!state.complete) return
+          if (!state.messages) {
+            window.clearTimeout(pending.timeout)
+            pendingRef.current.delete(data.requestId)
+            pending.reject(new Error("The relay sent an incomplete message transfer."))
+            return
+          }
+          if (pending.completionScheduled) return
+          pending.completionScheduled = true
+          void pending.progressChain.then(() => {
+            if (pendingRef.current.get(data.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
+            window.clearTimeout(pending.timeout)
+            pendingRef.current.delete(data.requestId)
+            pending.resolve(state.messages)
+          }).catch((cause) => {
+            if (pendingRef.current.get(data.requestId) !== pending) return
+            window.clearTimeout(pending.timeout)
+            pendingRef.current.delete(data.requestId)
+            pending.reject(cause instanceof Error ? cause : new Error(String(cause)))
+          })
           return
         }
         window.clearTimeout(pending.timeout)
@@ -600,24 +664,25 @@ export function useRelay(initialBundle?: PairingBundle) {
         const partial = assembledMessages(pending.chunks)
         for (const message of partial) {
           const id = (message as { info?: { id?: unknown } }).info?.id
-          if (typeof id === "string") pending.verifiedMessageIds.add(id)
+          if (typeof id === "string" && id) pending.verifiedMessageIds.add(id)
         }
-        const progress = newlyCompletedMessages(pending.progressedMessageIds, pending.verifiedMessageIds, pending.manifestIds ? orderByManifest(partial, pending.manifestIds) : partial)
-        queueProgress(pending, progress, (cause) => {
-          if (pendingRef.current.get(data.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
+        const state = legacyChunkState(pending.chunks, pending.manifestIds, pending.verifiedMessageIds)
+        const isActive = () => pendingRef.current.get(data.requestId) === pending && pending.generation === socketGenerationRef.current
+        queueProgressSnapshot(pending, state.progress, isActive, (cause) => {
+          if (!isActive()) return
           window.clearTimeout(pending.timeout)
           pendingRef.current.delete(data.requestId)
           pending.reject(cause instanceof Error ? cause : new Error(String(cause)))
         })
-        if (completeChunks(pending.chunks)) {
-          const messages = assembledMessages(pending.chunks)
-          const ordered = pending.manifestIds ? exactManifestMessages(messages, pending.manifestIds) : messages
-          if (!ordered) { pendingRef.current.delete(data.requestId); pending.reject(new Error("The relay sent an incomplete message transfer.")); return }
+        if (state.complete) {
+          if (!state.messages) { window.clearTimeout(pending.timeout); pendingRef.current.delete(data.requestId); pending.reject(new Error("The relay sent an incomplete message transfer.")); return }
+          if (pending.completionScheduled) return
+          pending.completionScheduled = true
           void pending.progressChain.then(() => {
             if (pendingRef.current.get(data.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
             window.clearTimeout(pending.timeout)
             pendingRef.current.delete(data.requestId)
-            pending.resolve(ordered)
+            pending.resolve(state.messages)
           }).catch((cause) => {
             if (pendingRef.current.get(data.requestId) !== pending) return
             window.clearTimeout(pending.timeout)
@@ -882,7 +947,7 @@ export function useRelay(initialBundle?: PairingBundle) {
     })().catch(() => undefined)
   }, [publishSlices])
 
-  const request = useCallback(async (command: RelayRequest, workspaceRelayId?: string, progress?: (messages: unknown[]) => void | Promise<void>): Promise<unknown> => {
+  const request = useCallback(async (command: RelayRequest, workspaceRelayId?: string, progress?: (messages: unknown[], isActive: () => boolean) => void | Promise<void>): Promise<unknown> => {
     const identity = identityRef.current
     if (!identity?.enrolled) throw new Error("The browser device is not enrolled.")
     if (command.type === "snapshot.request") {

@@ -38,12 +38,13 @@ describe("message sync chunks", () => {
 
   it("sends newest messages first with canonical manifest order", () => {
     const messages = [
-      { info: { id: "tool", role: "assistant" }, parts: [{ type: "tool", text: "x".repeat(2_000) }] },
+      { info: { id: "tool", role: "assistant" }, parts: [{ type: "tool", text: "oldest" }] },
+      { info: { id: "middle", role: "assistant" }, parts: [{ type: "text", text: "middle" }] },
       { info: { id: "user", role: "user" }, parts: [{ type: "text", text: "continue" }] },
     ]
     const plan = messagePlan(messages, 500)
-    expect(plan.ids).toEqual(["tool", "user"])
-    expect(plan.chunks[0]).toEqual([{ info: { id: "user", role: "user" }, parts: [{ type: "text", text: "continue" }] }])
+    expect(plan.ids).toEqual(["tool", "middle", "user"])
+    expect(plan.chunks.flatMap((chunk) => Array.isArray(chunk) ? chunk : []).map((message) => message.info.id)).toEqual(["user", "middle", "tool"])
   })
 
   it("uses recency rather than message role for transfer priority", () => {

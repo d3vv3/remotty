@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { canonicalJsonFingerprint, canonicalMessageValue } from "@remotty/protocol"
-import { commitManifestForRefresh, commitMessageManifest, emptyMessageCache, messageInventory, migrateMessageCache, replaceCanonicalMessages, stageMessage, verifyDeltaSnapshot, visibleCachedMessages } from "../src/messageCache"
+import { applyPreparedMessageProgress, commitManifestForRefresh, commitMessageManifest, commitPreparedCanonicalMessages, emptyMessageCache, messageInventory, migrateMessageCache, prepareCanonicalMessages, prepareMessageProgress, replaceCanonicalMessages, stageMessage, stageMessageProgress, verifyDeltaSnapshot, visibleCachedMessages } from "../src/messageCache"
 
 const message = (id: string, text: string, delivery?: string) => ({ info: { id, ...(delivery ? { delivery } : {}) }, parts: [{ type: "text", text }] })
 const entry = async (value: ReturnType<typeof message>) => ({ id: value.info.id, fingerprint: await canonicalJsonFingerprint(canonicalMessageValue(value)) })
@@ -31,13 +31,68 @@ describe("versioned message cache", () => {
     await expect(stageMessage(cache, value, "x".repeat(43))).rejects.toThrow("fingerprint")
   })
 
-  it("lets cumulative canonical progress repair staged transport order", async () => {
-    const tool = message("tool", "tool")
-    const user = message("user", "user")
-    let cache = await stageMessage(emptyMessageCache<typeof tool>(), user)
-    cache = await stageMessage(cache, tool)
-    cache = await stageMessage(cache, user)
-    expect(visibleCachedMessages(cache).map((item) => item.info.id)).toEqual(["tool", "user"])
+  it("re-stages cumulative canonical progress without reordering the final manifest", async () => {
+    const oldest = message("oldest", "oldest")
+    const older = message("older", "older")
+    const newest = message("newest", "newest")
+    let cache = emptyMessageCache<typeof oldest>()
+    cache = await stageMessageProgress(cache, [newest])
+    expect(visibleCachedMessages(cache).map((item) => item.info.id)).toEqual(["newest"])
+    cache = await stageMessageProgress(cache, [older, newest])
+    expect(visibleCachedMessages(cache).map((item) => item.info.id)).toEqual(["older", "newest"])
+    cache = await stageMessageProgress(cache, [oldest, older, newest])
+    expect(visibleCachedMessages(cache).map((item) => item.info.id)).toEqual(["oldest", "older", "newest"])
+    const manifest = await Promise.all([oldest, older, newest].map(entry))
+    cache = commitMessageManifest(cache, { version: 1, scope: { kind: "tail", limit: 80 }, manifest, upserts: manifest.map((item) => item.id), chunkCount: 3, snapshotId: "x".repeat(43) })!
+    expect(visibleCachedMessages(cache).map((item) => item.info.id)).toEqual(["oldest", "older", "newest"])
+  })
+
+  it("keeps canonical history before a freshly staged newest message", async () => {
+    const old = message("old", "old")
+    const fresh = message("fresh", "fresh")
+    let cache = await replaceCanonicalMessages(emptyMessageCache<typeof old>(), [old])
+    cache = await stageMessageProgress(cache, [fresh])
+    expect(visibleCachedMessages(cache).map((item) => item.info.id)).toEqual(["old", "fresh"])
+  })
+
+  it("projects a staged update at its canonical position and hides a matching local record", async () => {
+    const older = message("older", "older")
+    const original = message("same", "original")
+    const updated = message("same", "updated")
+    const newer = message("newer", "newer")
+    let cache = await replaceCanonicalMessages(emptyMessageCache<typeof older>(), [older, original, newer])
+    cache = { ...cache, local: { messages: [message("same", "optimistic", "accepted")] } }
+    cache = await stageMessageProgress(cache, [updated])
+    expect(visibleCachedMessages(cache).map((item) => `${item.info.id}:${item.parts[0]?.text}`)).toEqual(["older:older", "same:updated", "newer:newer"])
+    const manifest = await Promise.all([older, updated, newer].map(entry))
+    cache = commitMessageManifest(cache, { version: 1, scope: { kind: "tail", limit: 80 }, manifest, upserts: ["same"], chunkCount: 1, snapshotId: "x".repeat(43) })!
+    expect(visibleCachedMessages(cache).map((item) => `${item.info.id}:${item.parts[0]?.text}`)).toEqual(["older:older", "same:updated", "newer:newer"])
+  })
+
+  it("rebases prepared progress onto the latest canonical, staged, and local state", async () => {
+    const canonical = message("canonical", "canonical")
+    const current = message("current", "current")
+    const remote = message("remote", "remote")
+    const local = message("local", "local", "accepted")
+    const prepared = await prepareMessageProgress([remote])
+    let cache = await replaceCanonicalMessages(emptyMessageCache<typeof canonical>(), [canonical])
+    cache = await stageMessage(cache, current)
+    cache = { ...cache, local: { messages: [local] } }
+    cache = applyPreparedMessageProgress(cache, prepared)
+    expect(visibleCachedMessages(cache).map((item) => item.info.id)).toEqual(["canonical", "current", "remote", "local"])
+  })
+
+  it("commits a prepared legacy snapshot against latest local state without canonical duplicates", async () => {
+    const stale = message("stale", "stale")
+    const remote = message("remote", "remote")
+    const localRemote = message("remote", "optimistic", "accepted")
+    const local = message("local", "local", "accepted")
+    const prepared = await prepareCanonicalMessages([remote])
+    let cache = await replaceCanonicalMessages(emptyMessageCache<typeof stale>(), [stale])
+    cache = { ...cache, local: { messages: [localRemote, local] } }
+    const committed = commitPreparedCanonicalMessages(cache, prepared)!
+    expect(visibleCachedMessages(committed).map((item) => item.info.id)).toEqual(["remote", "local"])
+    expect(visibleCachedMessages(committed).find((item) => item.info.id === "remote")?.parts[0]?.text).toBe("remote")
   })
 
   it("commits a deletion-only zero-upsert manifest after an unchanged one", async () => {

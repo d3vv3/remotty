@@ -2,6 +2,8 @@ import { canonicalJsonFingerprint, canonicalMessageValue, type JsonValue, type M
 
 export type MessageWithId = { info: { id: string; delivery?: string } }
 export type CachedMessageRecord<T extends MessageWithId = MessageWithId> = { message: T; fingerprint: string }
+export type PreparedMessageRecord<T extends MessageWithId = MessageWithId> = { id: string; record: CachedMessageRecord<T> }
+export type PreparedCanonicalMessages<T extends MessageWithId = MessageWithId> = { manifest: MessageDeltaManifest; records: PreparedMessageRecord<T>[] }
 export type MessageCache<T extends MessageWithId = MessageWithId> = {
   version: 2
   canonical: { manifest: Array<{ id: string; fingerprint: string }>; records: Record<string, CachedMessageRecord<T>>; syncedAt: number }
@@ -53,6 +55,32 @@ export const stageMessage = async <T extends MessageWithId>(cache: MessageCache<
   return { ...cache, staged: { records } }
 }
 
+/** Fingerprints an ordered progress snapshot without capturing a mutable cache. */
+export const prepareMessageProgress = async <T extends MessageWithId>(messages: T[]): Promise<PreparedMessageRecord<T>[]> => {
+  const records = new Map<string, CachedMessageRecord<T>>()
+  for (const message of messages) {
+    const fingerprint = await canonicalJsonFingerprint(canonicalMessageValue(asJson(message)))
+    records.delete(message.info.id)
+    records.set(message.info.id, { message, fingerprint })
+  }
+  return [...records.entries()].map(([id, record]) => ({ id, record }))
+}
+
+/** Applies already fingerprinted progress records to the latest cache without restoring stale state. */
+export const applyPreparedMessageProgress = <T extends MessageWithId>(cache: MessageCache<T>, records: PreparedMessageRecord<T>[]): MessageCache<T> => {
+  const staged = { ...cache.staged.records }
+  for (const { id, record } of records) {
+    if (record.message.info.id !== id) throw new Error("Prepared message id did not match its body")
+    delete staged[id]
+    staged[id] = record
+  }
+  return { ...cache, staged: { records: staged } }
+}
+
+/** Re-stages a cumulative, already canonical-ordered progress snapshot. */
+export const stageMessageProgress = async <T extends MessageWithId>(cache: MessageCache<T>, messages: T[]): Promise<MessageCache<T>> =>
+  applyPreparedMessageProgress(cache, await prepareMessageProgress(messages))
+
 export const commitMessageManifest = <T extends MessageWithId>(cache: MessageCache<T>, manifest: MessageDeltaManifest): MessageCache<T> | undefined => {
   const available = { ...cache.canonical.records, ...cache.staged.records }
   const records: Record<string, CachedMessageRecord<T>> = {}
@@ -93,29 +121,41 @@ export const commitMessageManifest = <T extends MessageWithId>(cache: MessageCac
 
 /** Converts a complete legacy/chunk response into the same canonical cache shape as delta. */
 export const replaceCanonicalMessages = async <T extends MessageWithId>(cache: MessageCache<T>, messages: T[]): Promise<MessageCache<T>> => {
-  let staged = cache
-  const manifest = [] as Array<{ id: string; fingerprint: string }>
-  for (const message of messages) {
-    staged = await stageMessage(staged, message)
-    const record = staged.staged.records[message.info.id]
-    if (!record || manifest.some((entry) => entry.id === message.info.id)) throw new Error("Legacy messages require unique ids")
-    manifest.push({ id: message.info.id, fingerprint: record.fingerprint })
-  }
-  const snapshotId = await canonicalJsonFingerprint({ version: 1, scope: { kind: "tail", limit: 80 }, manifest })
-  const committed = commitMessageManifest(staged, { version: 1, scope: { kind: "tail", limit: 80 }, manifest, upserts: manifest.map((entry) => entry.id), chunkCount: 1, snapshotId })
+  const prepared = await prepareCanonicalMessages(messages)
+  const committed = commitPreparedCanonicalMessages(cache, prepared)
   if (!committed) throw new Error("Could not construct canonical message cache")
   return committed
 }
 
+/** Builds a self-contained canonical snapshot that can later be committed against the latest local state. */
+export const prepareCanonicalMessages = async <T extends MessageWithId>(messages: T[]): Promise<PreparedCanonicalMessages<T>> => {
+  const records: PreparedMessageRecord<T>[] = []
+  const manifest = [] as Array<{ id: string; fingerprint: string }>
+  for (const message of messages) {
+    const fingerprint = await canonicalJsonFingerprint(canonicalMessageValue(asJson(message)))
+    if (manifest.some((entry) => entry.id === message.info.id)) throw new Error("Legacy messages require unique ids")
+    const record = { message, fingerprint }
+    records.push({ id: message.info.id, record })
+    manifest.push({ id: message.info.id, fingerprint: record.fingerprint })
+  }
+  const snapshotId = await canonicalJsonFingerprint({ version: 1, scope: { kind: "tail", limit: 80 }, manifest })
+  return { manifest: { version: 1, scope: { kind: "tail", limit: 80 }, manifest, upserts: manifest.map((entry) => entry.id), chunkCount: 1, snapshotId }, records }
+}
+
+/** Commits a prepared legacy snapshot while reconciling the current cache's local state exactly once. */
+export const commitPreparedCanonicalMessages = <T extends MessageWithId>(cache: MessageCache<T>, prepared: PreparedCanonicalMessages<T>) =>
+  commitMessageManifest(applyPreparedMessageProgress(cache, prepared.records), prepared.manifest)
+
 export const visibleCachedMessages = <T extends MessageWithId>(cache: MessageCache<T>) => {
+  const manifestIds = new Set(cache.canonical.manifest.map((entry) => entry.id))
   const canonical = cache.canonical.manifest.flatMap((entry) => {
-    const record = cache.canonical.records[entry.id]
+    const record = cache.staged.records[entry.id] ?? cache.canonical.records[entry.id]
     return record ? [record.message] : []
   })
-  const canonicalIds = new Set(canonical.map((message) => message.info.id))
-  const staged = Object.values(cache.staged.records).map((record) => record.message).filter((message) => !canonicalIds.has(message.info.id))
+  const staged = Object.values(cache.staged.records).map((record) => record.message).filter((message) => !manifestIds.has(message.info.id))
   const visible = [...canonical, ...staged]
-  for (const message of cache.local.messages.filter((item) => !canonicalIds.has(item.info.id))) {
+  const visibleIds = new Set(visible.map((message) => message.info.id))
+  for (const message of cache.local.messages.filter((item) => !visibleIds.has(item.info.id))) {
     const knownMessageIds = (message.info as { knownMessageIds?: string[] }).knownMessageIds
     if (!knownMessageIds) {
       const created = (message.info as { time?: { created?: number } }).time?.created

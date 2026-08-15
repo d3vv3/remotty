@@ -46,7 +46,7 @@ import { pairingBundleFrom, routeForEnrollment, routeForStoredIdentity } from ".
 import { NOTIFICATION_PROMPT_SEEN, shouldOfferPushNotifications } from "./notificationPrompt"
 import { relaySupportsSessionCreate, stableWorkspaceKey, visibleSubagents, workspaceSessionKey, type RoutedSession, type RoutedSubagent } from "./relayState"
 import { connectionLabel, exactConnectionTime, mergeByMessageId, promptDeliveryState } from "./resilience"
-import { commitManifestForRefresh, emptyMessageCache, messageInventory, migrateMessageCache, replaceCanonicalMessages, stageMessage, visibleCachedMessages, type MessageCache } from "./messageCache"
+import { applyPreparedMessageProgress, commitManifestForRefresh, commitPreparedCanonicalMessages, emptyMessageCache, messageInventory, migrateMessageCache, prepareCanonicalMessages, prepareMessageProgress, visibleCachedMessages, type MessageCache } from "./messageCache"
 import { clearSubmittedDraft, resourceArray, retainedSessionState, type SessionResourceRevisions } from "./sessionState"
 import { SubagentActivity } from "./SubagentActivity"
 import { resolveAgentColor } from "./agentColor"
@@ -926,7 +926,7 @@ function SessionDetail({
   supportsSubagents?: boolean
   permission?: PermissionRequest
   question?: QuestionRequest
-  request: (command: any, progress?: (messages: SessionMessage[]) => void) => Promise<unknown>
+  request: (command: any, progress?: (messages: SessionMessage[], isActive: () => boolean) => void | Promise<void>) => Promise<unknown>
   loadCache: <T>(resource: string) => Promise<{ value: T; syncedAt: number } | undefined>
   saveCache: <T>(resource: string, value: T) => Promise<void>
   onBack: () => void
@@ -1018,15 +1018,13 @@ function SessionDetail({
       const generation = ++generationRef.current
       const owns = () => mountedRef.current && generation === generationRef.current
       try {
-        const progress = key === "messages" ? async (partial: SessionMessage[]) => {
-          if (!owns()) return
-          let cache = messageCacheRef.current
-          for (const message of partial) {
-            if (!owns()) return
-            cache = await stageMessage(cache, message)
-            if (!owns()) return
-          }
-          if (owns()) await persistMessageCache(cache)
+        const progress = key === "messages" ? async (partial: SessionMessage[], isRequestActive: () => boolean) => {
+          if (!owns() || !isRequestActive()) return
+          followOutputRef.current = true
+          const prepared = await prepareMessageProgress(partial)
+          if (!owns() || !isRequestActive()) return
+          const cache = applyPreparedMessageProgress(messageCacheRef.current, prepared)
+          await persistMessageCache(cache)
         } : undefined
         const result = await request(key === "messages" ? { ...command, sync: { version: 1, known: messageInventory(messageCacheRef.current) } } : command, progress)
         if (!owns()) return false
@@ -1046,8 +1044,10 @@ function SessionDetail({
                 if (!committed) throw new Error("Delta transfer was incomplete")
                 await persistMessageCache(committed)
               } else {
-                const committed = await replaceCanonicalMessages(messageCacheRef.current, next as SessionMessage[])
+                const prepared = await prepareCanonicalMessages(next as SessionMessage[])
                 if (!owns()) return false
+                const committed = commitPreparedCanonicalMessages(messageCacheRef.current, prepared)
+                if (!committed) throw new Error("Could not construct canonical message cache")
                 await persistMessageCache(committed)
               }
             }
@@ -1180,7 +1180,7 @@ function SessionDetail({
   )
 
   useLayoutEffect(() => {
-    if (tab !== "activity" || !followOutputRef.current || document.activeElement === promptRef.current) return
+    if (tab !== "activity" || !followOutputRef.current) return
     const frame = requestAnimationFrame(() => {
       if (detailContentRef.current) {
         detailContentRef.current.scrollTop = detailContentRef.current.scrollHeight

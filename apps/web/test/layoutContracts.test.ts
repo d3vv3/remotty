@@ -36,6 +36,10 @@ describe("layout source contracts", () => {
     expect(app).toContain('{showComposer && <form className="composer" onSubmit={submit}>')
     expect(app).toContain('if (next === "activity")')
     expect(app).toContain("detailContentRef.current.scrollTop = detailContentRef.current.scrollHeight")
+    expect(app).not.toContain("document.activeElement === promptRef.current")
+    expect(app).toContain("followOutputRef.current = true\n          const prepared = await prepareMessageProgress(partial)\n          if (!owns() || !isRequestActive()) return\n          const cache = applyPreparedMessageProgress(messageCacheRef.current, prepared)")
+    expect(app).toContain("const cache = applyPreparedMessageProgress(messageCacheRef.current, prepared)\n          await persistMessageCache(cache)")
+    expect(app).toContain("lastScrollTopRef.current = detailContentRef.current.scrollTop")
   })
 
   it("keeps Subagents scrolling within its fixed-height detail region", () => {
