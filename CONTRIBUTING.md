@@ -44,4 +44,4 @@ There is no lint command. `apps/web/public/notification-sw.js` is source; do not
 
 Use `pnpm` for dependency changes and commit the resulting `pnpm-lock.yaml` only when dependency manifests change. Do not hand-edit lockfile entries. Keep the broker's opaque-ciphertext boundary intact, and treat protocol updates as coordinated compatibility work across broker, web, and plugin.
 
-Document user-visible install, configuration, command, security, and deployment changes in the root README and relevant package or public discovery documentation. Run the manual conditions in [the network matrix](docs/network-test-matrix.md) for relay/network behavior changes; it uses `sudo tc`, so clean up shaping after every case and obtain approval before running it.
+Document user-visible install, configuration, command, security, and deployment changes in the root README and relevant package or public discovery documentation.

@@ -9,7 +9,6 @@
 - Treat protocol changes as compatibility-sensitive: they affect the plugin, web app, and broker together. Update coverage across affected packages.
 - `apps/web/public/notification-sw.js` is authored source, even though it is imported into the generated service worker. Do not edit generated `dist/`, `dev-dist/`, `.vite/`, or `node_modules/` output.
 - Add focused tests for behavior changes. Run `pnpm typecheck`, `pnpm test`, and `pnpm build` for cross-package changes. There is no lint script.
-- The manual network matrix uses `sudo tc`; do not run it without explicit approval.
 - Preserve unrelated working-tree changes, including untracked files. Do not touch `.serena/`.
 
 ## Approval boundaries
