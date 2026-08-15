@@ -1,4 +1,8 @@
 export type ConnectionState = "connecting" | "online" | "unstable" | "offline" | "disconnected"
+export type RelayHealth = { lastContact?: number; rtt?: number; timedOut?: boolean }
+export type ConnectionTone = "online" | "unstable" | "offline"
+export type ConnectionPresentation = { state: ConnectionTone | "connecting"; label: string; tone: ConnectionTone; hasTimedOutRelay: boolean }
+export type ConnectionRowPresentation = { state: ConnectionTone; label: string; detail: string }
 
 export const reconnectDelay = (attempt: number, random = Math.random) => {
   const base = Math.min(30_000, 1_000 * 2 ** Math.max(0, attempt))
@@ -48,12 +52,33 @@ export const exactConnectionTime = (time: number, now: number) => {
 export const hasSequenceGap = (current: number | undefined, next: number) =>
   current !== undefined && next > current + 1
 
-export const connectionLabel = (state: ConnectionState, relayCount: number, timedOut: boolean) => {
-  if (state === "online" && relayCount && !timedOut) return "Live"
-  if (state === "connecting") return "Connecting"
-  if (state === "unstable" || timedOut) return "Unstable"
-  return "Offline"
+export const effectiveConnectionPresentation = (
+  state: ConnectionState,
+  connectedRelayIds: Iterable<string>,
+  relayCount: number,
+  health: Record<string, RelayHealth>,
+): ConnectionPresentation => {
+  const hasTimedOutRelay = healthSummary(connectedRelayIds, health)
+  if (state === "online" && relayCount && !hasTimedOutRelay) return { state: "online", label: "Live", tone: "online", hasTimedOutRelay }
+  if (state === "connecting") return { state: "connecting", label: "Connecting", tone: "offline", hasTimedOutRelay }
+  if (state === "unstable" || hasTimedOutRelay) return { state: "unstable", label: "Unstable", tone: "unstable", hasTimedOutRelay }
+  return { state: "offline", label: "Offline", tone: "offline", hasTimedOutRelay }
 }
+
+export const relayConnectionPresentation = (connected: boolean, health: RelayHealth | undefined, now: number): ConnectionRowPresentation => {
+  if (!connected) return { state: "offline", label: "Offline", detail: health?.rtt !== undefined ? `${health.rtt} ms` : health?.lastContact ? `Last contact ${exactConnectionTime(health.lastContact, now)}` : "" }
+  if (health?.timedOut) return { state: "unstable", label: "Unstable", detail: health.lastContact ? `Last contact ${exactConnectionTime(health.lastContact, now)}` : "" }
+  return { state: "online", label: "Connected", detail: health?.rtt !== undefined ? `${health.rtt} ms` : health?.lastContact ? `Last contact ${exactConnectionTime(health.lastContact, now)}` : "" }
+}
+
+export const serviceConnectionPresentation = (serviceConnected: boolean, overall: ConnectionPresentation): ConnectionRowPresentation => {
+  if (!serviceConnected) return { state: "offline", label: "Unreachable", detail: "" }
+  if (overall.state === "unstable" && !overall.hasTimedOutRelay) return { state: "unstable", label: "Unstable", detail: "" }
+  return { state: "online", label: "Connected", detail: "" }
+}
+
+export const connectionLabel = (state: ConnectionState, relayCount: number, timedOut: boolean) =>
+  effectiveConnectionPresentation(state, timedOut ? ["timed-out"] : [], relayCount, timedOut ? { "timed-out": { timedOut } } : {}).label
 
 import { MAX_CANONICAL_MESSAGE_BYTES } from "@remotty/protocol"
 
@@ -177,5 +202,5 @@ export const readOnlyCommand = (type: string) =>
 
 export const retryPlan = (now: number, deadline: number, attempts: number) => attempts < 2 && now < deadline
 export const requestInactivityMs = (type: string) => type === "relay.ping" ? 8_000 : ["session.messages", "workspace.diff", "workspace.diff.patch"].includes(type) ? 20_000 : 15_000
-export const healthSummary = (connected: Iterable<string>, health: Record<string, { timedOut?: boolean }>) => [...connected].some((relayId) => health[relayId]?.timedOut)
+export const healthSummary = (connected: Iterable<string>, health: Record<string, RelayHealth>) => [...connected].some((relayId) => health[relayId]?.timedOut)
 export const promptDeliveryState = (message: string): "uncertain" | "failed" => /Connection interrupted|relay did not respond|Relay is offline|workspace relay disconnected|socket (?:closed|replaced)|transport (?:closed|lost)/i.test(message) ? "uncertain" : "failed"

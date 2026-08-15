@@ -1,11 +1,27 @@
 import { describe, expect, it } from "vitest"
 import { canonicalJsonFingerprint, canonicalMessageValue } from "@remotty/protocol"
-import { applyPreparedMessageProgress, commitManifestForRefresh, commitMessageManifest, commitPreparedCanonicalMessages, emptyMessageCache, messageInventory, migrateMessageCache, prepareCanonicalMessages, prepareMessageProgress, replaceCanonicalMessages, stageMessage, stageMessageProgress, verifyDeltaSnapshot, visibleCachedMessages } from "../src/messageCache"
+import { applyPreparedMessageProgress, commitManifestForRefresh, commitMessageManifest, commitPreparedCanonicalMessages, emptyMessageCache, formatMessageCacheSaveFailure, messageInventory, migrateMessageCache, prepareCanonicalMessages, prepareMessageProgress, replaceCanonicalMessages, shouldReportCacheFailure, stageMessage, stageMessageProgress, verifyDeltaSnapshot, visibleCachedMessages } from "../src/messageCache"
 
 const message = (id: string, text: string, delivery?: string) => ({ info: { id, ...(delivery ? { delivery } : {}) }, parts: [{ type: "text", text }] })
 const entry = async (value: ReturnType<typeof message>) => ({ id: value.info.id, fingerprint: await canonicalJsonFingerprint(canonicalMessageValue(value)) })
 
 describe("versioned message cache", () => {
+  it("formats durable cache failures from Error, DOMException-like, and unknown causes", () => {
+    expect(formatMessageCacheSaveFailure(new Error("disk full"))).toBe("Messages are current, but local cache could not be saved: disk full")
+    expect(formatMessageCacheSaveFailure({ name: "QuotaExceededError", message: "storage limit" })).toBe("Messages are current, but local cache could not be saved: QuotaExceededError: storage limit")
+    expect(formatMessageCacheSaveFailure(undefined)).toBe("Messages are current, but local cache could not be saved: Unknown error")
+  })
+
+  it("reports repeated cache failures after the visibility cooldown and resets after success", () => {
+    const first = { message: "cache full", at: 1_000 }
+    expect(shouldReportCacheFailure(undefined, "cache full", 1_000)).toBe(true)
+    expect(shouldReportCacheFailure(first, "cache full", 6_999)).toBe(false)
+    expect(shouldReportCacheFailure(first, "cache full", 7_000)).toBe(true)
+    expect(shouldReportCacheFailure(first, "permissions changed", 1_001)).toBe(true)
+    const afterSuccess = undefined
+    expect(shouldReportCacheFailure(afterSuccess, "cache full", 1_001)).toBe(true)
+  })
+
   it("migrates raw arrays and preserves local optimistic records", async () => {
     const cache = await migrateMessageCache([message("local", "phone", "accepted")])
     expect(cache.version).toBe(2)

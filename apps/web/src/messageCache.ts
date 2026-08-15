@@ -11,6 +11,40 @@ export type MessageCache<T extends MessageWithId = MessageWithId> = {
   local: { messages: T[]; acceptedMisses?: Record<string, number> }
 }
 
+export const MESSAGE_CACHE_SAVE_FAILURE_PREFIX = "Messages are current, but local cache could not be saved: "
+export const CACHE_FAILURE_COOLDOWN_MS = 6_000
+export type CacheFailure = { message: string; at: number }
+
+/** Allows repeated storage failures to be visible after the global error display expires. */
+export const shouldReportCacheFailure = (
+  previous: CacheFailure | undefined,
+  message: string,
+  now: number,
+  cooldown = CACHE_FAILURE_COOLDOWN_MS,
+) => !previous || previous.message !== message || now - previous.at >= cooldown
+
+/** Produces a useful storage diagnostic without assuming the rejection is an Error. */
+export const messageCacheErrorDetail = (cause: unknown) => {
+  if (cause instanceof Error) {
+    const message = cause.message || "Unknown error"
+    return cause.name && cause.name !== "Error" ? `${cause.name}: ${message}` : message
+  }
+  if (cause && typeof cause === "object") {
+    const value = cause as { name?: unknown; message?: unknown }
+    const name = typeof value.name === "string" && value.name ? value.name : undefined
+    const message = typeof value.message === "string" && value.message ? value.message : undefined
+    if (name && message) return `${name}: ${message}`
+    return name ?? message ?? "Unknown error"
+  }
+  return typeof cause === "string" && cause ? cause : "Unknown error"
+}
+
+export const formatMessageCacheSaveFailure = (cause: unknown) =>
+  `${MESSAGE_CACHE_SAVE_FAILURE_PREFIX}${messageCacheErrorDetail(cause)}`
+
+export const isMessageCacheSaveFailure = (cause: unknown) =>
+  cause instanceof Error && cause.message.startsWith(MESSAGE_CACHE_SAVE_FAILURE_PREFIX)
+
 const asJson = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue
 export const emptyMessageCache = <T extends MessageWithId>(): MessageCache<T> => ({ version: 2, canonical: { manifest: [], records: {}, syncedAt: 0 }, staged: { records: {} }, local: { messages: [] } })
 

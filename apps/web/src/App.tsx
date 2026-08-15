@@ -45,8 +45,8 @@ import { useRelay } from "./useRelay"
 import { pairingBundleFrom, routeForEnrollment, routeForStoredIdentity } from "./pairing"
 import { NOTIFICATION_PROMPT_SEEN, shouldOfferPushNotifications } from "./notificationPrompt"
 import { relaySupportsSessionCreate, stableWorkspaceKey, visibleSubagents, workspaceSessionKey, type RoutedSession, type RoutedSubagent } from "./relayState"
-import { connectionLabel, exactConnectionTime, mergeByMessageId, promptDeliveryState } from "./resilience"
-import { applyPreparedMessageProgress, commitManifestForRefresh, commitPreparedCanonicalMessages, emptyMessageCache, messageInventory, migrateMessageCache, prepareCanonicalMessages, prepareMessageProgress, visibleCachedMessages, type MessageCache } from "./messageCache"
+import { effectiveConnectionPresentation, exactConnectionTime, mergeByMessageId, promptDeliveryState, relayConnectionPresentation, serviceConnectionPresentation } from "./resilience"
+import { applyPreparedMessageProgress, commitManifestForRefresh, commitPreparedCanonicalMessages, emptyMessageCache, formatMessageCacheSaveFailure, isMessageCacheSaveFailure, messageCacheErrorDetail, messageInventory, migrateMessageCache, prepareCanonicalMessages, prepareMessageProgress, shouldReportCacheFailure, visibleCachedMessages, type CacheFailure, type MessageCache } from "./messageCache"
 import { clearSubmittedDraft, resourceArray, retainedSessionState, type SessionResourceRevisions } from "./sessionState"
 import { SubagentActivity } from "./SubagentActivity"
 import { resolveAgentColor } from "./agentColor"
@@ -167,11 +167,13 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
     sessionKey(session) === selectedKey || `${session.workspaceRelayId}:${session.id}` === selectedKey || (!selectedKey?.includes(":") && session.id === selectedKey),
   )
   const loadSelectedCache = useCallback(<T,>(resource: string) => selected
-    ? relayState.loadCache<T>(selected.workspaceRelayId, resource, selected.id)
-    : Promise.resolve(undefined), [relayState.loadCache, selected?.workspaceRelayId, selected?.id])
+    ? relayState.loadCache<T>(selected.workspaceId, resource, selected.id)
+    : Promise.resolve(undefined), [relayState.loadCache, selected?.workspaceId, selected?.id])
   const saveSelectedCache = useCallback(<T,>(resource: string, value: T) => selected
-    ? relayState.saveCache(selected.workspaceRelayId, resource, value, selected.id)
-    : Promise.resolve(), [relayState.saveCache, selected?.workspaceRelayId, selected?.id])
+    ? relayState.saveCache(selected.workspaceId, resource, value, selected.id)
+    : Promise.resolve(), [relayState.saveCache, selected?.workspaceId, selected?.id])
+  const connectedRelayIds = relayState.relays.filter((relay) => relayState.isRelayConnected(relay.id)).map((relay) => relay.id)
+  const connectionPresentation = effectiveConnectionPresentation(relayState.connection, connectedRelayIds, relayState.relays.length, relayState.relayHealth)
   const sessionGroups = useMemo(() => {
     const groups = new Map<string, RoutedSession[]>()
     for (const session of relayState.sessions) {
@@ -265,10 +267,10 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
           <span className="brand-mark"><Code2 size={18} /></span>
           <strong>remotty</strong>
         </div>
-        <div className={`connection-state ${relayState.connection}`}>
+        <div className={`connection-state ${connectionPresentation.tone}`}>
           <button ref={connectionTriggerRef} className="connection-button" onClick={() => setConnectionDetailsOpen(true)} aria-haspopup="dialog" aria-expanded={connectionDetailsOpen} aria-controls="connection-status-dialog">
-            {relayState.connection === "online" ? <Wifi size={15} /> : <WifiOff size={15} />}
-            {connectionLabel(relayState.connection, relayState.relays.length, Object.values(relayState.relayHealth).some((health) => health.timedOut))}
+            {connectionPresentation.state === "online" ? <Wifi size={15} /> : <WifiOff size={15} />}
+            {connectionPresentation.label}
           </button>
           <a className="notification-button" title="View source" aria-label="View source" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer"><Github size={15} /></a>
           <button
@@ -801,14 +803,18 @@ function ConnectionDetails({ relayState, onClose }: { relayState: ReturnType<typ
     return () => window.clearInterval(timer)
   }, [])
   const refresh = () => { void relayState.request({ type: "snapshot.request" }).catch((error) => relayState.setError(error.message)) }
+  const connectedRelayIds = relayState.relays.filter((relay) => relayState.isRelayConnected(relay.id)).map((relay) => relay.id)
+  const overall = effectiveConnectionPresentation(relayState.connection, connectedRelayIds, relayState.relays.length, relayState.relayHealth)
+  const service = serviceConnectionPresentation(relayState.serviceConnected, overall)
   return (
     <div className="connection-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
       <section ref={dialogRef} className="connection-dialog" id="connection-status-dialog" role="dialog" aria-modal="true" aria-labelledby="connection-title">
         <header><h2 id="connection-title">Connection status</h2><button ref={closeRef} className="icon-button" title="Close" aria-label="Close connection status" onClick={onClose}><X size={18} /></button></header>
-        <div className="connection-dialog-body"><div className="connection-row"><span>Remotty service</span><b>{relayState.serviceConnected ? "Connected" : "Unreachable"}</b></div>
+        <div className="connection-dialog-body"><div className={`connection-row ${service.state}`}><span>Remotty service</span><b>{service.label}</b></div>
         {relayState.relays.map((relay) => {
           const health = relayState.relayHealth[relay.id]
-          return <div className="connection-row" key={relay.id}><span>Your computer<small>{relay.name} . {relay.workspace}</small></span><b>{relayState.isRelayConnected(relay.id) ? "Connected" : "Offline"}<small>{health?.rtt !== undefined ? `${health.rtt} ms` : health?.lastContact ? `Last contact ${exactConnectionTime(health.lastContact, now)}` : ""}</small></b></div>
+          const presentation = relayConnectionPresentation(relayState.isRelayConnected(relay.id), health, now)
+          return <div className={`connection-row ${presentation.state}`} key={relay.id}><span>Your computer<small>{relay.name} . {relay.workspace}</small></span><b>{presentation.label}<small>{presentation.detail}</small></b></div>
         })}
         <div className="connection-row"><span>OpenCode data</span><b>{relayState.lastSyncedAt && now - relayState.lastSyncedAt < 60_000 ? "Current" : "Stale"}<small>{relayState.lastSyncedAt ? `Updated ${exactConnectionTime(relayState.lastSyncedAt, now)}` : "Not yet synced"}</small></b></div></div>
         <footer><button className="notification-secondary" onClick={onClose}>Close</button><button className="notification-primary" onClick={refresh}><RefreshCw size={15} /> Refresh</button></footer>
@@ -961,7 +967,8 @@ function SessionDetail({
   const messageRefreshGenerationRef = useRef(0)
   const todosRefreshGenerationRef = useRef(0)
   const diffGenerationRef = useRef(0)
-  const persistenceRef = useRef<Promise<void>>(Promise.resolve())
+  const lastPersistenceFailureRef = useRef<CacheFailure | undefined>(undefined)
+  const lastTodoPersistenceFailureRef = useRef<CacheFailure | undefined>(undefined)
   const selectedAgent = agents.find((item) => item.name === agent)
   const agentColors = useMemo(() => agents.map((item, index) => resolveAgentColor(item.color, index)), [agents])
   const selectedAgentIndex = agents.findIndex((item) => item.name === agent)
@@ -971,14 +978,35 @@ function SessionDetail({
   const showComposer = tab !== "subagents"
   const persistMessageCache = useCallback((cache: MessageCache<SessionMessage>) => {
     messageCacheRef.current = cache
-    setMessages(visibleCachedMessages(cache))
-    retainedSessionState.write(sessionKey, { messageCache: cache, messages: visibleCachedMessages(cache) })
-    // Serialize IndexedDB writes so an older progress save cannot win a newer commit.
-    persistenceRef.current = persistenceRef.current.catch(() => undefined).then(() => saveCache("messages", cache))
-    return persistenceRef.current
-  }, [saveCache, sessionKey])
+    const visible = visibleCachedMessages(cache)
+    setMessages(visible)
+    retainedSessionState.write(sessionKey, { messageCache: cache, messages: visible })
+    return saveCache("messages", cache).then(() => {
+      lastPersistenceFailureRef.current = undefined
+    }).catch((cause) => {
+      const message = formatMessageCacheSaveFailure(cause)
+      const now = Date.now()
+      if (shouldReportCacheFailure(lastPersistenceFailureRef.current, message, now)) {
+        onError(message)
+        lastPersistenceFailureRef.current = { message, at: now }
+      }
+      throw new Error(message, { cause })
+    })
+  }, [onError, saveCache, sessionKey])
   const persistLocalMessages = useCallback((messages: SessionMessage[]) =>
     persistMessageCache({ ...messageCacheRef.current, local: { ...messageCacheRef.current.local, messages: messages.filter((message) => message.info.delivery !== undefined) } }), [persistMessageCache])
+  const persistTodosCache = useCallback((todos: SessionTodo[]) => {
+    void saveCache("todos", todos).then(() => {
+      lastTodoPersistenceFailureRef.current = undefined
+    }).catch((cause) => {
+      const message = `Todos are current, but local cache could not be saved: ${messageCacheErrorDetail(cause)}`
+      const now = Date.now()
+      if (shouldReportCacheFailure(lastTodoPersistenceFailureRef.current, message, now)) {
+        onError(message)
+        lastTodoPersistenceFailureRef.current = { message, at: now }
+      }
+    })
+  }, [onError, saveCache])
 
   const refreshDiffs = async (): Promise<boolean> => {
     const generation = ++diffGenerationRef.current
@@ -1052,11 +1080,12 @@ function SessionDetail({
               }
             }
             else update(next)
-            if (key !== "messages") void saveCache(key, next)
+            if (key === "todos") persistTodosCache(next as SessionTodo[])
           }
         }
         return owns()
-      } catch {
+      } catch (error) {
+        if (owns() && key === "messages" && !isMessageCacheSaveFailure(error)) onError(messageCacheErrorDetail(error))
         return false
       }
     }
@@ -1098,14 +1127,18 @@ function SessionDetail({
         messageCacheRef.current = cache
         setMessages(visibleCachedMessages(cache))
         setMessageCacheReadySession(session.id)
-      }).catch(() => {
+      }).catch((error) => {
         if (generation !== generationRef.current) return
+        onError(`Could not load local message cache: ${messageCacheErrorDetail(error)}`)
         const cache = emptyMessageCache<SessionMessage>()
         messageCacheRef.current = cache
         setMessages([])
         setMessageCacheReadySession(session.id)
       }),
-      loadCache<SessionTodo[]>("todos").then((cached) => cached && generation === generationRef.current && setTodos((current) => current.length ? current : cached.value)),
+      loadCache<SessionTodo[]>("todos").then((cached) => cached && generation === generationRef.current && setTodos((current) => current.length ? current : cached.value)).catch((error) => {
+        if (generation !== generationRef.current) return
+        onError(`Could not load local todos cache: ${messageCacheErrorDetail(error)}`)
+      }),
     ]).then(() => { if (generation === generationRef.current) setLoading(false) })
   }, [loadCache, session.id, sessionKey])
 
@@ -1205,7 +1238,7 @@ function SessionDetail({
     const optimistic: SessionMessage = { info: { id: messageId, role: "user", time: { created: Date.now() }, delivery: "sending", knownMessageIds }, parts: [{ type: "text", text }] }
     setMessages((current) => {
       const next = mergeByMessageId(current, [...current, optimistic])
-      void persistLocalMessages(next)
+      void persistLocalMessages(next).catch(() => undefined)
       return next
     })
     setSending(true)
@@ -1225,7 +1258,7 @@ function SessionDetail({
         const next = canonicalId
           ? current.map((message) => message.info.id === messageId ? { ...message, info: { ...message.info, id: canonicalId, delivery: "accepted" as const } } : message)
           : current.map((message) => message.info.id === messageId ? { ...message, info: { ...message.info, delivery: "uncertain" as const, legacyPrompt: true } } : message)
-        void persistLocalMessages(next)
+        void persistLocalMessages(next).catch(() => undefined)
         return next
       })
       setPrompt((current) => clearSubmittedDraft(current, rawSubmitted))
@@ -1233,7 +1266,7 @@ function SessionDetail({
       const delivery = promptDeliveryState((error as Error).message)
       setMessages((current) => {
         const next = current.map((message) => message.info.id === messageId ? { ...message, info: { ...message.info, delivery, ...(delivery === "uncertain" ? { legacyPrompt: true } : {}) } } : message)
-        void persistLocalMessages(next)
+        void persistLocalMessages(next).catch(() => undefined)
         return next
       })
       onError((error as Error).message)

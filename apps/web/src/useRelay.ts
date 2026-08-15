@@ -32,7 +32,7 @@ import {
 } from "./deviceStore"
 import { acceptsRelayPosition, aggregateRelaySlices, bumpResourceRevisions, bumpSessionRevisions, commandRelayId, normalizeRelaySlice, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, type RelaySlice, type ResourceRevisions } from "./relayState"
 import { addChunk, assembledMessages, completeChunks, createChunkAssembly, exactManifestMessages, HANDSHAKE_TIMEOUT_MS, hasSequenceGap, healthSummary, orderByManifest, readOnlyCommand, reconnectDelay, requestInactivityMs, retryPlan, shouldExpireHandshakeWatchdog, shouldReconnectTransportOnResume, validManifest, type ChunkAssembly } from "./resilience"
-import { verifyDeltaSnapshot } from "./messageCache"
+import { messageCacheErrorDetail, shouldReportCacheFailure, type CacheFailure, verifyDeltaSnapshot } from "./messageCache"
 import { retainedSessionState } from "./sessionState"
 import { serializePushSubscription } from "./pushSubscription"
 
@@ -67,6 +67,10 @@ export const verifiedCanonicalMessages = <T>(messages: T[], verified: ReadonlySe
 
 export const legacyManifestCompatible = (chunks: ChunkAssembly, total: number) =>
   chunks.total === undefined || chunks.total === total
+
+/** Resolves a transient relay ID when available; stable workspace IDs need no live slice. */
+export const cacheNamespace = (cacheRelayId: string, relay?: Pick<RelaySlice["relay"], "workspaceId" | "hostname" | "workspace">) =>
+  relay ? stableWorkspaceKey(relay) : cacheRelayId
 
 /** Computes legacy progress only after its canonical manifest is available. */
 export const legacyChunkState = (chunks: ChunkAssembly, manifestIds: string[] | undefined, verified: ReadonlySet<string>) => {
@@ -240,6 +244,7 @@ export function useRelay(initialBundle?: PairingBundle) {
   const hiddenAtRef = useRef<number | undefined>(undefined)
   const lastTransportActivityRef = useRef<number | undefined>(undefined)
   const lastRecoveryAtRef = useRef(0)
+  const snapshotCacheFailureRef = useRef<CacheFailure | undefined>(undefined)
 
   const publishSlices = useCallback(() => {
     const state = aggregateRelaySlices(slicesRef.current, connectedRelaysRef.current)
@@ -482,6 +487,14 @@ export function useRelay(initialBundle?: PairingBundle) {
         }
         void saveCachedResource(identity, stableWorkspaceKey(data.relay), "snapshot", {
           relay: data.relay, sessions: data.sessions, subagents: data.subagents, agents: data.agents, permissions: data.permissions, questions: data.questions, sequence: data.sequence,
+        }).then(() => {
+          snapshotCacheFailureRef.current = undefined
+        }).catch((cause) => {
+          const message = `Workspace state is current, but local cache could not be saved: ${messageCacheErrorDetail(cause)}`
+          const now = Date.now()
+          if (!shouldReportCacheFailure(snapshotCacheFailureRef.current, message, now)) return
+          snapshotCacheFailureRef.current = { message, at: now }
+          setError(message)
         })
         setLastSyncedAt(Date.now())
         recoveryInFlightRef.current.delete(frame.sender)
@@ -1008,17 +1021,13 @@ export function useRelay(initialBundle?: PairingBundle) {
   }, [notificationsEnabled])
 
   const isRelayConnected = useCallback((relayId: string) => connectedRelaysRef.current.has(relayId), [])
-  const cacheRelayId = (relayId: string) => {
-    const relay = slicesRef.current.get(relayId)?.relay
-    return relay ? stableWorkspaceKey(relay) : relayId
-  }
   const loadCache = useCallback(<T,>(relayId: string, resource: string, sessionId?: string) => {
     const identity = identityRef.current
-    return identity ? loadCachedResource<T>(identity, cacheRelayId(relayId), resource, sessionId) : Promise.resolve(undefined)
+    return identity ? loadCachedResource<T>(identity, cacheNamespace(relayId, slicesRef.current.get(relayId)?.relay), resource, sessionId) : Promise.resolve(undefined)
   }, [])
   const saveCache = useCallback(<T,>(relayId: string, resource: string, value: T, sessionId?: string) => {
     const identity = identityRef.current
-    return identity ? saveCachedResource(identity, cacheRelayId(relayId), resource, value, sessionId) : Promise.resolve()
+    return identity ? saveCachedResource(identity, cacheNamespace(relayId, slicesRef.current.get(relayId)?.relay), resource, value, sessionId) : Promise.resolve()
   }, [])
 
   useEffect(() => {

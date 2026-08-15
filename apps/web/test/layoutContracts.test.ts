@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
+import { cacheNamespace } from "../src/useRelay"
 
 const source = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8")
 
@@ -79,9 +80,11 @@ describe("layout source contracts", () => {
   it("uses exact, modal-only connection timing and preserves zero-millisecond RTT", () => {
     const app = source("../src/App.tsx")
     const relay = source("../src/useRelay.ts")
-    expect(app).toContain("exactConnectionTime(health.lastContact, now)")
+    const resilience = source("../src/resilience.ts")
     expect(app).toContain("exactConnectionTime(relayState.lastSyncedAt, now)")
-    expect(app).toContain('health?.rtt !== undefined ? `${health.rtt} ms`')
+    expect(app).toContain("relayConnectionPresentation(relayState.isRelayConnected(relay.id), health, now)")
+    expect(resilience).toContain('health?.rtt !== undefined ? `${health.rtt} ms`')
+    expect(resilience).toContain('health?.timedOut) return { state: "unstable", label: "Unstable", detail: health.lastContact ? `Last contact ${exactConnectionTime(health.lastContact, now)}` : "" }')
     expect(app).toContain("window.setInterval(() => setNow(Date.now()), 1_000)")
     expect(relay).toContain("Connection handshake timed out.")
     expect(relay).toContain("HANDSHAKE_TIMEOUT_MS")
@@ -92,5 +95,48 @@ describe("layout source contracts", () => {
     expect(relay).toContain("setError((current) => current === \"Connection handshake timed out.\"")
     expect(relay).toContain("socket?.readyState === WebSocket.CONNECTING")
     expect(relay).toContain("shouldReconnectTransportOnResume")
+  })
+
+  it("uses effective status presentation for the header and unstable modal rows", () => {
+    const app = source("../src/App.tsx")
+    const css = source("../src/styles.css")
+    expect(app).toContain("const connectionPresentation = effectiveConnectionPresentation(relayState.connection, connectedRelayIds, relayState.relays.length, relayState.relayHealth)")
+    expect(app).toContain("connection-state ${connectionPresentation.tone}")
+    expect(app).toContain('connectionPresentation.state === "online" ? <Wifi size={15} /> : <WifiOff size={15} />')
+    expect(app).toContain("const service = serviceConnectionPresentation(relayState.serviceConnected, overall)")
+    expect(app).toContain("connection-row ${presentation.state}")
+    expect(css).toContain(".connection-row.unstable b, .connection-row.unstable b small { color: var(--amber); }")
+  })
+
+  it("binds selected cache callbacks to the stable workspace ID and persists directly through the keyed store queue", () => {
+    const app = source("../src/App.tsx")
+    expect(app).toContain("relayState.loadCache<T>(selected.workspaceId, resource, selected.id)")
+    expect(app).toContain("relayState.saveCache(selected.workspaceId, resource, value, selected.id)")
+    expect(app).not.toContain("relayState.loadCache<T>(selected.workspaceRelayId, resource, selected.id)")
+    expect(app).not.toContain("relayState.saveCache(selected.workspaceRelayId, resource, value, selected.id)")
+    expect(app).not.toContain("persistenceRef")
+    expect(app).toContain("return saveCache(\"messages\", cache).then(() => {")
+    expect(app).toContain("formatMessageCacheSaveFailure(cause)")
+    expect(app).toContain("shouldReportCacheFailure(lastPersistenceFailureRef.current, message, now)")
+    expect(app).toContain("shouldReportCacheFailure(lastTodoPersistenceFailureRef.current, message, now)")
+    expect(app).toContain("if (!outcome.messages) return")
+    expect((app.match(/void persistLocalMessages\(next\)\.catch\(\(\) => undefined\)/g) ?? [])).toHaveLength(3)
+    expect(app).toContain("const persistTodosCache = useCallback((todos: SessionTodo[]) => {")
+    expect(app).toContain("void saveCache(\"todos\", todos).then(() => {")
+    expect(app).toContain("if (key === \"todos\") persistTodosCache(next as SessionTodo[])")
+    expect(app).toContain("Could not load local todos cache: ${messageCacheErrorDetail(error)}")
+    expect(app).toContain("loadCache<SessionTodo[]>(\"todos\").then((cached)")
+    expect(app).toContain(".catch((error) => {\n        if (generation !== generationRef.current) return\n        onError(`Could not load local todos cache:")
+    expect(app).toContain("]).then(() => { if (generation === generationRef.current) setLoading(false) })")
+    const relay = source("../src/useRelay.ts")
+    expect(relay).toContain("void saveCachedResource(identity, stableWorkspaceKey(data.relay), \"snapshot\", {")
+    expect(relay).toContain("}).then(() => {\n          snapshotCacheFailureRef.current = undefined\n        }).catch((cause) => {")
+    expect(relay).toContain("shouldReportCacheFailure(snapshotCacheFailureRef.current, message, now)")
+    expect(relay).toContain("Workspace state is current, but local cache could not be saved:")
+  })
+
+  it("keeps an already-stable cache namespace after the transient relay slice disappears", () => {
+    expect(cacheNamespace("workspace-stable")).toBe("workspace-stable")
+    expect(cacheNamespace("transient-relay", { workspaceId: "workspace-stable", hostname: "host", workspace: "/repo" })).toBe("workspace-stable")
   })
 })

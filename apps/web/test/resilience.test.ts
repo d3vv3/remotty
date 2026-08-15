@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { addChunk, assembledMessages, completeChunks, connectionLabel, createChunkAssembly, exactConnectionTime, exactManifestMessages, hasSequenceGap, healthSummary, isTransportActivityStale, mergeByMessageId, orderByManifest, promptDeliveryState, reconcileCanonicalMessages, reconnectDelay, requestInactivityMs, retryPlan, shouldExpireHandshakeWatchdog, shouldReconnectTransportOnResume, shouldReplaceTransportOnResume, validManifest } from "../src/resilience"
+import { addChunk, assembledMessages, completeChunks, connectionLabel, createChunkAssembly, effectiveConnectionPresentation, exactConnectionTime, exactManifestMessages, hasSequenceGap, healthSummary, isTransportActivityStale, mergeByMessageId, orderByManifest, promptDeliveryState, reconcileCanonicalMessages, reconnectDelay, relayConnectionPresentation, requestInactivityMs, retryPlan, serviceConnectionPresentation, shouldExpireHandshakeWatchdog, shouldReconnectTransportOnResume, shouldReplaceTransportOnResume, validManifest } from "../src/resilience"
 import { commandForRelayCapabilities } from "../src/useRelay"
 
 describe("bad network helpers", () => {
@@ -14,6 +14,35 @@ describe("bad network helpers", () => {
     expect(connectionLabel("online", 1, true)).toBe("Unstable")
     expect(hasSequenceGap(4, 6)).toBe(true)
     expect(hasSequenceGap(4, 5)).toBe(false)
+  })
+
+  it("presents a connected timed-out relay as the unstable source", () => {
+    const overall = effectiveConnectionPresentation("online", ["relay-a"], 1, { "relay-a": { timedOut: true, lastContact: 8_000, rtt: 42 } })
+    expect(overall).toMatchObject({ state: "unstable", label: "Unstable", tone: "unstable", hasTimedOutRelay: true })
+    expect(relayConnectionPresentation(true, { timedOut: true, lastContact: 8_000, rtt: 42 }, 10_000)).toEqual({
+      state: "unstable", label: "Unstable", detail: "Last contact 2 seconds ago",
+    })
+    expect(serviceConnectionPresentation(true, overall)).toMatchObject({ state: "online", label: "Connected" })
+  })
+
+  it("attributes raw transport instability to the service row when no relay is timed out", () => {
+    const overall = effectiveConnectionPresentation("unstable", ["relay-a"], 1, { "relay-a": { timedOut: false } })
+    expect(overall).toMatchObject({ state: "unstable", hasTimedOutRelay: false })
+    expect(serviceConnectionPresentation(true, overall)).toMatchObject({ state: "unstable", label: "Unstable" })
+  })
+
+  it("ignores retained timeout health for disconnected relays", () => {
+    const overall = effectiveConnectionPresentation("online", ["relay-b"], 2, {
+      "relay-a": { timedOut: true },
+      "relay-b": { timedOut: false },
+    })
+    expect(overall).toMatchObject({ state: "online", label: "Live", hasTimedOutRelay: false })
+  })
+
+  it("keeps zero RTT for healthy relay rows", () => {
+    expect(relayConnectionPresentation(true, { rtt: 0, lastContact: 8_000 }, 10_000)).toEqual({
+      state: "online", label: "Connected", detail: "0 ms",
+    })
   })
 
   it("replaces unhealthy transports after resumptions without replacing brief open sockets", () => {

@@ -96,6 +96,7 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .connection-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 14px 16px; border-bottom: 1px solid var(--line); font-size: 13px; }
 .connection-row span, .connection-row b { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .connection-row b { color: var(--acid); font-family: var(--mono); font-size: 11px; text-align: right; }
+.connection-row.unstable b, .connection-row.unstable b small { color: var(--amber); }
 .connection-row small { overflow: hidden; color: var(--muted); font-family: var(--mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .connection-row > span, .connection-row > b { overflow: hidden; }
 .new-session-body { display: flex; flex-direction: column; gap: 8px; padding: 18px 16px 20px; }

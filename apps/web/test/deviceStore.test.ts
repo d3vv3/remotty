@@ -57,4 +57,16 @@ describe("device identity reuse", () => {
     await Promise.all([first, second])
     expect(events).toEqual(["first-start", "first-end", "second"])
   })
+
+  it("continues the keyed queue after a rejected write", async () => {
+    const events: string[] = []
+    const first = queueCacheWrite("identity:workspace:session:messages", async () => {
+      events.push("first")
+      throw new Error("quota")
+    })
+    const second = queueCacheWrite("identity:workspace:session:messages", async () => { events.push("second") })
+    await expect(first).rejects.toThrow("quota")
+    await expect(second).resolves.toBeUndefined()
+    expect(events).toEqual(["first", "second"])
+  })
 })
