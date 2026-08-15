@@ -16,7 +16,7 @@ describe("controlled PWA updates", () => {
     expect(app).toContain("close every Remotty tab and installed app window")
     expect(app).toContain("opencode plugin opencode-remotty --global --force")
     expect(app).toContain("const [deferred, setDeferred] = useState(false)")
-    expect(app).toContain("onClick={() => setDeferred(true)}>Later")
+    expect(app).toContain("<Button disabled={updating} onClick={() => setDeferred(true)}>Later</Button>")
     expect(app).toContain('className="pwa-update-affordance"')
     expect(app).toContain("onClick={() => setDeferred(false)}")
     expect(app).not.toContain("setNeedRefresh(false)")
@@ -29,6 +29,7 @@ describe("controlled PWA updates", () => {
     expect(app).toContain("focusTarget?.focus()")
     expect(app).toContain("ref={updateActionRef}")
     expect(app).toContain("ref={affordanceRef}")
+    expect(app).toContain('variant="primary" loading={updating}')
   })
 
   it("applies update visibility to the current route and pairing state", () => {

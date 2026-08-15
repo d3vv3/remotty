@@ -20,8 +20,15 @@ describe("resolveAgentColor", () => {
   })
 
   it("preserves explicit CSS colors", () => {
-    expect(resolveAgentColor("#c0ffee", 0)).toBe("#c0ffee")
+    const theme = { name: "local", mode: "dark" as const, colors: { secondary: "#010203", accent: "#040506", success: "#070809", warning: "#0a0b0c", primary: "#0d0e0f", error: "#101112", info: "#131415" } }
+    expect(resolveAgentColor("#c0ffee", 0, theme)).toBe("#c0ffee")
     expect(resolveAgentColor("hsl(200 70% 50%)", 0)).toBe("hsl(200 70% 50%)")
+  })
+
+  it("resolves semantic roles against the workspace TUI palette", () => {
+    const theme = { name: "local", mode: "dark" as const, colors: { secondary: "#010203", accent: "#040506", success: "#070809", warning: "#0a0b0c", primary: "#0d0e0f", error: "#101112", info: "#131415" } }
+    expect(agentColorRoles.map((role, index) => resolveAgentColor(role, index, theme))).toEqual(Object.values(theme.colors))
+    expect(resolveAgentColor(undefined, 1, theme)).toBe("#040506")
   })
 
   it("passes unknown color strings through unchanged", () => {

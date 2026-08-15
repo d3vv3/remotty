@@ -44,14 +44,16 @@ import { CURRENT_IDENTITY_MARKER, loadCurrentIdentity } from "./deviceStore"
 import { useRelay } from "./useRelay"
 import { pairingBundleFrom, routeForEnrollment, routeForStoredIdentity } from "./pairing"
 import { NOTIFICATION_PROMPT_SEEN, shouldOfferPushNotifications } from "./notificationPrompt"
-import { relaySupportsSessionCreate, stableWorkspaceKey, visibleSubagents, workspaceSessionKey, type RoutedSession, type RoutedSubagent } from "./relayState"
+import { createPermissionSubmissionGuard, isPermissionRequestNotFoundError, type PermissionResponse } from "./permissionSubmission"
+import { activatePwaUpdate, pwaBuildFromModuleScriptUrls, shouldShowPwaUpdate } from "./pwaUpdate"
+import { relaySupportsSessionCreate, stableWorkspaceKey, visibleSubagents, workspaceSessionKey, type RoutedAgent, type RoutedSession, type RoutedSubagent } from "./relayState"
 import { effectiveConnectionPresentation, exactConnectionTime, mergeByMessageId, promptDeliveryState, relayConnectionPresentation, serviceConnectionPresentation } from "./resilience"
 import { applyPreparedMessageProgress, commitManifestForRefresh, commitPreparedCanonicalMessages, emptyMessageCache, formatMessageCacheSaveFailure, isMessageCacheSaveFailure, messageCacheErrorDetail, messageInventory, migrateMessageCache, prepareCanonicalMessages, prepareMessageProgress, shouldReportCacheFailure, visibleCachedMessages, type CacheFailure, type MessageCache } from "./messageCache"
 import { clearSubmittedDraft, resourceArray, retainedSessionState, type SessionResourceRevisions } from "./sessionState"
 import { SubagentActivity } from "./SubagentActivity"
 import { resolveAgentColor } from "./agentColor"
 import { deliveryBadgeForMessage, deliveryLabel, type DeliveryState } from "./messagePresentation"
-import { pwaBuildFromModuleScriptUrls, shouldShowPwaUpdate } from "./pwaUpdate"
+import { Button, IconButton } from "./Button"
 
 type MessagePart = {
   type: string
@@ -119,7 +121,7 @@ function PwaUpdatePrompt() {
     needRefresh: [needRefresh],
     updateServiceWorker,
   } = useRegisterSW()
-  const [updating, setUpdating] = useState(false)
+  const [updateState, setUpdateState] = useState<"idle" | "activating" | "stalled" | "error">("idle")
   const [deferred, setDeferred] = useState(false)
   const dialogRef = useRef<HTMLElement>(null)
   const updateActionRef = useRef<HTMLButtonElement>(null)
@@ -127,6 +129,7 @@ function PwaUpdatePrompt() {
   const pathname = location.pathname
   const paired = Boolean(localStorage.getItem(CURRENT_IDENTITY_MARKER))
   const visible = shouldShowPwaUpdate(needRefresh, pathname, paired)
+  const updating = updateState === "activating"
   useEffect(() => {
     if (!needRefresh) setDeferred(false)
   }, [needRefresh])
@@ -176,12 +179,13 @@ function PwaUpdatePrompt() {
   if (!visible) return null
 
   const update = async () => {
-    setUpdating(true)
-    try {
-      await updateServiceWorker(true)
-    } finally {
-      setUpdating(false)
-    }
+    setUpdateState("activating")
+    const result = await activatePwaUpdate({
+      updateServiceWorker,
+      serviceWorker: navigator.serviceWorker,
+      reload: () => location.reload(),
+    })
+    if (result.status !== "reloading") setUpdateState(result.status)
   }
 
   if (deferred) return (
@@ -200,9 +204,12 @@ function PwaUpdatePrompt() {
         <strong>Update the desktop plugin too:</strong>
         <code>opencode plugin opencode-remotty --global --force</code>
         <div>
-          <button className="notification-secondary" disabled={updating} onClick={() => setDeferred(true)}>Later</button>
-          <button ref={updateActionRef} className="notification-primary" disabled={updating} onClick={() => void update()}>{updating ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />} Update now</button>
+          <Button disabled={updating} onClick={() => setDeferred(true)}>Later</Button>
+          <Button ref={updateActionRef} variant="primary" loading={updating} loadingLabel="Updating" startIcon={<RefreshCw size={17} />} onClick={() => void update()}>{updateState === "idle" ? "Update now" : "Try again"}</Button>
         </div>
+        {updateState === "stalled" && <p className="update-status" role="status">Update activation is taking longer than expected. Try again, reload the app, or update later.</p>}
+        {updateState === "error" && <p className="update-status" role="alert">Could not start the update. Try again or reload the app.</p>}
+        {(updateState === "stalled" || updateState === "error") && <Button className="update-reload" onClick={() => location.reload()}>Reload app</Button>}
       </section>
     </div>
   )
@@ -351,29 +358,24 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
               <h1>{relayState.relays.length > 1 ? `${relayState.relays.length} workspaces` : relayState.relay?.name ?? "Connecting"}</h1>
               <p>{relayState.relays.length > 1 ? "OpenCode sessions grouped by folder" : relayState.relay?.workspace ?? "Waiting for your OpenCode relay"}</p>
             </div>
-            <button className="icon-button" title="Disconnect" onClick={() => { history.replaceState({}, "", "/pair"); relayState.disconnect() }}><LogOut size={18} /></button>
+            <IconButton aria-label="Disconnect" icon={<LogOut size={18} />} onClick={() => { history.replaceState({}, "", "/pair"); relayState.disconnect() }} />
           </section>
 
           <div className="section-heading">
             <span>Sessions</span>
             <div className="section-actions">
-              <button
+              <IconButton
                 ref={newSessionTriggerRef}
-                className="icon-button"
-                title="New session"
                 aria-label="New session"
+                icon={<Plus size={18} />}
                 onClick={() => setNewSessionOpen(true)}
-              >
-                <Plus size={18} />
-              </button>
-              <button
-                className="icon-button"
-                title="Refresh sessions"
+              />
+              <IconButton
+                aria-label="Refresh sessions"
+                icon={<RefreshCw size={17} />}
                 onClick={() => void relayState.request({ type: "snapshot.request" })}
                 disabled={relayState.connection !== "online"}
-              >
-                <RefreshCw size={17} />
-              </button>
+              />
             </div>
           </div>
           <div className="session-legend" aria-label="Session status colors">
@@ -449,23 +451,25 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
       </div>
 
       {relayState.error && (
-        <div className="toast" role="alert"><AlertTriangle size={17} /><span>{relayState.error}</span><button title="Dismiss error" onClick={() => relayState.setError(undefined)}><X size={16} /></button></div>
+        <div className="toast" role="alert"><AlertTriangle size={17} /><span>{relayState.error}</span><IconButton className="toast-dismiss" aria-label="Dismiss error" icon={<X size={16} />} onClick={() => relayState.setError(undefined)} /></div>
       )}
       {connectionDetailsOpen && <ConnectionDetails relayState={relayState} onClose={closeConnectionDetails} />}
       {newSessionOpen && <NewSessionDialog relays={relayState.relays} isConnected={relayState.isRelayConnected} onCreate={createSession} onClose={closeNewSession} />}
       {notificationPromptOpen && (
         <div className="notification-prompt-overlay" role="presentation">
           <section className="notification-prompt" role="dialog" aria-modal="true" aria-labelledby="notification-prompt-title">
-            <button className="icon-button notification-prompt-close" title="Not now" aria-label="Close notification prompt" onClick={closeNotificationPrompt}><X size={18} /></button>
+            <IconButton className="notification-prompt-close" aria-label="Close notification prompt" title="Not now" icon={<X size={18} />} onClick={closeNotificationPrompt} />
             <span className="notification-prompt-icon"><Bell size={24} /></span>
             <p>Stay in the loop</p>
             <h2 id="notification-prompt-title">Enable Push notifications?</h2>
             <span>Get an alert when an agent finishes, asks a question, or needs approval.</span>
             <div>
-              <button className="notification-secondary" onClick={closeNotificationPrompt}>Not now</button>
-              <button
-                className="notification-primary"
-                disabled={enablingNotifications}
+              <Button onClick={closeNotificationPrompt}>Not now</Button>
+              <Button
+                variant="primary"
+                loading={enablingNotifications}
+                loadingLabel="Enable Push"
+                startIcon={<Bell size={17} />}
                 onClick={() => {
                   setEnablingNotifications(true)
                   void relayState.toggleNotifications().finally(() => {
@@ -473,7 +477,7 @@ function RelayApp({ initialBundle }: { initialBundle?: PairingBundle }) {
                     closeNotificationPrompt()
                   })
                 }}
-              >{enablingNotifications ? <LoaderCircle className="spin" size={17} /> : <Bell size={17} />} Enable Push</button>
+              >Enable Push</Button>
             </div>
           </section>
         </div>
@@ -812,7 +816,7 @@ function PairingScanner({ onScan, onClose }: { onScan: (bundle: PairingBundle) =
   return (
     <div className="scanner-overlay" role="dialog" aria-modal="true" aria-label="Scan pairing QR code">
       <section className="scanner-panel">
-        <header><span><ScanLine size={18} /> Scan pairing QR</span><button className="icon-button" title="Close scanner" onClick={onClose}><X size={19} /></button></header>
+        <header><span><ScanLine size={18} /> Scan pairing QR</span><IconButton aria-label="Close scanner" icon={<X size={19} />} onClick={onClose} /></header>
         <div className="scanner-view"><video ref={videoRef} muted playsInline /><span className="scanner-frame" /></div>
         {error && <p className="form-error">{error}</p>}
       </section>
@@ -873,7 +877,7 @@ function ConnectionDetails({ relayState, onClose }: { relayState: ReturnType<typ
   return (
     <div className="connection-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
       <section ref={dialogRef} className="connection-dialog" id="connection-status-dialog" role="dialog" aria-modal="true" aria-labelledby="connection-title">
-        <header><h2 id="connection-title">Connection status</h2><button ref={closeRef} className="icon-button" title="Close" aria-label="Close connection status" onClick={onClose}><X size={18} /></button></header>
+        <header><h2 id="connection-title">Connection status</h2><IconButton ref={closeRef} aria-label="Close connection status" title="Close" icon={<X size={18} />} onClick={onClose} /></header>
         <div className="connection-dialog-body"><div className={`connection-row ${service.state}`}><span>Remotty service</span><b>{service.label}</b></div>
         {relayState.relays.map((relay) => {
           const health = relayState.relayHealth[relay.id]
@@ -882,7 +886,7 @@ function ConnectionDetails({ relayState, onClose }: { relayState: ReturnType<typ
         })}
         <div className="connection-row"><span>OpenCode data</span><b>{relayState.lastSyncedAt && now - relayState.lastSyncedAt < 60_000 ? "Current" : "Stale"}<small>{relayState.lastSyncedAt ? `Updated ${exactConnectionTime(relayState.lastSyncedAt, now)}` : "Not yet synced"}</small></b></div>
         <div className="connection-row"><span>PWA build</span><b><code>{pwaBuild}</code></b></div></div>
-        <footer><button className="notification-secondary" onClick={onClose}>Close</button><button className="notification-primary" onClick={refresh}><RefreshCw size={15} /> Refresh</button></footer>
+        <footer><Button onClick={onClose}>Close</Button><Button variant="primary" startIcon={<RefreshCw size={15} />} onClick={refresh}>Refresh</Button></footer>
       </section>
     </div>
   )
@@ -947,7 +951,7 @@ function NewSessionDialog({
   return (
     <div className="connection-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !creating) onClose() }}>
       <section ref={dialogRef} className="connection-dialog new-session-dialog" role="dialog" aria-modal="true" aria-labelledby="new-session-title">
-        <header><h2 id="new-session-title">New session</h2><button ref={closeRef} className="icon-button" title="Close" aria-label="Close new session" onClick={onClose} disabled={creating}><X size={18} /></button></header>
+        <header><h2 id="new-session-title">New session</h2><IconButton ref={closeRef} aria-label="Close new session" title="Close" icon={<X size={18} />} onClick={onClose} disabled={creating} /></header>
         <div className="new-session-body">
           <label htmlFor="new-session-workspace">Workspace</label>
           <select id="new-session-workspace" value={relayId} onChange={(event) => setRelayId(event.target.value)} disabled={creating}>
@@ -962,7 +966,7 @@ function NewSessionDialog({
           {!available.length && <p className="form-error" role="status">No connected workspace supports session creation. Reconnect after updating the OpenCode plugin.</p>}
           {error && <p className="form-error" role="alert">{error}</p>}
         </div>
-        <footer><button className="notification-secondary" onClick={onClose} disabled={creating}>Cancel</button><button className="notification-primary" onClick={() => void create()} disabled={!relayId || creating}>{creating ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} Create</button></footer>
+        <footer><Button onClick={onClose} disabled={creating}>Cancel</Button><Button variant="primary" loading={creating} loadingLabel="Create" startIcon={<Plus size={16} />} onClick={() => void create()} disabled={!relayId}>Create</Button></footer>
       </section>
     </div>
   )
@@ -989,7 +993,7 @@ function SessionDetail({
 }: {
   session: SessionSummary
   sessionKey: string
-  agents: AgentSummary[]
+  agents: RoutedAgent[]
   revision: number
   resourceRevisions: SessionResourceRevisions
   subagents: RoutedSubagent[]
@@ -1035,9 +1039,9 @@ function SessionDetail({
   const lastPersistenceFailureRef = useRef<CacheFailure | undefined>(undefined)
   const lastTodoPersistenceFailureRef = useRef<CacheFailure | undefined>(undefined)
   const selectedAgent = agents.find((item) => item.name === agent)
-  const agentColors = useMemo(() => agents.map((item, index) => resolveAgentColor(item.color, index)), [agents])
+  const agentColors = useMemo(() => agents.map((item, index) => resolveAgentColor(item.color, index, item.agentTheme)), [agents])
   const selectedAgentIndex = agents.findIndex((item) => item.name === agent)
-  const selectedAgentColor = resolveAgentColor(selectedAgent?.color, selectedAgentIndex >= 0 ? selectedAgentIndex : 0)
+  const selectedAgentColor = resolveAgentColor(selectedAgent?.color, selectedAgentIndex >= 0 ? selectedAgentIndex : 0, selectedAgent?.agentTheme)
   const selectedAgentStyle = { "--agent-color": selectedAgentColor } as CSSProperties
   const visibleSubagentEntries = useMemo(() => visibleSubagents(subagents), [subagents])
   const showComposer = tab !== "subagents"
@@ -1369,7 +1373,7 @@ function SessionDetail({
   return (
     <div className="session-detail">
       <header className="detail-header">
-        <button className="icon-button back-button" title="Back" onClick={onBack}><ArrowLeft size={20} /></button>
+        <IconButton className="back-button" aria-label="Back" icon={<ArrowLeft size={20} />} onClick={onBack} />
         <div>
           <div className="title-line"><span className={`status-dot ${session.status}`} /><h2>{session.title}</h2></div>
           <p>{session.directory}</p>
@@ -1409,13 +1413,12 @@ function SessionDetail({
             )}
           </div>
           {session.status === "busy" && (
-            <button
-              className="danger-button"
+            <Button
+              variant="danger"
               title="Stop agent"
+              startIcon={<CircleStop size={17} />}
               onClick={() => void request({ type: "session.abort", sessionId: session.id }).catch((error) => onError(error.message))}
-            >
-              <CircleStop size={17} /> Stop
-            </button>
+            >Stop</Button>
           )}
         </div>
       </header>
@@ -1493,9 +1496,7 @@ function SessionDetail({
             rows={1}
             aria-label="Message OpenCode"
           />
-          <button className="primary-button" type="submit" disabled={!prompt.trim() || sending || messageCacheReadySession !== session.id} aria-label="Send prompt">
-            {sending ? <LoaderCircle className="spin" size={19} /> : <Send size={19} />}
-          </button>
+          <IconButton variant="primary" type="submit" loading={sending} aria-label="Send prompt" icon={<Send size={19} />} disabled={!prompt.trim() || messageCacheReadySession !== session.id} />
         </form>}
       </div>}
     </div>
@@ -1612,15 +1613,53 @@ function QuestionPanel({ requestInfo, request, onError }: { requestInfo: Questio
   )
 }
 
-function PermissionPanel({ permission, request, onError }: { permission: PermissionRequest; request: (command: any) => Promise<unknown>; onError: (error?: string) => void }) {
-  const reply = (response: "once" | "always" | "reject") =>
-    request({
-      type: "permission.reply",
-      sessionId: permission.targetSessionID ?? permission.sessionID,
-      permissionId: permission.id,
-      response,
-      ...(permission.replyDialect ? { replyDialect: permission.replyDialect } : {}),
-    }).catch((error) => onError(error.message))
+export function PermissionPanel({ permission, request, onError }: { permission: PermissionRequest; request: (command: any) => Promise<unknown>; onError: (error?: string) => void }) {
+  const guardRef = useRef(createPermissionSubmissionGuard())
+  const [, setSubmissionRevision] = useState(0)
+  const guard = guardRef.current
+  const currentState = guard.state()
+  const pending = currentState.permissionId === permission.id ? currentState.pending : undefined
+  useEffect(() => {
+    const requestToken = guard.activate(permission.id).token!
+    setSubmissionRevision((revision) => revision + 1)
+    return () => { guard.invalidate(requestToken) }
+  }, [guard, permission.id])
+  const reply = async (response: PermissionResponse) => {
+    const permissionId = permission.id
+    const requestToken = guard.state().token
+    if (requestToken === undefined) return
+    if (!guard.begin(permissionId, response, requestToken)) return
+    setSubmissionRevision((revision) => revision + 1)
+    try {
+      await request({
+        type: "permission.reply",
+        sessionId: permission.targetSessionID ?? permission.sessionID,
+        permissionId,
+        response,
+        ...(permission.replyDialect ? { replyDialect: permission.replyDialect } : {}),
+      })
+      if (!guard.isActive(permissionId, requestToken)) return
+      // Keep the controls locked until the matching relay event or snapshot replaces this request.
+    } catch (error) {
+      if (!guard.isActive(permissionId, requestToken)) return
+      if (isPermissionRequestNotFoundError(error)) {
+        try {
+          await request({ type: "snapshot.request" })
+          if (!guard.isActive(permissionId, requestToken)) return
+          return
+        } catch (snapshotError) {
+          if (!guard.isActive(permissionId, requestToken)) return
+          guard.unlock(permissionId, requestToken)
+          setSubmissionRevision((revision) => revision + 1)
+          onError("Permission status refresh failed.")
+          return
+        }
+      }
+      guard.unlock(permissionId, requestToken)
+      setSubmissionRevision((revision) => revision + 1)
+      onError(error instanceof Error ? error.message : String(error))
+    }
+  }
 
   return (
     <section className="permission-panel">
@@ -1635,9 +1674,9 @@ function PermissionPanel({ permission, request, onError }: { permission: Permiss
         )}
       </div>
       <div className="permission-actions">
-        <button title="Reject" onClick={() => void reply("reject")}><X size={17} /></button>
-        <button onClick={() => void reply("once")}><Check size={17} /> Once</button>
-        <button onClick={() => void reply("always")}><Check size={17} /> Always</button>
+        <IconButton variant="permission" aria-label="Reject" icon={<X size={17} />} loading={pending === "reject"} disabled={Boolean(pending)} onClick={() => void reply("reject")} />
+        <Button variant="permission" size="sm" loading={pending === "once"} startIcon={<Check size={17} />} disabled={Boolean(pending)} onClick={() => void reply("once")}>Once</Button>
+        <Button variant="permission" size="sm" loading={pending === "always"} startIcon={<Check size={17} />} disabled={Boolean(pending)} onClick={() => void reply("always")}>Always</Button>
       </div>
     </section>
   )

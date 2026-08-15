@@ -34,6 +34,25 @@ export const agentSummarySchema = z.object({
 })
 export type AgentSummary = z.infer<typeof agentSummarySchema>
 
+export const agentColorRoleSchema = z.enum(["secondary", "accent", "success", "warning", "primary", "error", "info"])
+export type AgentColorRole = z.infer<typeof agentColorRoleSchema>
+
+const cssHexColorSchema = z.string().regex(/^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/)
+export const agentThemeSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  mode: z.enum(["dark", "light"]),
+  colors: z.object({
+    secondary: cssHexColorSchema,
+    accent: cssHexColorSchema,
+    success: cssHexColorSchema,
+    warning: cssHexColorSchema,
+    primary: cssHexColorSchema,
+    error: cssHexColorSchema,
+    info: cssHexColorSchema,
+  }).strict(),
+}).strict()
+export type AgentTheme = z.infer<typeof agentThemeSchema>
+
 export const permissionRequestSchema = z.object({
   id: z.string(),
   sessionID: z.string(),
@@ -131,6 +150,7 @@ export const relayMessageSchema = z.discriminatedUnion("type", [
     sessions: z.array(sessionSummarySchema),
     subagents: z.array(subagentSummarySchema).default([]),
     agents: z.array(agentSummarySchema).default([]),
+    agentTheme: agentThemeSchema.optional(),
     permissions: z.array(permissionRequestSchema).default([]),
     questions: z.array(questionRequestSchema).default([]),
     sequence: z.number().int().nonnegative().optional(),

@@ -64,11 +64,11 @@ describe("relay snapshot aggregation and routing", () => {
     expect(commandRelayId({ type: "session.messages", sessionId: "session-a" }, state.relays.map((relay) => relay.id), state.sessionRelays)).toBe("relay-a")
   })
 
-  it("does not expose subagent-capable agents from older relays", () => {
+  it("exposes primary and all-mode agents but not subagents", () => {
     const current = slice("relay-a", "session-a", 1)
     current.agents.push({ name: "explore", mode: "all" })
 
-    expect(aggregateRelaySlices(new Map([["relay-a", current]])).agents.map((agent) => agent.name)).toEqual(["build"])
+    expect(aggregateRelaySlices(new Map([["relay-a", current]])).agents.map((agent) => agent.name)).toEqual(["build", "explore"])
   })
 
   it("does not guess a relay for an unknown session in a multi-relay room", () => {
@@ -142,6 +142,17 @@ describe("relay snapshot aggregation and routing", () => {
     const legacy = slice("relay-a", "root", 1)
     const { subagents: _subagents, ...withoutSubagents } = legacy
     expect(normalizeRelaySlice(withoutSubagents).subagents).toEqual([])
+  })
+
+  it("keeps workspace agent palettes isolated and tolerates legacy snapshots", () => {
+    const first = slice("first", "one", 1)
+    const second = slice("second", "two", 2)
+    first.agentTheme = { name: "first", mode: "dark", colors: { secondary: "#010203", accent: "#040506", success: "#070809", warning: "#0a0b0c", primary: "#0d0e0f", error: "#101112", info: "#131415" } }
+    const state = aggregateRelaySlices(new Map([["first", first], ["second", second]]))
+    expect(state.agents.find((agent) => agent.workspaceRelayId === "first")?.agentTheme?.name).toBe("first")
+    expect(state.agents.find((agent) => agent.workspaceRelayId === "second")?.agentTheme).toBeUndefined()
+    const { agentTheme: _agentTheme, ...legacy } = first
+    expect(normalizeRelaySlice(legacy).agentTheme).toBeUndefined()
   })
 
   it("rejects rollback within a relay stream and from an older relay instance", () => {

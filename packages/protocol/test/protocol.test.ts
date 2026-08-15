@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { brokerMessageSchema, canonicalJsonFingerprint, canonicalMessageValue, clientCommandSchema, relayMessageSchema } from "../src/index"
+import { agentThemeSchema, brokerMessageSchema, canonicalJsonFingerprint, canonicalMessageValue, clientCommandSchema, relayMessageSchema } from "../src/index"
 
 describe("relay protocol", () => {
   it("accepts an authenticated device revocation message", () => {
@@ -122,6 +122,23 @@ describe("relay protocol", () => {
         questions: [],
       }),
     ).toMatchObject({ type: "relay.snapshot", subagents: [] })
+  })
+
+  it("keeps optional agent themes compatible with old snapshots and validates their colors", () => {
+    const theme = {
+      name: "custom", mode: "light",
+      colors: { secondary: "#010203", accent: "#040506", success: "#070809", warning: "#0a0b0c", primary: "#0d0e0f80", error: "#101112", info: "#131415" },
+    }
+    expect(agentThemeSchema.parse(theme)).toEqual(theme)
+    expect(() => agentThemeSchema.parse({ ...theme, colors: { ...theme.colors, primary: "#abc" } })).toThrow()
+    expect(() => agentThemeSchema.parse({ ...theme, colors: { ...theme.colors, extra: "#ffffff" } })).toThrow()
+    const snapshot = relayMessageSchema.parse({
+      type: "relay.snapshot",
+      relay: { id: "relay-1", name: "Laptop", hostname: "devbox", platform: "linux", arch: "x64", workspace: "/work/app" },
+      sessions: [],
+      agentTheme: theme,
+    })
+    expect(snapshot).toMatchObject({ agentTheme: theme })
   })
 
   it("normalizes a detached workspace branch", () => {

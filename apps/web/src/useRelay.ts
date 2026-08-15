@@ -474,6 +474,7 @@ export function useRelay(initialBundle?: PairingBundle) {
           sessions: data.sessions,
           subagents: data.subagents,
           agents: data.agents,
+          agentTheme: data.agentTheme,
           permissions: data.permissions,
           questions: data.questions,
           sequence: data.sequence,
@@ -486,7 +487,7 @@ export function useRelay(initialBundle?: PairingBundle) {
           if (superseded.length) setRelayHealth((current) => { const next = { ...current }; for (const id of superseded) delete next[id]; return next })
         }
         void saveCachedResource(identity, stableWorkspaceKey(data.relay), "snapshot", {
-          relay: data.relay, sessions: data.sessions, subagents: data.subagents, agents: data.agents, permissions: data.permissions, questions: data.questions, sequence: data.sequence,
+          relay: data.relay, sessions: data.sessions, subagents: data.subagents, agents: data.agents, agentTheme: data.agentTheme, permissions: data.permissions, questions: data.questions, sequence: data.sequence,
         }).then(() => {
           snapshotCacheFailureRef.current = undefined
         }).catch((cause) => {

@@ -1,15 +1,16 @@
-import type { AgentSummary, PermissionRequest, QuestionRequest, RelayInfo, SessionSummary, SubagentSummary } from "@remotty/protocol"
+import type { AgentSummary, AgentTheme, PermissionRequest, QuestionRequest, RelayInfo, SessionSummary, SubagentSummary } from "@remotty/protocol"
 
 export type RoutedSession = SessionSummary & { workspaceRelayId: string; workspaceId: string }
 export type RoutedPermission = PermissionRequest & { workspaceRelayId: string }
 export type RoutedQuestion = QuestionRequest & { workspaceRelayId: string }
-export type RoutedAgent = AgentSummary & { workspaceRelayId: string }
+export type RoutedAgent = AgentSummary & { workspaceRelayId: string; agentTheme?: AgentTheme }
 export type RoutedSubagent = SubagentSummary & { workspaceRelayId: string; workspaceId: string }
 export type RelaySlice = {
   relay: RelayInfo
   sessions: SessionSummary[]
   subagents: SubagentSummary[]
   agents: AgentSummary[]
+  agentTheme?: AgentTheme
   permissions: PermissionRequest[]
   questions: QuestionRequest[]
   sequence?: number
@@ -121,8 +122,8 @@ export const aggregateRelaySlices = (
   for (const items of subagentsByRoot.values()) items.sort((left, right) => right.updatedAt - left.updatedAt)
   const agents = activeEntries.flatMap(([relayId, slice]) =>
     slice.agents
-      .filter((agent) => agent.mode === "primary")
-      .map((agent) => ({ ...agent, workspaceRelayId: relayId })))
+      .filter((agent) => agent.mode === "primary" || agent.mode === "all")
+      .map((agent) => ({ ...agent, workspaceRelayId: relayId, agentTheme: slice.agentTheme })))
   return {
     relay: activeEntries[0]?.[1].relay ?? relays[0],
     relays,

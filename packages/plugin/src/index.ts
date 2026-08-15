@@ -9,6 +9,7 @@ import {
   signCanonicalJson,
   transportProofPayload,
   type ClientCommand,
+  type AgentTheme,
   type E2eeChannel,
   type JsonValue,
   type PermissionRequest,
@@ -18,7 +19,8 @@ import {
   type SessionSummary,
   isSecureBrokerUrl,
 } from "@remotty/protocol"
-import { primaryAgentSummaries } from "./agents.js"
+import { selectableAgentSummaries } from "./agents.js"
+import { agentThemeFromTuiCommandEvent } from "./agentTheme.js"
 import { workspaceGitDiff, workspaceGitPatch } from "./gitChanges.js"
 import { readConfig, type DeviceRecord, type RelayConfig } from "./config.js"
 import { completionNotification, completionSessionForEvent, questionNotification, shouldNotifySessionCompletion, type CompletionState } from "./notifications.js"
@@ -108,6 +110,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
   const recentReadFrameQueue: string[] = []
   const completionState: CompletionState = { busy: new Set(), notified: new Set() }
   let knownSessions: JsonObject[] = []
+  let agentTheme: AgentTheme | undefined
 
   const log = (level: "warn" | "error", message: string, error?: unknown) => client.app.log({
     body: {
@@ -241,7 +244,8 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
       relay,
       sessions: summaries,
       subagents,
-      agents: primaryAgentSummaries(agents),
+      agents: selectableAgentSummaries(agents),
+      ...(agentTheme ? { agentTheme } : {}),
       permissions: routeSessionRequests(permissions, knownSessions),
       questions: routeSessionRequests(questions, knownSessions),
     }
@@ -580,6 +584,14 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
     event: async ({ event }) => {
       const eventType = String(event.type)
       const properties = (event.properties ?? {}) as JsonObject
+      const themeEvent = agentThemeFromTuiCommandEvent(eventType, properties)
+      if (themeEvent.handled) {
+        if (themeEvent.theme) {
+          agentTheme = themeEvent.theme
+          await snapshot()
+        }
+        return
+      }
       const info = properties.info as JsonObject | undefined
       if (["session.created", "session.updated"].includes(eventType) && info?.id) {
         knownSessions = [...knownSessions.filter((session) => session.id !== info.id), info]
