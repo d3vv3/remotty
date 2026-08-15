@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { deliveryBadgeForMessage } from "../src/messagePresentation"
+import { deliveryBadgeForMessage } from "../src/features/session/model/messagePresentation"
 
 describe("message delivery presentation", () => {
   it("does not infer delivery state for canonical user messages", () => {

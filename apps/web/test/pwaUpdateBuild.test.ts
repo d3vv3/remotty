@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { UNKNOWN_PWA_BUILD, pwaBuildFromModuleScriptUrls } from "../src/pwaUpdate"
+import { UNKNOWN_PWA_BUILD, pwaBuildFromModuleScriptUrls } from "../src/features/pwa/pwaUpdate"
 
 describe("PWA build diagnostics", () => {
   const origin = "https://remotty.example"

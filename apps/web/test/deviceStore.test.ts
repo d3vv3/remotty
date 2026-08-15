@@ -1,6 +1,6 @@
 import type { EcPublicJwk, PairingBundle } from "@remotty/protocol"
 import { describe, expect, it } from "vitest"
-import { canReuseIdentity, identityKeyFor, queueCacheWrite, type DeviceIdentity } from "../src/deviceStore"
+import { canReuseIdentity, identityKeyFor, queueCacheWrite, type DeviceIdentity } from "../src/infrastructure/storage/deviceStore"
 
 const publicKey = (x: string): EcPublicJwk => ({ kty: "EC", crv: "P-256", x, y: "B".repeat(43) })
 const bundle: PairingBundle = {

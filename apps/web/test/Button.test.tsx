@@ -2,7 +2,7 @@ import { createRef } from "react"
 import { readFile } from "node:fs/promises"
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
-import { Button, IconButton, buttonClassName } from "../src/Button"
+import { Button, IconButton, buttonClassName } from "../src/components/ui"
 
 describe("Button", () => {
   it("uses button semantics and merges variant and size classes", () => {
@@ -34,18 +34,22 @@ describe("Button", () => {
   })
 
   it("keeps specialized ARIA and layout widgets as native buttons", async () => {
-    const [app, subagentActivity] = await Promise.all([
-      readFile(new URL("../src/App.tsx", import.meta.url), "utf8"),
-      readFile(new URL("../src/SubagentActivity.tsx", import.meta.url), "utf8"),
+    const [workspace, sessionDetail, questionPanel, pairing, pwaUpdatePrompt, subagentActivity] = await Promise.all([
+      readFile(new URL("../src/pages/WorkspacePage.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../src/features/session/components/SessionDetail.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../src/features/questions/QuestionPanel.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../src/features/pairing/PairingScreen.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../src/features/pwa/PwaUpdatePrompt.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../src/features/session/components/SubagentActivity.tsx", import.meta.url), "utf8"),
     ])
-    expect(app).toContain('className="connection-button"')
-    expect(app).toContain('className={`notification-button ${relayState.notificationsEnabled ? "enabled" : ""}`}')
-    expect(app).toContain('className="pwa-update-affordance"')
-    expect(app).toContain('className="workspace-heading"')
-    expect(app).toContain('role="tab"')
-    expect(app).toContain('className="question-title"')
-    expect(app).toContain('className="agent-picker"')
-    expect(app).toContain('type="submit" className="grid size-12')
+    expect(workspace).toContain('className="connection-button"')
+    expect(workspace).toContain('className={`notification-button ${relayState.notificationsEnabled ? "enabled" : ""}`}')
+    expect(pwaUpdatePrompt).toContain('className="pwa-update-affordance"')
+    expect(workspace).toContain('className="workspace-heading"')
+    expect(sessionDetail).toContain('role="tab"')
+    expect(questionPanel).toContain('className="question-title"')
+    expect(sessionDetail).toContain('className="agent-picker"')
+    expect(pairing).toContain('type="submit" className="grid size-12')
     expect(subagentActivity).toContain("<button key={item.id}")
   })
 })

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { describe, expect, it } from "vitest"
-import { createPermissionSubmissionGuard, isPermissionRequestNotFoundError } from "../src/permissionSubmission"
+import { createPermissionSubmissionGuard, isPermissionRequestNotFoundError } from "../src/features/permissions/permissionSubmission"
 
 describe("permission submission state", () => {
   it("prevents duplicate submits synchronously and resets for a replacement permission", () => {
@@ -32,26 +32,26 @@ describe("permission submission state", () => {
   })
 
   it("renders a single selected spinner, disables all actions, and reconciles stale replies", async () => {
-    const [app, css] = await Promise.all([
-      readFile(new URL("../src/App.tsx", import.meta.url), "utf8"),
+    const [permissionPanel, css] = await Promise.all([
+      readFile(new URL("../src/features/permissions/PermissionPanel.tsx", import.meta.url), "utf8"),
       readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
     ])
 
-    expect(app).toContain("const guardRef = useRef(createPermissionSubmissionGuard())")
-    expect(app).toContain("const currentState = guard.state()")
-    expect(app).toContain("const requestToken = guard.activate(permission.id).token!")
-    expect(app).toContain("return () => { guard.invalidate(requestToken) }")
-    expect(app).toContain("const requestToken = guard.state().token")
-    expect(app).toContain("if (!guard.begin(permissionId, response, requestToken)) return")
-    expect(app).toContain("if (!guard.isActive(permissionId, requestToken)) return")
-    expect(app.match(/if \(!guard\.isActive\(permissionId, requestToken\)\) return/g)).toHaveLength(4)
-    expect(app).toContain("disabled={Boolean(pending)}")
-    expect(app).toContain('loading={pending === "reject"}')
-    expect(app).toContain('loading={pending === "once"}')
-    expect(app).toContain('loading={pending === "always"}')
-    expect(app).toContain('variant="permission"')
-    expect(app).toContain('await request({ type: "snapshot.request" })')
-    expect(app).toContain("Permission status refresh failed.")
+    expect(permissionPanel).toContain("const guardRef = useRef(createPermissionSubmissionGuard())")
+    expect(permissionPanel).toContain("const currentState = guard.state()")
+    expect(permissionPanel).toContain("const requestToken = guard.activate(permission.id).token!")
+    expect(permissionPanel).toContain("return () => { guard.invalidate(requestToken) }")
+    expect(permissionPanel).toContain("const requestToken = guard.state().token")
+    expect(permissionPanel).toContain("if (!guard.begin(permissionId, response, requestToken)) return")
+    expect(permissionPanel).toContain("if (!guard.isActive(permissionId, requestToken)) return")
+    expect(permissionPanel.match(/if \(!guard\.isActive\(permissionId, requestToken\)\) return/g)).toHaveLength(4)
+    expect(permissionPanel).toContain("disabled={Boolean(pending)}")
+    expect(permissionPanel).toContain('loading={pending === "reject"}')
+    expect(permissionPanel).toContain('loading={pending === "once"}')
+    expect(permissionPanel).toContain('loading={pending === "always"}')
+    expect(permissionPanel).toContain('variant="permission"')
+    expect(permissionPanel).toContain('await request({ type: "snapshot.request" })')
+    expect(permissionPanel).toContain("Permission status refresh failed.")
     expect(css).toContain(".ui-button--permission:not(:disabled):hover")
   })
 })

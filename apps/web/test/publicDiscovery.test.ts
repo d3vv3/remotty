@@ -79,15 +79,16 @@ describe("public discovery artifacts", () => {
   })
 
   it("removes dead web broker build plumbing and links the app to installation guidance", async () => {
-    const [env, compose, dockerfile, app] = await Promise.all([
+    const [env, compose, dockerfile, landing, pairing] = await Promise.all([
       readFile(new URL("../../../.env.example", import.meta.url), "utf8"),
       readFile(new URL("../../../compose.yaml", import.meta.url), "utf8"),
       readFile(new URL("../../../Dockerfile", import.meta.url), "utf8"),
-      readFile(new URL("../src/App.tsx", import.meta.url), "utf8"),
+        readFile(new URL("../src/pages/LandingPage.tsx", import.meta.url), "utf8"),
+        readFile(new URL("../src/features/pairing/PairingScreen.tsx", import.meta.url), "utf8"),
     ])
 
     for (const source of [env, compose, dockerfile]) expect(source).not.toContain("VITE_REMOTTY_URL")
-    expect(app).toContain('href="/install/"')
-    expect(app).toContain(canonicalPair)
+    expect(landing).toContain('href="/install/"')
+    expect(pairing).toContain(canonicalPair)
   })
 })

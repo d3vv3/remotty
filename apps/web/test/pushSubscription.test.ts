@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { serializePushSubscription, type PushSubscriptionLike } from "../src/pushSubscription"
+import { serializePushSubscription, type PushSubscriptionLike } from "../src/features/notifications/pushSubscription"
 
 const key = (bytes: number[]) => Uint8Array.from(bytes).buffer
 

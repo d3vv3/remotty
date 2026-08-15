@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { describe, expect, it } from "vitest"
 
-const relaySource = () => readFile(new URL("../src/useRelay.ts", import.meta.url), "utf8")
+const relaySource = () => readFile(new URL("../src/features/relay/useRelay.ts", import.meta.url), "utf8")
 
 describe("pairing without a connected workspace", () => {
   it("tells the user how to start the workspace relay", async () => {

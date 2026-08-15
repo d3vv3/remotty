@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { agentColorRoles, resolveAgentColor } from "../src/agentColor"
+import { agentColorRoles, resolveAgentColor } from "../src/features/session/model/agentColor"
 
 describe("resolveAgentColor", () => {
   it("maps every OpenCode semantic role to its CSS variable", () => {

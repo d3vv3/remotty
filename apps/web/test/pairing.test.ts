@@ -6,7 +6,7 @@ import {
   type PairingBundle,
 } from "@remotty/protocol"
 import { beforeAll, describe, expect, it } from "vitest"
-import { pairingBundleFrom, routeForEnrollment, routeForStoredIdentity } from "../src/pairing"
+import { pairingBundleFrom, routeForEnrollment, routeForStoredIdentity } from "../src/features/pairing/pairing"
 
 let bundle: PairingBundle
 let token: string

@@ -1,13 +1,13 @@
 import { useLayoutEffect, useRef, useState } from "react"
 import { LoaderCircle } from "lucide-react"
-import type { RoutedSubagent } from "./relayState"
-import { needsMessageRefresh, resourceArray, retainedSessionState } from "./sessionState"
-import { childWorkLabel } from "./subagentActivityState"
+import { needsMessageRefresh, resourceArray, retainedSessionState } from "../model/sessionState"
+import { childWorkLabel } from "../model/subagentActivityState"
+import type { SessionSubagent } from "../model/sessionTypes"
 
 type Message = { info: { id: string; role: string }; parts: Array<{ type: string; text?: string; tool?: string; time?: { start?: number; end?: number }; state?: { title?: string; status?: string; input?: unknown; output?: string; error?: string } }> }
 const limited = (value: string, limit = 20_000) => value.length > limit ? `${value.slice(0, limit)}\n\n[output truncated]` : value
 
-export function SubagentActivity({ subagents, selectedChildId, onSelect, request, revisions }: { subagents: RoutedSubagent[]; selectedChildId?: string; onSelect: (id: string) => void; request: (command: any) => Promise<unknown>; revisions: Record<string, number> }) {
+export function SubagentActivity({ subagents, selectedChildId, onSelect, request, revisions }: { subagents: SessionSubagent[]; selectedChildId?: string; onSelect: (id: string) => void; request: (command: any) => Promise<unknown>; revisions: Record<string, number> }) {
   const child = subagents.find((item) => item.id === selectedChildId) ?? subagents[0]
   const childKey = child ? `${child.workspaceId}:${child.id}` : ""
   const [messages, setMessages] = useState<Message[]>(() => retainedSessionState.read(childKey)?.messages as Message[] ?? [])

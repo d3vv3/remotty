@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { shouldOfferPushNotifications } from "../src/notificationPrompt"
+import { shouldOfferPushNotifications } from "../src/features/notifications/notificationPrompt"
 
 const ready = {
   connected: true,

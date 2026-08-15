@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { childWorkLabel } from "../src/subagentActivityState"
+import { childWorkLabel } from "../src/features/session/model/subagentActivityState"
 
 describe("childWorkLabel", () => {
   it("shows Thinking while an active child has open reasoning", () => {

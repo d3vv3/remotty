@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
-import { clearSubmittedDraft, createSessionStateStore, needsMessageRefresh, resourceArray } from "../src/sessionState"
-import { legacyChunkState, legacyManifestCompatible, queueProgress, queueProgressSnapshot, verifiedCanonicalMessages } from "../src/useRelay"
-import { addChunk, createChunkAssembly } from "../src/resilience"
+import { clearSubmittedDraft, createSessionStateStore, needsMessageRefresh, resourceArray } from "../src/features/session/model/sessionState"
+import { legacyChunkState, legacyManifestCompatible, queueProgress, queueProgressSnapshot, verifiedCanonicalMessages } from "../src/features/relay/useRelay"
+import { addChunk, createChunkAssembly } from "../src/features/relay/messageTransfer"
 
 describe("retained session state", () => {
   it("reuses stable keys and evicts least recently used entries", () => {

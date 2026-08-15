@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { acceptsRelayPosition, aggregateRelaySlices, bumpSessionRevisions, commandRelayId, normalizeRelaySlice, relaySupportsSessionCreate, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, visibleSubagents, workspaceSessionKey, type RelaySlice } from "../src/relayState"
+import { acceptsRelayPosition, aggregateRelaySlices, bumpSessionRevisions, commandRelayId, normalizeRelaySlice, relaySupportsSessionCreate, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, workspaceSessionKey, type RelaySlice } from "../src/features/relay/relayState"
+import { visibleSubagents } from "../src/features/session/model/subagentActivityState"
 
 const slice = (id: string, sessionId: string, updatedAt: number): RelaySlice => ({
   relay: { id, name: id, hostname: "host", platform: "linux", arch: "x64", workspace: `/${id}` },

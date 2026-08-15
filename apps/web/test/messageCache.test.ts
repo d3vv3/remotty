@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { canonicalJsonFingerprint, canonicalMessageValue } from "@remotty/protocol"
-import { applyPreparedMessageProgress, commitManifestForRefresh, commitMessageManifest, commitPreparedCanonicalMessages, emptyMessageCache, formatMessageCacheSaveFailure, messageInventory, migrateMessageCache, prepareCanonicalMessages, prepareMessageProgress, replaceCanonicalMessages, shouldReportCacheFailure, stageMessage, stageMessageProgress, verifyDeltaSnapshot, visibleCachedMessages } from "../src/messageCache"
+import { applyPreparedMessageProgress, commitManifestForRefresh, commitMessageManifest, commitPreparedCanonicalMessages, emptyMessageCache, formatMessageCacheSaveFailure, messageInventory, migrateMessageCache, prepareCanonicalMessages, prepareMessageProgress, replaceCanonicalMessages, shouldReportCacheFailure, stageMessage, stageMessageProgress, verifyDeltaSnapshot, visibleCachedMessages } from "../src/features/session/model/messageCache"
 
 const message = (id: string, text: string, delivery?: string) => ({ info: { id, ...(delivery ? { delivery } : {}) }, parts: [{ type: "text", text }] })
 const entry = async (value: ReturnType<typeof message>) => ({ id: value.info.id, fingerprint: await canonicalJsonFingerprint(canonicalMessageValue(value)) })

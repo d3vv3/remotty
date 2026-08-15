@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import { activatePwaUpdate } from "../src/pwaUpdate"
+import { activatePwaUpdate } from "../src/features/pwa/pwaUpdate"
 
 class FakeServiceWorker {
   controller: unknown = { version: "old" }

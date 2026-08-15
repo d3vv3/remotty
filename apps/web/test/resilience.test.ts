@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest"
-import { addChunk, assembledMessages, completeChunks, connectionLabel, createChunkAssembly, effectiveConnectionPresentation, exactConnectionTime, exactManifestMessages, hasSequenceGap, healthSummary, isTransportActivityStale, mergeByMessageId, orderByManifest, promptDeliveryState, reconcileCanonicalMessages, reconnectDelay, relayConnectionPresentation, requestInactivityMs, retryPlan, serviceConnectionPresentation, shouldExpireHandshakeWatchdog, shouldReconnectTransportOnResume, shouldReplaceTransportOnResume, validManifest } from "../src/resilience"
-import { commandForRelayCapabilities } from "../src/useRelay"
+import { connectionLabel, effectiveConnectionPresentation, exactConnectionTime, healthSummary, relayConnectionPresentation, serviceConnectionPresentation } from "../src/features/relay/connectionPresentation"
+import { addChunk, assembledMessages, completeChunks, createChunkAssembly, exactManifestMessages, orderByManifest, validManifest } from "../src/features/relay/messageTransfer"
+import { mergeByMessageId, promptDeliveryState, reconcileCanonicalMessages } from "../src/features/session/model/messageReconciliation"
+import { hasSequenceGap, isTransportActivityStale, reconnectDelay, requestInactivityMs, retryPlan, shouldExpireHandshakeWatchdog, shouldReconnectTransportOnResume, shouldReplaceTransportOnResume } from "../src/features/relay/transportPolicy"
+import { commandForRelayCapabilities } from "../src/features/relay/useRelay"
 
 describe("bad network helpers", () => {
   it("bounds deterministic exponential reconnect delays with jitter", () => {

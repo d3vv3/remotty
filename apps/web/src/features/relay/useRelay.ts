@@ -18,7 +18,7 @@ import {
   type SessionSummary,
   type MessageDeltaManifest,
 } from "@remotty/protocol"
-import { currentDeviceName } from "./deviceName"
+import { currentDeviceName } from "../../infrastructure/storage"
 import {
   deleteIdentity,
   loadCachedResource,
@@ -29,12 +29,14 @@ import {
   setCurrentIdentity,
   saveCachedResource,
   type DeviceIdentity,
-} from "./deviceStore"
+} from "../../infrastructure/storage"
 import { acceptsRelayPosition, aggregateRelaySlices, bumpResourceRevisions, bumpSessionRevisions, commandRelayId, normalizeRelaySlice, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, type RelaySlice, type ResourceRevisions } from "./relayState"
-import { addChunk, assembledMessages, completeChunks, createChunkAssembly, exactManifestMessages, HANDSHAKE_TIMEOUT_MS, hasSequenceGap, healthSummary, orderByManifest, readOnlyCommand, reconnectDelay, requestInactivityMs, retryPlan, shouldExpireHandshakeWatchdog, shouldReconnectTransportOnResume, validManifest, type ChunkAssembly } from "./resilience"
-import { messageCacheErrorDetail, shouldReportCacheFailure, type CacheFailure, verifyDeltaSnapshot } from "./messageCache"
-import { retainedSessionState } from "./sessionState"
-import { serializePushSubscription } from "./pushSubscription"
+import { healthSummary } from "./connectionPresentation"
+import { addChunk, assembledMessages, completeChunks, createChunkAssembly, exactManifestMessages, orderByManifest, validManifest, type ChunkAssembly } from "./messageTransfer"
+import { HANDSHAKE_TIMEOUT_MS, hasSequenceGap, readOnlyCommand, reconnectDelay, requestInactivityMs, retryPlan, shouldExpireHandshakeWatchdog, shouldReconnectTransportOnResume } from "./transportPolicy"
+import { messageCacheErrorDetail, shouldReportCacheFailure, type CacheFailure, verifyDeltaSnapshot } from "../session/model/messageCache"
+import { retainedSessionState } from "../session/model/sessionState"
+import { serializePushSubscription } from "../notifications"
 
 type PendingRequest = {
   relayId: string

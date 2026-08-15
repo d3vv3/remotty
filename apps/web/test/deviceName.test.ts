@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { deviceName } from "../src/deviceName"
+import { deviceName } from "../src/infrastructure/storage/deviceName"
 
 const id = "abcdef123456"
 

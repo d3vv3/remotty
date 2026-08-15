@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { describe, expect, it } from "vitest"
 
-const appSource = () => readFile(new URL("../src/App.tsx", import.meta.url), "utf8")
+const appSource = () => readFile(new URL("../src/features/pairing/PairingScreen.tsx", import.meta.url), "utf8")
 
 describe("pairing QR scanner", () => {
   it("requests a high resolution camera stream with continuous focus", async () => {

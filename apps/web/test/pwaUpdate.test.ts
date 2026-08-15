@@ -1,12 +1,12 @@
 import { readFile } from "node:fs/promises"
 import { describe, expect, it } from "vitest"
-import { shouldShowPwaUpdate } from "../src/pwaUpdate"
+import { shouldShowPwaUpdate } from "../src/features/pwa/pwaUpdate"
 
 describe("controlled PWA updates", () => {
   it("waits for user confirmation and gives both update paths", async () => {
     const [config, app] = await Promise.all([
       readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
-      readFile(new URL("../src/App.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../src/features/pwa/PwaUpdatePrompt.tsx", import.meta.url), "utf8"),
     ])
 
     expect(config).toContain('registerType: "prompt"')
@@ -41,7 +41,7 @@ describe("controlled PWA updates", () => {
   })
 
   it("restores focus to an active underlying dialog before the compact affordance", async () => {
-    const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8")
+    const app = await readFile(new URL("../src/features/pwa/PwaUpdatePrompt.tsx", import.meta.url), "utf8")
     expect(app).toContain("if (deferred)")
     expect(app).toContain("document.querySelectorAll<HTMLElement>('[role=\"dialog\"]')")
     expect(app).toContain("dialog.getClientRects().length > 0")
@@ -49,7 +49,7 @@ describe("controlled PWA updates", () => {
   })
 
   it("isolates Escape and Tab in the full update dialog before underlying modal handlers", async () => {
-    const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8")
+    const app = await readFile(new URL("../src/features/pwa/PwaUpdatePrompt.tsx", import.meta.url), "utf8")
     expect(app).toContain("if (!visible || deferred) return")
     expect(app).toContain('if (event.key === "Escape")')
     expect(app).toContain("setDeferred(true)")
@@ -62,9 +62,9 @@ describe("controlled PWA updates", () => {
   })
 
   it("shows the active PWA build in connection details", async () => {
-    const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8")
-    expect(app).toContain("pwaBuildFromModuleScriptUrls")
-    expect(app).toContain("PWA build")
+    const workspace = await readFile(new URL("../src/pages/WorkspacePage.tsx", import.meta.url), "utf8")
+    expect(workspace).toContain("pwaBuildFromModuleScriptUrls")
+    expect(workspace).toContain("PWA build")
   })
 
   it("keeps the compact update affordance inside the topbar without toast overlap", async () => {
