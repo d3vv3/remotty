@@ -50,6 +50,8 @@ import { applyPreparedMessageProgress, commitManifestForRefresh, commitPreparedC
 import { clearSubmittedDraft, resourceArray, retainedSessionState, type SessionResourceRevisions } from "./sessionState"
 import { SubagentActivity } from "./SubagentActivity"
 import { resolveAgentColor } from "./agentColor"
+import { deliveryBadgeForMessage, deliveryLabel, type DeliveryState } from "./messagePresentation"
+import { pwaBuildFromModuleScriptUrls, shouldShowPwaUpdate } from "./pwaUpdate"
 
 type MessagePart = {
   type: string
@@ -65,7 +67,7 @@ type MessagePart = {
     metadata?: Record<string, unknown>
   }
 }
-type SessionMessage = { info: { id: string; role: string; parentID?: string; time?: { created?: number }; delivery?: "sending" | "queued" | "accepted" | "uncertain" | "failed"; legacyPrompt?: boolean; knownMessageIds?: string[] }; parts: MessagePart[] }
+type SessionMessage = { info: { id: string; role: string; parentID?: string; time?: { created?: number }; delivery?: DeliveryState; legacyPrompt?: boolean; knownMessageIds?: string[] }; parts: MessagePart[] }
 type FileDiff = {
   file: string
   status?: "added" | "modified" | "deleted" | "untracked"
@@ -114,12 +116,64 @@ export function App() {
 
 function PwaUpdatePrompt() {
   const {
-    needRefresh: [needRefresh, setNeedRefresh],
+    needRefresh: [needRefresh],
     updateServiceWorker,
   } = useRegisterSW()
   const [updating, setUpdating] = useState(false)
+  const [deferred, setDeferred] = useState(false)
+  const dialogRef = useRef<HTMLElement>(null)
+  const updateActionRef = useRef<HTMLButtonElement>(null)
+  const affordanceRef = useRef<HTMLButtonElement>(null)
+  const pathname = location.pathname
   const paired = Boolean(localStorage.getItem(CURRENT_IDENTITY_MARKER))
-  if (!needRefresh || location.pathname === "/pair" || (location.pathname !== "/app" && !paired)) return null
+  const visible = shouldShowPwaUpdate(needRefresh, pathname, paired)
+  useEffect(() => {
+    if (!needRefresh) setDeferred(false)
+  }, [needRefresh])
+  useEffect(() => {
+    if (!visible) return
+    if (deferred) {
+      const underlyingDialog = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')]
+        .find((dialog) => dialog !== dialogRef.current && dialog.getClientRects().length > 0)
+      const focusTarget = underlyingDialog?.querySelector<HTMLElement>("button:not([disabled])") ?? underlyingDialog ?? affordanceRef.current
+      focusTarget?.focus()
+      return
+    }
+    const focusTarget = updateActionRef.current ?? dialogRef.current
+    focusTarget?.focus()
+  }, [deferred, visible])
+  useEffect(() => {
+    if (!visible || deferred) return
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        setDeferred(true)
+        return
+      }
+      if (event.key !== "Tab") return
+      event.stopImmediatePropagation()
+      const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])") ?? [])]
+        .filter((element) => !element.hasAttribute("disabled"))
+      if (!focusable.length) {
+        event.preventDefault()
+        return
+      }
+      const first = focusable[0]!
+      const last = focusable.at(-1)!
+      const active = document.activeElement
+      if (event.shiftKey && (active === first || !dialogRef.current?.contains(active))) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && (active === last || !dialogRef.current?.contains(active))) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown, true)
+    return () => window.removeEventListener("keydown", handleKeyDown, true)
+  }, [deferred, visible])
+  if (!visible) return null
 
   const update = async () => {
     setUpdating(true)
@@ -130,9 +184,15 @@ function PwaUpdatePrompt() {
     }
   }
 
+  if (deferred) return (
+    <button ref={affordanceRef} className="pwa-update-affordance" type="button" aria-label="Update available" title="Update available" onClick={() => setDeferred(false)}>
+      <RefreshCw size={16} /> <span>Update available</span>
+    </button>
+  )
+
   return (
     <div className="notification-prompt-overlay" role="presentation">
-      <section className="notification-prompt update-prompt" role="dialog" aria-modal="true" aria-labelledby="pwa-update-title">
+      <section ref={dialogRef} className="notification-prompt update-prompt" role="dialog" aria-modal="true" aria-labelledby="pwa-update-title" tabIndex={-1}>
         <span className="notification-prompt-icon"><RefreshCw size={24} /></span>
         <p>Update available</p>
         <h2 id="pwa-update-title">A new Remotty version is ready.</h2>
@@ -140,8 +200,8 @@ function PwaUpdatePrompt() {
         <strong>Update the desktop plugin too:</strong>
         <code>opencode plugin opencode-remotty --global --force</code>
         <div>
-          <button className="notification-secondary" disabled={updating} onClick={() => setNeedRefresh(false)}>Later</button>
-          <button className="notification-primary" disabled={updating} onClick={() => void update()}>{updating ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />} Update now</button>
+          <button className="notification-secondary" disabled={updating} onClick={() => setDeferred(true)}>Later</button>
+          <button ref={updateActionRef} className="notification-primary" disabled={updating} onClick={() => void update()}>{updating ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />} Update now</button>
         </div>
       </section>
     </div>
@@ -806,6 +866,10 @@ function ConnectionDetails({ relayState, onClose }: { relayState: ReturnType<typ
   const connectedRelayIds = relayState.relays.filter((relay) => relayState.isRelayConnected(relay.id)).map((relay) => relay.id)
   const overall = effectiveConnectionPresentation(relayState.connection, connectedRelayIds, relayState.relays.length, relayState.relayHealth)
   const service = serviceConnectionPresentation(relayState.serviceConnected, overall)
+  const pwaBuild = useMemo(
+    () => pwaBuildFromModuleScriptUrls([...document.querySelectorAll<HTMLScriptElement>('script[type="module"][src]')].map((script) => script.src), location.origin),
+    [],
+  )
   return (
     <div className="connection-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
       <section ref={dialogRef} className="connection-dialog" id="connection-status-dialog" role="dialog" aria-modal="true" aria-labelledby="connection-title">
@@ -816,7 +880,8 @@ function ConnectionDetails({ relayState, onClose }: { relayState: ReturnType<typ
           const presentation = relayConnectionPresentation(relayState.isRelayConnected(relay.id), health, now)
           return <div className={`connection-row ${presentation.state}`} key={relay.id}><span>Your computer<small>{relay.name} . {relay.workspace}</small></span><b>{presentation.label}<small>{presentation.detail}</small></b></div>
         })}
-        <div className="connection-row"><span>OpenCode data</span><b>{relayState.lastSyncedAt && now - relayState.lastSyncedAt < 60_000 ? "Current" : "Stale"}<small>{relayState.lastSyncedAt ? `Updated ${exactConnectionTime(relayState.lastSyncedAt, now)}` : "Not yet synced"}</small></b></div></div>
+        <div className="connection-row"><span>OpenCode data</span><b>{relayState.lastSyncedAt && now - relayState.lastSyncedAt < 60_000 ? "Current" : "Stale"}<small>{relayState.lastSyncedAt ? `Updated ${exactConnectionTime(relayState.lastSyncedAt, now)}` : "Not yet synced"}</small></b></div>
+        <div className="connection-row"><span>PWA build</span><b><code>{pwaBuild}</code></b></div></div>
         <footer><button className="notification-secondary" onClick={onClose}>Close</button><button className="notification-primary" onClick={refresh}><RefreshCw size={15} /> Refresh</button></footer>
       </section>
     </div>
@@ -1203,10 +1268,6 @@ function SessionDetail({
     () => messages.filter((message) => message.parts.some((part) => part.type === "text" || part.type === "tool")),
     [messages],
   )
-  const processedUserMessages = useMemo(
-    () => new Set(messages.flatMap((message) => message.info.role === "assistant" && message.info.parentID ? [message.info.parentID] : [])),
-    [messages],
-  )
   const isThinking = useMemo(
     () => messages.some((message) => message.parts.some((part) => part.type === "reasoning" && part.time?.start && !part.time.end)),
     [messages],
@@ -1383,7 +1444,7 @@ function SessionDetail({
               <div className="empty-state"><LoaderCircle className="spin" size={22} /></div>
             ) : (
               <>
-                {visibleMessages.map((message) => <Message key={message.info.id} message={message} queued={message.info.delivery ?? (message.info.role === "user" && !processedUserMessages.has(message.info.id) ? "queued" : undefined)} />)}
+                {visibleMessages.map((message) => <Message key={message.info.id} message={message} delivery={deliveryBadgeForMessage(message)} />)}
                 {visibleMessages.length === 0 && <div className="empty-state"><p>No message activity yet.</p></div>}
               </>
             )}
@@ -1582,7 +1643,7 @@ function PermissionPanel({ permission, request, onError }: { permission: Permiss
   )
 }
 
-function Message({ message, queued }: { message: SessionMessage; queued?: SessionMessage["info"]["delivery"] }) {
+function Message({ message, delivery }: { message: SessionMessage; delivery?: DeliveryState }) {
   const isUser = message.info.role === "user"
   return (
     <article className={`message ${message.info.role}`} aria-label={isUser ? "Your message" : "OpenCode response"}>
@@ -1591,7 +1652,7 @@ function Message({ message, queued }: { message: SessionMessage; queued?: Sessio
           {isUser ? <UserRound size={15} /> : <Code2 size={16} />}
         </span>
         <div className="message-body">
-          {queued && <span className="queued-flag"><Clock3 size={12} /> {queued === "accepted" ? "Accepted by OpenCode" : queued === "uncertain" ? "Delivery uncertain" : queued}</span>}
+          {delivery && <span className="delivery-flag"><Clock3 size={12} /> {deliveryLabel(delivery)}</span>}
           {message.info.time?.created && <time className="message-time" dateTime={new Date(message.info.time.created).toISOString()} title={new Date(message.info.time.created).toLocaleString()}>{relativeTime(message.info.time.created)}</time>}
           {message.parts.map((part, index) => {
             if (part.type === "text" && part.text) {
