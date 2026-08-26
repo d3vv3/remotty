@@ -67,6 +67,68 @@ export const acceptsRelayPosition = (
   return current.relay.instanceId !== nextRelay.instanceId || nextSequence > (current.sequence ?? -1)
 }
 
+/** Rejects a stale relay identity before it can supersede another slice in its workspace. */
+export const acceptsWorkspaceRelayPosition = (
+  slices: ReadonlyMap<string, RelaySlice>,
+  connectedRelayIds: Iterable<string>,
+  relayId: string,
+  nextRelay: RelayInfo,
+  nextSequence: number | undefined,
+) => {
+  if (!nextRelay.instanceId || nextRelay.instanceStartedAt === undefined || nextSequence === undefined) return false
+  const workspace = stableWorkspaceKey(nextRelay)
+  const nextInstanceStartedAt = nextRelay.instanceStartedAt
+  const connected = new Set(connectedRelayIds)
+  return [...slices].every(([currentRelayId, current]) => {
+    if (currentRelayId === relayId || stableWorkspaceKey(current.relay) !== workspace) return true
+    const currentInstanceStartedAt = current.relay.instanceStartedAt ?? -1
+    if (currentInstanceStartedAt > nextInstanceStartedAt) return false
+    if (currentInstanceStartedAt < nextInstanceStartedAt) return true
+    if (current.relay.instanceId === nextRelay.instanceId) return nextSequence > (current.sequence ?? -1)
+    return !connected.has(currentRelayId)
+  })
+}
+
+export type RelayHelloHandoff =
+  | { accepted: false }
+  | { accepted: true; slices: Map<string, RelaySlice>; superseded: string[] }
+
+/** Transfers cached workspace summaries to a new relay identity until its snapshot arrives. */
+export const handoffRelayHello = (
+  slices: ReadonlyMap<string, RelaySlice>,
+  connectedRelayIds: Iterable<string>,
+  relayId: string,
+  relay: RelayInfo,
+  sequence: number,
+): RelayHelloHandoff => {
+  const workspace = stableWorkspaceKey(relay)
+  const prior = [...slices].filter(([, slice]) => stableWorkspaceKey(slice.relay) === workspace)
+  if (!acceptsWorkspaceRelayPosition(slices, connectedRelayIds, relayId, relay, sequence)) return { accepted: false }
+
+  const newestById = <T extends { id: string; updatedAt: number }>(items: T[]) => {
+    const seen = new Set<string>()
+    return [...items].sort((left, right) => right.updatedAt - left.updatedAt).filter((item) => {
+      if (seen.has(item.id)) return false
+      seen.add(item.id)
+      return true
+    })
+  }
+  const next = new Map(slices)
+  const superseded = prior.map(([id]) => id).filter((id) => id !== relayId)
+  for (const id of superseded) next.delete(id)
+  next.set(relayId, {
+    relay,
+    sessions: newestById(prior.flatMap(([, slice]) => slice.sessions)),
+    subagents: newestById(prior.flatMap(([, slice]) => slice.subagents)),
+    agents: [],
+    agentTheme: undefined,
+    permissions: [],
+    questions: [],
+    sequence,
+  })
+  return { accepted: true, slices: next, superseded }
+}
+
 export const aggregateRelaySlices = (
   slices: Iterable<[string, RelaySlice]>,
   connectedRelayIds?: Iterable<string>,
@@ -75,7 +137,12 @@ export const aggregateRelaySlices = (
   const connected = new Set(connectedRelayIds ?? entries.map(([relayId]) => relayId))
   const relays = entries.map(([, slice]) => slice.relay)
   const activeEntries = entries.filter(([relayId]) => connected.has(relayId))
-  const candidates = activeEntries
+  const activeWorkspaces = new Set(activeEntries.map(([, slice]) => stableWorkspaceKey(slice.relay)))
+  const visibleEntries = [
+    ...activeEntries,
+    ...entries.filter(([relayId, slice]) => !connected.has(relayId) && !activeWorkspaces.has(stableWorkspaceKey(slice.relay))),
+  ]
+  const candidates = visibleEntries
     .flatMap(([relayId, slice]) => slice.sessions.map((session) => ({ ...session, workspaceRelayId: relayId, workspaceId: stableWorkspaceKey(slice.relay) })))
     .sort((left, right) => {
       const recency = right.updatedAt - left.updatedAt
@@ -95,7 +162,7 @@ export const aggregateRelaySlices = (
     sessionRelays.set(workspaceSessionKey(session.workspaceId, session.id), session.workspaceRelayId)
     if (!sessionRelays.has(session.id)) sessionRelays.set(session.id, session.workspaceRelayId)
   }
-  const subagents = activeEntries.flatMap(([relayId, slice]) => slice.subagents.map((session) => ({ ...session, workspaceRelayId: relayId, workspaceId: stableWorkspaceKey(slice.relay) })))
+  const subagents = visibleEntries.flatMap(([relayId, slice]) => slice.subagents.map((session) => ({ ...session, workspaceRelayId: relayId, workspaceId: stableWorkspaceKey(slice.relay) })))
   const seenSubagents = new Set<string>()
   const uniqueSubagents = subagents.filter((session) => {
     const key = workspaceSessionKey(session.workspaceId, session.id)
@@ -139,10 +206,13 @@ export const commandRelayId = (
   connectedRelayIds: Iterable<string>,
   sessionRelays: ReadonlyMap<string, string>,
 ) => {
-  if (command.sessionId) return command.workspaceId ? sessionRelays.get(workspaceSessionKey(command.workspaceId, command.sessionId)) : sessionRelays.get(command.sessionId)
+  const connected = new Set(connectedRelayIds)
+  if (command.sessionId) {
+    const relayId = command.workspaceId ? sessionRelays.get(workspaceSessionKey(command.workspaceId, command.sessionId)) : sessionRelays.get(command.sessionId)
+    return relayId && connected.has(relayId) ? relayId : undefined
+  }
   if (command.type === "snapshot.request") return undefined
-  const connected = [...connectedRelayIds]
-  return connected.length === 1 ? connected[0] : undefined
+  return connected.size === 1 ? connected.values().next().value : undefined
 }
 
 export const resolveConnectedWorkspaceRelay = (

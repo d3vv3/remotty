@@ -30,7 +30,7 @@ import {
   saveCachedResource,
   type DeviceIdentity,
 } from "../../infrastructure/storage"
-import { acceptsRelayPosition, aggregateRelaySlices, bumpResourceRevisions, bumpSessionRevisions, commandRelayId, normalizeRelaySlice, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, type RelaySlice, type ResourceRevisions } from "./relayState"
+import { acceptsRelayPosition, acceptsWorkspaceRelayPosition, aggregateRelaySlices, bumpResourceRevisions, bumpSessionRevisions, commandRelayId, handoffRelayHello, normalizeRelaySlice, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, type RelaySlice, type ResourceRevisions } from "./relayState"
 import { healthSummary } from "./connectionPresentation"
 import { addChunk, assembledMessages, completeChunks, createChunkAssembly, exactManifestMessages, orderByManifest, validManifest, type ChunkAssembly } from "./messageTransfer"
 import { HANDSHAKE_TIMEOUT_MS, hasSequenceGap, readOnlyCommand, reconnectDelay, requestInactivityMs, retryPlan, shouldExpireHandshakeWatchdog, shouldReconnectTransportOnResume } from "./transportPolicy"
@@ -389,8 +389,6 @@ export function useRelay(initialBundle?: PairingBundle) {
       if (connectionEpochRef.current !== epoch || identityRef.current?.key !== identityKey) return
       if (recentMessageIdsRef.current.has(frame.messageId)) return
       rememberMessage(frame.messageId)
-      setRelayHealth((current) => ({ ...current, [frame.sender]: { ...current[frame.sender], lastContact: Date.now(), timedOut: false } }))
-
       if (typeof payload === "object" && payload !== null && (payload as { type?: unknown }).type === "enrollment.accepted") {
         const accepted = payload as { type: string; deviceId?: unknown; relayId?: unknown; deviceCertificate?: unknown }
         if (accepted.deviceId !== identity.deviceId || accepted.relayId !== frame.sender ||
@@ -422,6 +420,8 @@ export function useRelay(initialBundle?: PairingBundle) {
         return
       }
       const data = relayMessage.data
+      const recordRelayContact = () => setRelayHealth((current) => ({ ...current, [frame.sender]: { ...current[frame.sender], lastContact: Date.now(), timedOut: false } }))
+      if (data.type !== "relay.hello" && data.type !== "relay.snapshot") recordRelayContact()
       if (data.type === "device.revoked") {
         if (data.deviceId !== identity.deviceId) return
         await sendCommandFrame(identity, frame.sender, {
@@ -454,23 +454,20 @@ export function useRelay(initialBundle?: PairingBundle) {
       } else if (data.type === "relay.hello") {
         if (data.relay.id !== frame.sender) return
         const current = slicesRef.current.get(frame.sender)
-        if (!acceptsRelayPosition(current, data.relay, data.sequence)) return
-        slicesRef.current.set(frame.sender, current ? { ...current, relay: data.relay } : {
-          relay: data.relay, sessions: [], subagents: [], agents: [], permissions: [], questions: [], sequence: data.sequence,
-        })
-        if (data.relay.workspaceId || data.relay.workspace) {
-          const superseded: string[] = []
-          for (const [id, slice] of slicesRef.current) {
-            if (id !== frame.sender && stableWorkspaceKey(slice.relay) === stableWorkspaceKey(data.relay)) { slicesRef.current.delete(id); superseded.push(id) }
-          }
-          if (superseded.length) setRelayHealth((current) => { const next = { ...current }; for (const id of superseded) delete next[id]; return next })
-        }
-        slicesRef.current.get(frame.sender)!.sequence = data.sequence
+        if (data.sequence === undefined || !acceptsRelayPosition(current, data.relay, data.sequence) ||
+          !acceptsWorkspaceRelayPosition(slicesRef.current, connectedRelaysRef.current, frame.sender, data.relay, data.sequence)) return
+        recordRelayContact()
+        const handoff = handoffRelayHello(slicesRef.current, connectedRelaysRef.current, frame.sender, data.relay, data.sequence)
+        if (!handoff.accepted) return
+        slicesRef.current = handoff.slices
+        if (handoff.superseded.length) setRelayHealth((current) => { const next = { ...current }; for (const id of handoff.superseded) delete next[id]; return next })
         publishSlices()
       } else if (data.type === "relay.snapshot") {
         if (data.relay.id !== frame.sender) return
         const current = slicesRef.current.get(frame.sender)
-        if (!acceptsRelayPosition(current, data.relay, data.sequence)) return
+        if (!acceptsRelayPosition(current, data.relay, data.sequence) ||
+          !acceptsWorkspaceRelayPosition(slicesRef.current, connectedRelaysRef.current, frame.sender, data.relay, data.sequence)) return
+        recordRelayContact()
         slicesRef.current.set(frame.sender, {
           relay: data.relay,
           sessions: data.sessions,

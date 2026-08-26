@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { acceptsRelayPosition, aggregateRelaySlices, bumpSessionRevisions, commandRelayId, normalizeRelaySlice, relaySupportsSessionCreate, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, workspaceSessionKey, type RelaySlice } from "../src/features/relay/relayState"
+import { acceptsRelayPosition, acceptsWorkspaceRelayPosition, aggregateRelaySlices, bumpSessionRevisions, commandRelayId, handoffRelayHello, normalizeRelaySlice, relaySupportsSessionCreate, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, workspaceSessionKey, type RelaySlice } from "../src/features/relay/relayState"
 import { visibleSubagents } from "../src/features/session/model/subagentActivityState"
 
 const slice = (id: string, sessionId: string, updatedAt: number): RelaySlice => ({
@@ -113,6 +113,193 @@ describe("relay snapshot aggregation and routing", () => {
     expect(state.questions).toEqual([])
     expect(state.sessionRelays.get("session-a")).toBe("connected")
     expect(commandRelayId({ type: "session.messages", sessionId: "session-a" }, ["connected"], state.sessionRelays)).toBe("connected")
+  })
+
+  it("keeps cached sessions and subagents visible when no relay is connected, without routing requests", () => {
+    const cached = slice("cached", "root", 1)
+    cached.subagents = [{ ...cached.sessions[0]!, id: "child", parentSessionId: "root", rootSessionId: "root" }]
+    const state = aggregateRelaySlices(new Map([["cached", cached]]), [])
+
+    expect(state.sessions.map((session) => session.id)).toEqual(["root"])
+    expect(state.subagents.map((session) => session.id)).toEqual(["child"])
+    expect(state.sessionRelays.get("root")).toBe("cached")
+    expect(commandRelayId({ type: "session.messages", sessionId: "root" }, [], state.sessionRelays)).toBeUndefined()
+  })
+
+  it("keeps offline workspaces visible alongside active workspaces while excluding stale live data", () => {
+    const active = slice("active", "active-session", 1)
+    const offline = slice("offline", "offline-session", 2)
+    offline.agents = [{ name: "stale", mode: "primary" }]
+    offline.permissions = [{ id: "stale-permission", sessionID: "offline-session", permission: "bash", patterns: [], metadata: {}, always: [] }]
+    offline.questions = [{ id: "stale-question", sessionID: "offline-session", questions: [] }]
+    const state = aggregateRelaySlices(new Map([["active", active], ["offline", offline]]), ["active"])
+
+    expect(state.sessions.map((session) => session.id)).toEqual(["offline-session", "active-session"])
+    expect(state.agents.map((agent) => agent.name)).toEqual(["build"])
+    expect(state.permissions).toEqual([])
+    expect(state.questions).toEqual([])
+  })
+
+  it("does not let a disconnected duplicate override the active workspace", () => {
+    const active = slice("active", "session", 1)
+    const cached = slice("cached", "session", 100)
+    cached.relay.workspace = active.relay.workspace
+    cached.sessions[0]!.status = "busy"
+    const state = aggregateRelaySlices(new Map([["active", active], ["cached", cached]]), ["active"])
+
+    expect(state.sessions).toMatchObject([{ id: "session", status: "idle", workspaceRelayId: "active" }])
+  })
+
+  it("hands off cached summaries to a restarted relay and clears stale live state", () => {
+    const old = slice("old", "root", 1)
+    old.relay.workspaceId = "workspace"
+    old.subagents = [{ ...old.sessions[0]!, id: "child", parentSessionId: "root", rootSessionId: "root" }]
+    old.agentTheme = { name: "old", mode: "dark", colors: { secondary: "#010203", accent: "#040506", success: "#070809", warning: "#0a0b0c", primary: "#0d0e0f", error: "#101112", info: "#131415" } }
+    old.permissions = [{ id: "permission", sessionID: "root", permission: "bash", patterns: [], metadata: {}, always: [] }]
+    old.questions = [{ id: "question", sessionID: "root", questions: [] }]
+    const relay = { ...old.relay, id: "new", instanceId: "new-instance", instanceStartedAt: 2 }
+    const handoff = handoffRelayHello(new Map([["old", old]]), [], "new", relay, 4)
+
+    expect(handoff.accepted).toBe(true)
+    if (!handoff.accepted) return
+    expect(handoff.superseded).toEqual(["old"])
+    expect(handoff.slices.get("new")).toMatchObject({ relay, sequence: 4, sessions: old.sessions, subagents: old.subagents, agents: [], permissions: [], questions: [] })
+    expect(handoff.slices.get("new")?.agentTheme).toBeUndefined()
+  })
+
+  it("clears stale live state during a same-id relay restart hello", () => {
+    const current = slice("relay", "root", 1)
+    current.agents = [{ name: "stale", mode: "primary" }]
+    const relay = { ...current.relay, instanceId: "restarted", instanceStartedAt: 2 }
+    const handoff = handoffRelayHello(new Map([["relay", current]]), ["relay"], "relay", relay, 3)
+
+    expect(handoff.accepted).toBe(true)
+    if (!handoff.accepted) return
+    expect(handoff.superseded).toEqual([])
+    expect(handoff.slices.get("relay")).toMatchObject({ relay, sequence: 3, sessions: current.sessions, subagents: [], agents: [], permissions: [], questions: [] })
+  })
+
+  it("rejects a delayed older new-id hello without replacing a newer workspace slice", () => {
+    const retained = slice("newer", "root", 1)
+    retained.relay.workspaceId = "workspace"
+    retained.relay.instanceId = "newer-instance"
+    retained.relay.instanceStartedAt = 20
+    const relay = { ...retained.relay, id: "delayed", instanceId: "older-instance", instanceStartedAt: 10 }
+    const slices = new Map([["newer", retained]])
+
+    const handoff = handoffRelayHello(slices, ["newer"], "delayed", relay, 100)
+
+    expect(handoff).toEqual({ accepted: false })
+    expect(slices).toEqual(new Map([["newer", retained]]))
+  })
+
+  it("rejects a delayed older snapshot after its hello was rejected", () => {
+    const retained = slice("newer", "root", 1)
+    retained.relay.workspaceId = "workspace"
+    retained.relay.instanceId = "newer-instance"
+    retained.relay.instanceStartedAt = 20
+    retained.sequence = 5
+    const delayed = { ...retained.relay, id: "delayed", instanceId: "older-instance", instanceStartedAt: 10 }
+    const slices = new Map([["newer", retained]])
+
+    expect(handoffRelayHello(slices, ["newer"], "delayed", delayed, 100)).toEqual({ accepted: false })
+    expect(acceptsWorkspaceRelayPosition(slices, ["newer"], "delayed", delayed, 101)).toBe(false)
+  })
+
+  it("rejects an equal-timestamp different instance while its workspace peer is connected", () => {
+    const retained = slice("connected", "root", 1)
+    retained.relay.workspaceId = "workspace"
+    retained.relay.instanceId = "connected-instance"
+    retained.relay.instanceStartedAt = 20
+    const incoming = { ...retained.relay, id: "incoming", instanceId: "incoming-instance" }
+
+    expect(acceptsWorkspaceRelayPosition(new Map([["connected", retained]]), ["connected", "incoming"], "incoming", incoming, 1)).toBe(false)
+  })
+
+  it("accepts an equal-timestamp different instance when the retained workspace slice is cached", () => {
+    const retained = slice("cached", "root", 1)
+    retained.relay.workspaceId = "workspace"
+    retained.relay.instanceId = "cached-instance"
+    retained.relay.instanceStartedAt = 20
+    const incoming = { ...retained.relay, id: "incoming", instanceId: "incoming-instance" }
+
+    expect(acceptsWorkspaceRelayPosition(new Map([["cached", retained]]), ["incoming"], "incoming", incoming, 1)).toBe(true)
+  })
+
+  it("does not let a delayed equal-timestamp frame replace a connected workspace peer", () => {
+    const retained = slice("connected", "root", 1)
+    retained.relay.workspaceId = "workspace"
+    retained.relay.instanceId = "connected-instance"
+    retained.relay.instanceStartedAt = 20
+    const delayed = { ...retained.relay, id: "delayed", instanceId: "delayed-instance" }
+    const slices = new Map([["connected", retained]])
+
+    expect(handoffRelayHello(slices, ["connected", "delayed"], "delayed", delayed, 100)).toEqual({ accepted: false })
+    expect(slices).toEqual(new Map([["connected", retained]]))
+  })
+
+  it("rejects an old-sequence snapshot from the same instance under a new relay ID", () => {
+    const retained = slice("old-id", "root", 1)
+    retained.relay.workspaceId = "workspace"
+    retained.relay.instanceId = "instance"
+    retained.relay.instanceStartedAt = 20
+    retained.sequence = 10
+    const snapshotRelay = { ...retained.relay, id: "new-id" }
+
+    expect(acceptsWorkspaceRelayPosition(new Map([["old-id", retained]]), ["old-id"], "new-id", snapshotRelay, 10)).toBe(false)
+  })
+
+  it("accepts a newer-sequence snapshot from the same instance under a new relay ID", () => {
+    const retained = slice("old-id", "root", 1)
+    retained.relay.workspaceId = "workspace"
+    retained.relay.instanceId = "instance"
+    retained.relay.instanceStartedAt = 20
+    retained.sequence = 10
+    const snapshotRelay = { ...retained.relay, id: "new-id" }
+
+    expect(acceptsWorkspaceRelayPosition(new Map([["old-id", retained]]), ["old-id"], "new-id", snapshotRelay, 11)).toBe(true)
+  })
+
+  it("accepts a newer instance snapshot even when its sequence restarts low", () => {
+    const retained = slice("old-id", "root", 1)
+    retained.relay.workspaceId = "workspace"
+    retained.relay.instanceId = "old-instance"
+    retained.relay.instanceStartedAt = 20
+    retained.sequence = 100
+    const snapshotRelay = { ...retained.relay, id: "new-id", instanceId: "new-instance", instanceStartedAt: 21 }
+
+    expect(acceptsWorkspaceRelayPosition(new Map([["old-id", retained]]), ["old-id"], "new-id", snapshotRelay, 1)).toBe(true)
+  })
+
+  it("hands off cached summaries when the same instance reconnects with a new relay ID", () => {
+    const retained = slice("old-id", "root", 1)
+    retained.relay.workspaceId = "workspace"
+    retained.relay.instanceId = "instance"
+    retained.relay.instanceStartedAt = 20
+    retained.subagents = [{ ...retained.sessions[0]!, id: "child", parentSessionId: "root", rootSessionId: "root" }]
+    const relay = { ...retained.relay, id: "new-id" }
+
+    const handoff = handoffRelayHello(new Map([["old-id", retained]]), [], "new-id", relay, 2)
+
+    expect(handoff.accepted).toBe(true)
+    if (!handoff.accepted) return
+    expect(handoff.superseded).toEqual(["old-id"])
+    expect(handoff.slices.get("new-id")).toMatchObject({ sessions: retained.sessions, subagents: retained.subagents, agents: [], permissions: [], questions: [] })
+  })
+
+  it("replaces older workspace slices for a newer relay instance", () => {
+    const retained = slice("old", "root", 1)
+    retained.relay.workspaceId = "workspace"
+    retained.relay.instanceId = "old-instance"
+    retained.relay.instanceStartedAt = 10
+    const relay = { ...retained.relay, id: "new", instanceId: "new-instance", instanceStartedAt: 20 }
+
+    const handoff = handoffRelayHello(new Map([["old", retained]]), ["old"], "new", relay, 1)
+
+    expect(handoff.accepted).toBe(true)
+    if (!handoff.accepted) return
+    expect([...handoff.slices.keys()]).toEqual(["new"])
+    expect(handoff.superseded).toEqual(["old"])
   })
 
   it("keeps child summaries out of the main list while routing their commands", () => {
