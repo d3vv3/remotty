@@ -26,22 +26,25 @@ describe("layout source contracts", () => {
     expect(sessionDetail).toContain("messageRefreshGenerationRef")
     expect(sessionDetail).toContain("todosRefreshGenerationRef")
     expect(sessionDetail).toContain("const selectTab")
-    expect(sessionDetail).toContain("followOutputRef.current = true")
-    expect(sessionDetail).toContain("lastScrollTopRef.current = detailContentRef.current.scrollTop")
-    expect((sessionDetail.match(/lastScrollTopRef\.current = detailContentRef\.current\.scrollTop/g) ?? [])).toHaveLength(2)
+    expect(sessionDetail).toContain("const isNearActivityBottom")
+    expect(sessionDetail).toContain("const activityRestorePendingRef = useRef(false)")
   })
 
-  it("hides the composer and root working strip for subagent activity while restoring output follow on Activity", () => {
+  it("hides the composer and root working strip for subagent activity while preserving Activity follow intent", () => {
     const sessionDetail = source("../src/features/session/components/SessionDetail.tsx")
     expect(sessionDetail).toContain('const showComposer = tab !== "subagents"')
     expect(sessionDetail).toContain("{showComposer && (session.status === \"busy\" || session.status === \"retry\")")
     expect(sessionDetail).toContain('{showComposer && <form className="composer" onSubmit={submit}>')
-    expect(sessionDetail).toContain('if (next === "activity")')
-    expect(sessionDetail).toContain("detailContentRef.current.scrollTop = detailContentRef.current.scrollHeight")
+    expect(sessionDetail).toContain('if (tab === "activity" && next !== "activity" && detailContentRef.current)')
+    expect(sessionDetail).toContain("if (followOutputRef.current) {")
+    expect(sessionDetail).toContain("} else if (activityRestorePendingRef.current) {")
+    expect(sessionDetail).toContain("element.scrollTop = activityScrollTopRef.current")
+    expect(sessionDetail).toContain("activityRestorePendingRef.current = false")
     expect(sessionDetail).not.toContain("document.activeElement === promptRef.current")
-    expect(sessionDetail).toContain("followOutputRef.current = true\n          const prepared = await prepareMessageProgress(partial)\n          if (!owns() || !isRequestActive()) return\n          const cache = applyPreparedMessageProgress(messageCacheRef.current, prepared)")
+    expect(sessionDetail).not.toContain("followOutputRef.current = true\n          const prepared = await prepareMessageProgress(partial)")
     expect(sessionDetail).toContain("const cache = applyPreparedMessageProgress(messageCacheRef.current, prepared)\n          await persistMessageCache(cache)")
-    expect(sessionDetail).toContain("lastScrollTopRef.current = detailContentRef.current.scrollTop")
+    expect(sessionDetail).toContain("followOutputRef.current = isNearActivityBottom(element)")
+    expect(sessionDetail).toContain('if (tab !== "activity" && next === "activity") activityRestorePendingRef.current = true')
   })
 
   it("keeps Subagents scrolling within its fixed-height detail region", () => {

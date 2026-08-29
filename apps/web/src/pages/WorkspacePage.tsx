@@ -8,6 +8,11 @@ import { pwaBuildFromModuleScriptUrls } from "../features/pwa"
 import { effectiveConnectionPresentation, exactConnectionTime, relayConnectionPresentation, relaySupportsSessionCreate, serviceConnectionPresentation, stableWorkspaceKey, useRelay, workspaceSessionKey, type RoutedSession } from "../features/relay"
 import { promptDeliveryState, SessionDetail } from "../features/session"
 
+export const SESSION_LIST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000
+
+export const isSessionVisibleInList = (session: Pick<SessionSummary, "updatedAt">, now: number) =>
+  session.updatedAt >= now - SESSION_LIST_MAX_AGE_MS
+
 export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle }) {
   const relayState = useRelay(initialBundle)
   const [connectionDetailsOpen, setConnectionDetailsOpen] = useState(false)
@@ -21,7 +26,7 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
   const [notificationPromptOpen, setNotificationPromptOpen] = useState(false)
   const [enablingNotifications, setEnablingNotifications] = useState(false)
-  const [, setClock] = useState(0)
+  const [clock, setClock] = useState(() => Date.now())
   const sessionKey = (session: SessionSummary & { workspaceRelayId?: string; workspaceId?: string }) => `${session.workspaceId ?? session.workspaceRelayId ?? ""}:${session.id}`
   const selected = relayState.sessions.find((session) =>
     sessionKey(session) === selectedKey || `${session.workspaceRelayId}:${session.id}` === selectedKey || (!selectedKey?.includes(":") && session.id === selectedKey),
@@ -34,9 +39,13 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
     : Promise.resolve(), [relayState.saveCache, selected?.workspaceId, selected?.id])
   const connectedRelayIds = relayState.relays.filter((relay) => relayState.isRelayConnected(relay.id)).map((relay) => relay.id)
   const connectionPresentation = effectiveConnectionPresentation(relayState.connection, connectedRelayIds, relayState.relays.length, relayState.relayHealth)
+  const visibleSessions = useMemo(
+    () => relayState.sessions.filter((session) => isSessionVisibleInList(session, clock)),
+    [relayState.sessions, clock],
+  )
   const sessionGroups = useMemo(() => {
     const groups = new Map<string, RoutedSession[]>()
-    for (const session of relayState.sessions) {
+    for (const session of visibleSessions) {
       const group = groups.get(session.directory)
       if (group) group.push(session)
       else groups.set(session.directory, [session])
@@ -44,7 +53,7 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
     return [...groups.entries()].sort(
       ([, left], [, right]) => Math.max(...right.map((session) => session.updatedAt)) - Math.max(...left.map((session) => session.updatedAt)),
     )
-  }, [relayState.sessions])
+  }, [visibleSessions])
   const attentionKeys = useMemo(() => new Set([
     ...relayState.permissions.map((item) => `${item.workspaceRelayId}:${item.sessionID}`),
     ...relayState.questions.map((item) => `${item.workspaceRelayId}:${item.sessionID}`),
@@ -56,7 +65,7 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
     return () => window.clearTimeout(timeout)
   }, [relayState.error])
   useEffect(() => {
-    const timer = window.setInterval(() => setClock((value) => value + 1), 30_000)
+    const timer = window.setInterval(() => setClock(Date.now()), 30_000)
     return () => window.clearInterval(timer)
   }, [])
 
@@ -198,7 +207,7 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
                 ))}
               </section>
             ))}
-            {relayState.sessions.length === 0 && (
+            {visibleSessions.length === 0 && (
               <div className="empty-state">
                 <LoaderCircle size={22} className={relayState.connection === "online" ? "" : "spin"} />
                 <p>

@@ -3,7 +3,7 @@
 import { act, useEffect, useState } from "react"
 import { createRoot } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { WorkspacePage } from "../src/pages/WorkspacePage"
+import { SESSION_LIST_MAX_AGE_MS, WorkspacePage } from "../src/pages/WorkspacePage"
 
 const mocks = vi.hoisted(() => ({ useRelay: vi.fn(), sessionDetail: { mounts: 0, unmounts: 0, nextIdentity: 0 } }))
 
@@ -14,19 +14,20 @@ vi.mock("../src/features/relay", async (importOriginal) => ({
 vi.mock("../src/features/pairing", () => ({ routeForEnrollment: () => undefined, PairingScreen: () => <div data-testid="pairing" /> }))
 vi.mock("../src/features/pwa", () => ({ pwaBuildFromModuleScriptUrls: () => "test" }))
 vi.mock("../src/features/session", () => ({
-  SessionDetail: ({ session }: { session: { id: string } }) => {
+  SessionDetail: ({ session, onBack }: { session: { id: string }; onBack: () => void }) => {
     const [identity] = useState(() => ++mocks.sessionDetail.nextIdentity)
     useEffect(() => {
       ++mocks.sessionDetail.mounts
       return () => { ++mocks.sessionDetail.unmounts }
     }, [])
-    return <div data-testid="session-detail" data-instance-id={identity}>Session detail: {session.id}</div>
+    return <div data-testid="session-detail" data-instance-id={identity}>Session detail: {session.id}<button onClick={onBack}>Back</button></div>
   },
   promptDeliveryState: () => "failed",
 }))
 
 const relay = { id: "relay", name: "Desktop", hostname: "host", platform: "linux", arch: "x64", workspace: "/workspace", workspaceId: "workspace" }
-const session = { id: "session", title: "Cached session", directory: "/workspace", status: "idle" as const, updatedAt: 1, additions: 0, deletions: 0, files: 0, workspaceRelayId: "relay", workspaceId: "workspace" }
+const now = new Date("2026-08-29T12:00:00.000Z").valueOf()
+const session = { id: "session", title: "Cached session", directory: "/workspace", status: "idle" as const, updatedAt: now, additions: 0, deletions: 0, files: 0, workspaceRelayId: "relay", workspaceId: "workspace" }
 
 const relayState = (connection: "online" | "connecting" | "unstable" | "offline" | "disconnected", sessions = [session]) => ({
   connection,
@@ -63,6 +64,8 @@ describe("WorkspacePage connection stability", () => {
   let rootUnmounted: boolean
 
   beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
     history.replaceState({}, "", "/app?session=session")
     container = document.createElement("div")
     document.body.append(container)
@@ -77,6 +80,7 @@ describe("WorkspacePage connection stability", () => {
     if (!rootUnmounted) await act(async () => root.unmount())
     container.remove()
     vi.clearAllMocks()
+    vi.useRealTimers()
   })
 
   it("keeps the selected cached session detail mounted through transient connection states", async () => {
@@ -102,5 +106,67 @@ describe("WorkspacePage connection stability", () => {
 
     expect(container.querySelector("[data-testid=session-detail]")).toBeNull()
     expect(container.textContent).toContain("Waiting for the local relay.")
+  })
+
+  it("shows recent sessions and hides sessions strictly older than one week", async () => {
+    const recent = { ...session, id: "recent", title: "Recent session", updatedAt: now - SESSION_LIST_MAX_AGE_MS + 1 }
+    const old = { ...session, id: "old", title: "Old session", updatedAt: now - SESSION_LIST_MAX_AGE_MS - 1 }
+    history.replaceState({}, "", "/app")
+    mocks.useRelay.mockReturnValue(relayState("online", [recent, old]))
+
+    await act(async () => root.render(<WorkspacePage />))
+
+    expect(container.textContent).toContain("Recent session")
+    expect(container.textContent).not.toContain("Old session")
+  })
+
+  it("ages a session out after the next thirty-second clock tick without reloading", async () => {
+    const expiring = { ...session, id: "expiring", title: "Expiring session", updatedAt: now - SESSION_LIST_MAX_AGE_MS + 1 }
+    history.replaceState({}, "", "/app")
+    mocks.useRelay.mockReturnValue(relayState("online", [expiring]))
+
+    await act(async () => root.render(<WorkspacePage />))
+    expect(container.textContent).toContain("Expiring session")
+
+    await act(async () => { vi.advanceTimersByTime(30_000) })
+
+    expect(container.textContent).not.toContain("Expiring session")
+  })
+
+  it("keeps a session updated exactly one week ago in the list", async () => {
+    const cutoff = { ...session, id: "cutoff", title: "Cutoff session", updatedAt: now - SESSION_LIST_MAX_AGE_MS }
+    history.replaceState({}, "", "/app")
+    mocks.useRelay.mockReturnValue(relayState("online", [cutoff]))
+
+    await act(async () => root.render(<WorkspacePage />))
+
+    expect(container.textContent).toContain("Cutoff session")
+  })
+
+  it("renders a deep-linked old session detail while excluding it from the list", async () => {
+    const old = { ...session, id: "old", title: "Old session", updatedAt: now - SESSION_LIST_MAX_AGE_MS - 1 }
+    history.replaceState({}, "", "/app?session=old")
+    mocks.useRelay.mockReturnValue(relayState("online", [old]))
+
+    await act(async () => root.render(<WorkspacePage />))
+
+    expect(container.querySelector("[data-testid=session-detail]")?.textContent).toContain("old")
+    expect(container.textContent).not.toContain("Old session")
+
+    await act(async () => container.querySelector("[data-testid=session-detail] button")?.dispatchEvent(new MouseEvent("click", { bubbles: true })))
+
+    expect(container.querySelector("[data-testid=session-detail]")).toBeNull()
+    expect(container.textContent).not.toContain("Old session")
+  })
+
+  it("uses empty-list copy when every session is filtered out", async () => {
+    const old = { ...session, id: "old", title: "Old session", updatedAt: now - SESSION_LIST_MAX_AGE_MS - 1 }
+    history.replaceState({}, "", "/app")
+    mocks.useRelay.mockReturnValue(relayState("online", [old]))
+
+    await act(async () => root.render(<WorkspacePage />))
+
+    expect(container.textContent).toContain("Open a new OpenCode session to get started.")
+    expect(container.textContent).not.toContain("Old session")
   })
 })

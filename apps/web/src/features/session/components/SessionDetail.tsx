@@ -22,6 +22,10 @@ type WorkspaceDiff = { state: "ok" | "not_git"; files: FileDiff[]; truncated: bo
 type WorkspacePatch = { patch?: string; truncated: boolean }
 type SessionTodo = { id: string; content: string; status: string; priority: string }
 
+const ACTIVITY_BOTTOM_THRESHOLD = 80
+const isNearActivityBottom = (element: Pick<HTMLElement, "scrollHeight" | "scrollTop" | "clientHeight">) =>
+  element.scrollHeight - element.scrollTop - element.clientHeight <= ACTIVITY_BOTTOM_THRESHOLD
+
 export function SessionDetail({
   session,
   sessionKey,
@@ -80,7 +84,8 @@ export function SessionDetail({
   const detailContentRef = useRef<HTMLDivElement>(null)
   const mountedRef = useRef(true)
   const followOutputRef = useRef(true)
-  const lastScrollTopRef = useRef(0)
+  const activityScrollTopRef = useRef(0)
+  const activityRestorePendingRef = useRef(false)
   const snapshotRef = useRef<Record<string, string>>({})
   const generationRef = useRef(0)
   const messageRefreshGenerationRef = useRef(0)
@@ -167,7 +172,6 @@ export function SessionDetail({
       try {
         const progress = key === "messages" ? async (partial: SessionMessage[], isRequestActive: () => boolean) => {
           if (!owns() || !isRequestActive()) return
-          followOutputRef.current = true
           const prepared = await prepareMessageProgress(partial)
           if (!owns() || !isRequestActive()) return
           const cache = applyPreparedMessageProgress(messageCacheRef.current, prepared)
@@ -328,16 +332,23 @@ export function SessionDetail({
   )
 
   useLayoutEffect(() => {
-    if (tab !== "activity" || !followOutputRef.current) return
+    if (tab !== "activity") return
     const frame = requestAnimationFrame(() => {
-      if (detailContentRef.current) {
-        detailContentRef.current.scrollTop = detailContentRef.current.scrollHeight
-        lastScrollTopRef.current = detailContentRef.current.scrollTop
-        followOutputRef.current = true
+      const element = detailContentRef.current
+      if (!element) return
+      if (followOutputRef.current) {
+        element.scrollTop = element.scrollHeight
+      } else if (activityRestorePendingRef.current) {
+        element.scrollTop = activityScrollTopRef.current
       }
+      if (followOutputRef.current || activityRestorePendingRef.current) {
+        activityScrollTopRef.current = element.scrollTop
+        followOutputRef.current = isNearActivityBottom(element)
+      }
+      activityRestorePendingRef.current = false
     })
     return () => cancelAnimationFrame(frame)
-  }, [tab, visibleMessages])
+  }, [tab, visibleMessages, loading, isThinking, session.status])
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -407,16 +418,12 @@ export function SessionDetail({
     event.currentTarget.form?.requestSubmit()
   }
   const selectTab = (next: "activity" | "todos" | "changes" | "subagents") => {
-    if (next === "activity") {
-      followOutputRef.current = true
-      requestAnimationFrame(() => {
-        if (detailContentRef.current) {
-          detailContentRef.current.scrollTop = detailContentRef.current.scrollHeight
-          lastScrollTopRef.current = detailContentRef.current.scrollTop
-          followOutputRef.current = true
-        }
-      })
+    if (tab === "activity" && next !== "activity" && detailContentRef.current) {
+      const element = detailContentRef.current
+      activityScrollTopRef.current = element.scrollTop
+      followOutputRef.current = isNearActivityBottom(element)
     }
+    if (tab !== "activity" && next === "activity") activityRestorePendingRef.current = true
     setTab(next)
   }
 
@@ -484,11 +491,10 @@ export function SessionDetail({
         className={`detail-content ${tab === "subagents" ? "subagent-content" : ""}`}
         ref={detailContentRef}
         onScroll={(event) => {
+          if (tab !== "activity") return
           const element = event.currentTarget
-          const scrollingUp = element.scrollTop < lastScrollTopRef.current - 1
-          if (scrollingUp) followOutputRef.current = false
-          else if (element.scrollHeight - element.scrollTop - element.clientHeight < 80) followOutputRef.current = true
-          lastScrollTopRef.current = element.scrollTop
+          activityScrollTopRef.current = element.scrollTop
+          followOutputRef.current = isNearActivityBottom(element)
         }}
       >
         {tab === "activity" ? (
