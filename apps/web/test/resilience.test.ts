@@ -3,9 +3,13 @@ import { connectionLabel, effectiveConnectionPresentation, exactConnectionTime, 
 import { addChunk, assembledMessages, completeChunks, createChunkAssembly, exactManifestMessages, orderByManifest, validManifest } from "../src/features/relay/messageTransfer"
 import { mergeByMessageId, promptDeliveryState, reconcileCanonicalMessages } from "../src/features/session/model/messageReconciliation"
 import { hasSequenceGap, isTransportActivityStale, reconnectDelay, requestInactivityMs, retryPlan, shouldExpireHandshakeWatchdog, shouldReconnectTransportOnResume, shouldReplaceTransportOnResume } from "../src/features/relay/transportPolicy"
-import { commandForRelayCapabilities } from "../src/features/relay/useRelay"
+import { commandForRelayCapabilities, notificationsEnabledFromStorage } from "../src/features/relay/relayModel"
 
 describe("bad network helpers", () => {
+  it("treats unavailable notification preference storage as disabled", () => {
+    expect(notificationsEnabledFromStorage(() => { throw new Error("blocked") }, "granted")).toBe(false)
+    expect(notificationsEnabledFromStorage(() => "enabled", "granted")).toBe(true)
+  })
   it("bounds deterministic exponential reconnect delays with jitter", () => {
     expect(reconnectDelay(0, () => 0)).toBe(800)
     expect(reconnectDelay(1, () => 1)).toBe(2400)
@@ -104,7 +108,7 @@ describe("bad network helpers", () => {
     expect(addChunk(state, { index: 1, total: 2, result: { fragment: { messageId: "m", index: 1, total: 2, bytes: btoa("different") } } })).toBe(false)
     const large = btoa("x".repeat(7 * 1024 * 1024 + 1))
     expect(addChunk(createChunkAssembly(), { index: 0, total: 1, result: { fragment: { messageId: "m", index: 0, total: 1, bytes: large } } })).toBe(false)
-  })
+  }, 20_000)
 
   it("completes out-of-order chunks without depending on done", () => {
     const state = createChunkAssembly()

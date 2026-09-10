@@ -34,9 +34,10 @@ describe("Button", () => {
   })
 
   it("keeps specialized ARIA and layout widgets as native buttons", async () => {
-    const [workspace, sessionDetail, questionPanel, pairing, pwaUpdatePrompt, subagentActivity] = await Promise.all([
+    const [workspace, tabs, agentPicker, questionPanel, pairing, pwaUpdatePrompt, subagentActivity] = await Promise.all([
       readFile(new URL("../src/pages/WorkspacePage.tsx", import.meta.url), "utf8"),
-      readFile(new URL("../src/features/session/components/SessionDetail.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../src/components/ui/Tabs.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../src/features/session/components/AgentPicker.tsx", import.meta.url), "utf8"),
       readFile(new URL("../src/features/questions/QuestionPanel.tsx", import.meta.url), "utf8"),
       readFile(new URL("../src/features/pairing/PairingScreen.tsx", import.meta.url), "utf8"),
       readFile(new URL("../src/features/pwa/PwaUpdatePrompt.tsx", import.meta.url), "utf8"),
@@ -46,10 +47,11 @@ describe("Button", () => {
     expect(workspace).toContain('className={`notification-button ${relayState.notificationsEnabled ? "enabled" : ""}`}')
     expect(pwaUpdatePrompt).toContain('className="pwa-update-affordance"')
     expect(workspace).toContain('className="workspace-heading"')
-    expect(sessionDetail).toContain('role="tab"')
+    expect(tabs).toContain('role="tab"')
     expect(questionPanel).toContain('className="question-title"')
-    expect(sessionDetail).toContain('className="agent-picker"')
-    expect(pairing).toContain('type="submit" className="grid size-12')
+    expect(agentPicker).toContain('className="agent-picker"')
+    expect(pairing).toContain('<Button className="pairing-connect" type="submit" variant="primary"')
+    expect(pairing).toContain('<IconButton className="pairing-scan" aria-label="Scan pairing QR code"')
     expect(subagentActivity).toContain("<button key={item.id}")
   })
 })

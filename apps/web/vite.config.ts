@@ -18,8 +18,8 @@ export default defineConfig({
         name: "remotty",
         short_name: "remotty",
         description: "Control OpenCode sessions from your phone.",
-        theme_color: "#111412",
-        background_color: "#090a0b",
+        theme_color: "#08111f",
+        background_color: "#08111f",
         display: "standalone",
         start_url: "/app",
         icons: [

@@ -1,5 +1,9 @@
 import type { SubagentSummary } from "@remotty/protocol"
 
+/** Remove only the generated trailing agent annotation; keep source titles intact. */
+export const subagentDisplayTitle = (title: string): string =>
+  title.replace(/\s*\(\s*@[^\s()]+\s+subagent\s*\)\s*$/, "")
+
 export type SubagentMessagePart = {
   type: string
   time?: { start?: number; end?: number }
@@ -19,10 +23,6 @@ export const childWorkLabel = (
   return isThinking ? "Thinking" : "Working"
 }
 
-/** Shows active children first, followed by a bounded inactive history. */
-export const visibleSubagents = <T extends Pick<SubagentSummary, "status" | "updatedAt">>(items: readonly T[], recentLimit = 3): T[] => {
-  const newestFirst = (left: T, right: T) => right.updatedAt - left.updatedAt
-  const active = items.filter((item) => item.status === "busy" || item.status === "retry").sort(newestFirst)
-  const inactive = items.filter((item) => item.status !== "busy" && item.status !== "retry").sort(newestFirst)
-  return [...active, ...inactive.slice(0, recentLimit)]
-}
+/** The protocol exposes updatedAt only: show the latest three across all statuses. */
+export const visibleSubagents = <T extends Pick<SubagentSummary, "updatedAt">>(items: readonly T[]): T[] =>
+  [...items].sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 3)

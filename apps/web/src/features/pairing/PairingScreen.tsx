@@ -1,9 +1,12 @@
 import { type FormEvent, useEffect, useRef, useState } from "react"
-import { ChevronRight, Github, KeyRound, ScanLine, Terminal, X } from "lucide-react"
+import { ArrowRight, KeyRound, ScanLine, Terminal, X } from "lucide-react"
 import type { PairingBundle } from "@remotty/protocol"
-import { IconButton } from "../../components/ui/Button"
-import { PublicBrand } from "../../components/public/PublicBrand"
+import { Button, IconButton } from "../../components/ui/Button"
+import { Field } from "../../components/ui/Field"
+import { PublicFooter, PublicHeader } from "../../components/public"
 import { pairingBundleFrom } from "./pairing"
+import { useDialogFocus } from "../../hooks"
+import "../../public.css"
 
 export function PairingScreen({ onConnect, error }: { onConnect: (bundle: PairingBundle) => void; error?: string }) {
   const [code, setCode] = useState("")
@@ -19,32 +22,29 @@ export function PairingScreen({ onConnect, error }: { onConnect: (bundle: Pairin
     onConnect(bundle)
   }
   return (
-    <main className="h-dvh overflow-y-auto bg-[#090a0b] text-[#f4f2eb]">
-      <header className="border-b-2 border-[#d8ff3e] bg-[#0b0d0e]">
-        <nav className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-5 sm:px-8"><PublicBrand /><div className="flex items-center gap-5"><a className="font-mono text-[10px] uppercase text-[#8d9692] hover:text-[#42e8d4]" href="/install/">Install</a><a className="font-mono text-[10px] uppercase text-[#8d9692] hover:text-[#42e8d4]" href="/privacy">Privacy</a><a className="inline-flex items-center gap-2 font-mono text-[10px] uppercase text-[#8d9692] hover:text-[#42e8d4]" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer"><Github size={15} /> GitHub</a></div></nav>
-      </header>
-      <section className="mx-auto grid min-h-[calc(100svh-64px)] w-full max-w-6xl items-center gap-12 px-5 py-12 sm:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(400px,.85fr)]">
-        <div>
-          <p className="font-mono text-[10px] font-bold uppercase text-[#42e8d4]">Connect this browser</p>
-          <h1 className="mt-4 font-mono text-4xl font-bold sm:text-6xl">Pair your device.</h1>
-          <p className="mt-5 max-w-xl text-sm leading-7 text-[#b5bdb9]">Paste the invite token printed by the local CLI, or scan its QR code.</p>
-          <form onSubmit={submit} className="mt-8 max-w-xl">
-            <label className="mb-2 flex items-center gap-2 font-mono text-[9px] font-bold uppercase text-[#d8ff3e]" htmlFor="pairing-code"><KeyRound size={14} /> Encrypted invite</label>
-            <div className="grid grid-cols-[minmax(0,1fr)_48px_48px] gap-2">
-              <input className="h-12 min-w-0 rounded-sm border border-[#3a4140] bg-[#151819] px-4 font-mono text-xs text-[#f4f2eb] outline-none focus:border-[#d8ff3e] focus:ring-2 focus:ring-[#d8ff3e26]" id="pairing-code" value={code} onChange={(event) => { setCode(event.target.value); setPairingError(undefined) }} placeholder="Paste v2 encrypted invite" autoCapitalize="none" autoComplete="one-time-code" maxLength={4096} autoFocus />
-              <button type="button" className="grid size-12 place-items-center rounded-sm border border-[#42e8d4] bg-[#071817] text-[#42e8d4] hover:bg-[#42e8d4] hover:text-[#071817]" title="Scan pairing QR code" aria-label="Scan pairing QR code" onClick={() => setScannerOpen(true)}><ScanLine size={20} /></button>
-              <button type="submit" className="grid size-12 place-items-center rounded-sm border border-[#efff91] bg-[#d8ff3e] text-[#080909] shadow-[3px_3px_0_#42e8d4]" aria-label="Connect remotty"><ChevronRight size={20} /></button>
-            </div>
-            {(pairingError ?? error) && <p className="mt-3 font-mono text-[10px] text-[#ff635d]">{pairingError ?? error}</p>}
+    <main className="public-page pairing-page">
+      <PublicHeader active="pair" />
+      <section className="pairing-layout">
+        <div className="pairing-intro">
+          <p className="public-kicker">Encrypted enrollment / 10 minute invite</p>
+          <h1>Pair this <em>browser.</em></h1>
+          <p>Paste the invite token printed by the local CLI, or scan its QR code.</p>
+          <form onSubmit={submit} className="pairing-form">
+            <Field id="pairing-code" label={<><KeyRound aria-hidden="true" /> Encrypted invite</>} error={pairingError ?? error}>
+              {(controlProps) => <div className="pairing-form__controls">
+                <input {...controlProps} id="pairing-code" value={code} onChange={(event) => { setCode(event.target.value); setPairingError(undefined) }} placeholder="Paste v2 encrypted invite" autoCapitalize="none" autoComplete="one-time-code" maxLength={4096} autoFocus />
+                <IconButton className="pairing-scan" aria-label="Scan pairing QR code" icon={<ScanLine />} onClick={() => setScannerOpen(true)} />
+                <Button className="pairing-connect" type="submit" variant="primary" aria-label="Connect remotty" endIcon={<ArrowRight />}>Connect</Button>
+              </div>}
+            </Field>
           </form>
         </div>
-        <div className="border-y border-[#3a4140] bg-[#0c0f10]">
-          <div className="flex h-12 items-center gap-2 border-b border-[#292d2d] px-4 font-mono text-[10px] font-bold uppercase text-[#d8ff3e]"><Terminal size={18} /> Install and pair</div>
-          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">01</b><div><strong className="text-xs">Add the OpenCode plugin</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">opencode plugin opencode-remotty --global --force</code></div></div>
-          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 border-b border-[#292d2d] p-4"><b className="font-mono text-[10px] text-[#ff635d]">02</b><div><strong className="text-xs">Create an encrypted device invite</strong><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">npx --yes --package opencode-remotty@latest remotty pair</code></div></div>
-          <div className="grid min-h-28 grid-cols-[44px_1fr] gap-3 p-4"><b className="font-mono text-[10px] text-[#ff635d]">03</b><div><strong className="text-xs">Restart OpenCode</strong><p className="mt-2 text-xs text-[#8d9692]">Quit the running OpenCode process, then run:</p><code className="mt-3 block overflow-x-auto border-l-2 border-[#42e8d4] bg-[#071817] p-3 font-mono text-[9px] text-[#42e8d4]">opencode --continue</code></div></div>
-        </div>
+        <aside className="pairing-runbook" aria-labelledby="runbook-title">
+          <h2 id="runbook-title"><Terminal aria-hidden="true" /> Install and pair</h2>
+          <ol><li><span>01</span><div><strong>Add the OpenCode plugin</strong><code tabIndex={0} aria-label="OpenCode plugin install command">opencode plugin opencode-remotty --global --force</code></div></li><li><span>02</span><div><strong>Create an encrypted device invite</strong><code tabIndex={0} aria-label="remotty pairing command">npx --yes --package opencode-remotty@latest remotty pair</code></div></li><li><span>03</span><div><strong>Restart OpenCode</strong><p>Quit the running OpenCode process, then run:</p><code tabIndex={0} aria-label="OpenCode restart command">opencode --continue</code></div></li></ol>
+        </aside>
       </section>
+      <PublicFooter />
       {scannerOpen && <PairingScanner onClose={() => setScannerOpen(false)} onScan={(bundle) => { setScannerOpen(false); onConnect(bundle) }} />}
     </main>
   )
@@ -57,6 +57,7 @@ type BarcodeDetectorLike = new (options?: { formats?: string[] }) => {
 export function PairingScanner({ onScan, onClose }: { onScan: (bundle: PairingBundle) => void; onClose: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [error, setError] = useState<string>()
+  const dialogRef = useDialogFocus({ onClose })
 
   useEffect(() => {
     let cancelled = false
@@ -152,8 +153,8 @@ export function PairingScanner({ onScan, onClose }: { onScan: (bundle: PairingBu
 
   return (
     <div className="scanner-overlay" role="dialog" aria-modal="true" aria-label="Scan pairing QR code">
-      <section className="scanner-panel">
-        <header><span><ScanLine size={18} /> Scan pairing QR</span><IconButton aria-label="Close scanner" icon={<X size={19} />} onClick={onClose} /></header>
+      <section className="scanner-panel" ref={dialogRef}>
+        <header><span><ScanLine size={18} /> Scan pairing QR</span><IconButton autoFocus aria-label="Close scanner" icon={<X size={19} />} onClick={onClose} /></header>
         <div className="scanner-view"><video ref={videoRef} muted playsInline /><span className="scanner-frame" /></div>
         {error && <p className="form-error">{error}</p>}
       </section>

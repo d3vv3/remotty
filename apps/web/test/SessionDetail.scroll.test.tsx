@@ -23,6 +23,13 @@ describe("SessionDetail Activity scrolling", () => {
   let request: ReturnType<typeof vi.fn>
   let frames: Map<number, FrameRequestCallback>
   let nextFrame: number
+  let resizeHeader: () => void
+  let resizeSelector: () => void
+  let resizeDock: () => void
+  let dockHeight: number
+  let resizeContent: () => void
+  let headerHeight: number
+  let disconnectHeader: ReturnType<typeof vi.fn>
 
   beforeEach(async () => {
     retainedSessionState.clear()
@@ -36,6 +43,21 @@ describe("SessionDetail Activity scrolling", () => {
     vi.stubGlobal("crypto", webcrypto)
     frames = new Map()
     nextFrame = 1
+    headerHeight = 120
+    dockHeight = 194
+    disconnectHeader = vi.fn()
+    vi.stubGlobal("ResizeObserver", class {
+      private header = false
+      constructor(private callback: () => void) {}
+      observe(element: HTMLElement) {
+        if (element.classList.contains("detail-header")) { resizeHeader = this.callback; this.header = true }
+        if (element.classList.contains("session-dock")) resizeDock = this.callback
+        if (element.classList.contains("detail-content")) resizeContent = this.callback
+        if (element.classList.contains("subagent-selector")) resizeSelector = this.callback
+        vi.spyOn(element, "getBoundingClientRect").mockImplementation(() => ({ height: element.classList.contains("session-dock") ? dockHeight : headerHeight }) as DOMRect)
+      }
+      disconnect = () => { if (this.header) disconnectHeader() }
+    })
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       const frame = nextFrame++
       frames.set(frame, callback)
@@ -64,7 +86,7 @@ describe("SessionDetail Activity scrolling", () => {
       root.render(<SessionDetail
         session={{ ...session(title), status }} sessionKey={sessionKey} agents={[]} revision={0}
         resourceRevisions={{ messages: resourceRevision, todos: 0, diffs: 0 }}
-        subagents={[]} subagentRevisions={{}} permission={undefined} question={undefined}
+        subagents={[]} subagentRevisions={{}} supportsSubagents permission={undefined} question={undefined}
         request={request} loadCache={vi.fn()} saveCache={vi.fn().mockResolvedValue(undefined)}
         onBack={vi.fn()} onError={vi.fn()} onPromptFocused={vi.fn()}
       />)
@@ -85,10 +107,11 @@ describe("SessionDetail Activity scrolling", () => {
     const element = activity()
     let top = scrollTop
     let height = scrollHeight
+    let viewportHeight = 200
     let writes = 0
-    const maxScrollTop = () => Math.max(0, height - 200)
+    const maxScrollTop = () => Math.max(0, height - viewportHeight)
     Object.defineProperties(element, {
-      clientHeight: { configurable: true, value: 200 },
+      clientHeight: { configurable: true, get: () => viewportHeight },
       scrollHeight: { configurable: true, get: () => height },
       scrollTop: {
         configurable: true,
@@ -104,6 +127,7 @@ describe("SessionDetail Activity scrolling", () => {
       element,
       get writes() { return writes },
       resetWrites: () => { writes = 0 },
+      setViewportHeight: (next: number) => { viewportHeight = next },
       setScrollHeight: (next: number, preserveAnchor = false) => {
         const previous = height
         height = next
@@ -123,6 +147,155 @@ describe("SessionDetail Activity scrolling", () => {
     await flushFrames()
 
     expect(geometry.element.scrollTop).toBe(800)
+  })
+
+  it("updates the bottom inset for requests and keyboard resizing while preserving follow intent", async () => {
+    const geometry = setGeometry(0)
+    await act(async () => resizeDock())
+    await flushFrames()
+    expect(container.querySelector<HTMLElement>('.session-detail')!.style.getPropertyValue('--session-dock-height')).toBe('194px')
+    dockHeight = 350
+    geometry.setScrollHeight(1156)
+    await act(async () => resizeDock())
+    await flushFrames()
+    expect(geometry.element.scrollTop).toBe(956)
+    geometry.element.scrollTop = 240
+    await scroll(geometry.element)
+    geometry.resetWrites()
+    dockHeight = 170
+    geometry.setScrollHeight(976)
+    await act(async () => resizeDock())
+    await flushFrames()
+    expect(container.querySelector<HTMLElement>('.session-detail')!.style.getPropertyValue('--session-dock-height')).toBe('170px')
+    expect(geometry.writes).toBe(0)
+    expect(geometry.element.scrollTop).toBe(240)
+  })
+
+  it("keeps following through viewport resize scroll events before the next layout frame", async () => {
+    const geometry = setGeometry(0)
+    await flushFrames()
+    geometry.setViewportHeight(100)
+    geometry.setScrollHeight(1300)
+    await scroll(geometry.element)
+    await act(async () => resizeContent())
+    await flushFrames()
+    expect(geometry.element.scrollTop).toBe(1200)
+    expect(geometry.writes).toBeGreaterThan(1)
+  })
+
+  it("shares selector resize measurements with the backdrop only while Subagents is open", async () => {
+    const pane = () => container.querySelector<HTMLElement>(".session-detail")!
+    expect(pane().style.getPropertyValue("--subagent-selector-height")).toBe("0px")
+    await select("Subagents")
+    // The selector measurement must reach the shared ancestor without moving
+    // the child scrollport.
+    headerHeight = 96
+    await act(async () => resizeSelector())
+    expect(pane().style.getPropertyValue("--subagent-selector-height")).toBe("96px")
+    headerHeight = 132
+    await act(async () => resizeSelector())
+    expect(pane().style.getPropertyValue("--subagent-selector-height")).toBe("132px")
+    expect(container.querySelector(".subagent-message-scroll")).not.toBeNull()
+    await select("Activity")
+    expect(pane().style.getPropertyValue("--subagent-selector-height")).toBe("0px")
+  })
+
+  it("removes subagent header and back controls and resets measured heights on tab round trips", async () => {
+    await render({ status: "busy" })
+    const geometry = setGeometry(240)
+    await scroll(geometry.element)
+    await flushFrames()
+    const pane = () => container.querySelector<HTMLElement>(".session-detail")!
+    const status = container.querySelector('.detail-header [role="status"]')!
+    expect(status.textContent).toBe("Working")
+    expect(status.classList.contains("sr-only")).toBe(true)
+    expect(status.querySelector(".status-dot")).toBeNull()
+    expect(container.querySelector(".session-folder > span")?.textContent).toBe("workspace")
+    headerHeight = 280
+    await act(async () => resizeHeader())
+    const staleHeaderResize = resizeHeader
+    await select("Subagents")
+    expect(container.querySelector(".detail-header")).toBeNull()
+    expect(container.querySelector('[aria-label="Back"]')).toBeNull()
+    expect(container.textContent).not.toContain("Back to Activity")
+    expect(pane().style.getPropertyValue("--session-header-height")).toBe("0px")
+    await act(async () => staleHeaderResize())
+    expect(pane().style.getPropertyValue("--session-header-height")).toBe("0px")
+    const commands = container.querySelector(".command-bar")!
+    expect(commands.firstElementChild?.getAttribute("aria-label")).toBe("Show tool calls")
+    const toggle = commands.firstElementChild as HTMLButtonElement
+    const pressed = toggle.getAttribute("aria-pressed")
+    await act(async () => toggle.click())
+    expect(toggle.getAttribute("aria-pressed")).not.toBe(pressed)
+    await act(async () => (commands.lastElementChild as HTMLButtonElement).click())
+    expect(request).toHaveBeenCalledWith({ type: "session.abort", sessionId: "scroll-session" })
+    headerHeight = 108
+    await act(async () => resizeSelector())
+    expect(pane().style.getPropertyValue("--subagent-selector-height")).toBe("108px")
+    await select("Activity")
+    headerHeight = 120
+    await act(async () => resizeHeader())
+    await flushFrames()
+    expect(pane().style.getPropertyValue("--session-header-height")).toBe("120px")
+    expect(pane().style.getPropertyValue("--subagent-selector-height")).toBe("0px")
+    expect(geometry.element.scrollTop).toBe(240)
+    expect(container.querySelector('[aria-label="OpenCode is working"]')).not.toBeNull()
+    await select("Subagents")
+    headerHeight = 112
+    await act(async () => resizeSelector())
+    expect(pane().style.getPropertyValue("--session-header-height")).toBe("0px")
+    expect(pane().style.getPropertyValue("--subagent-selector-height")).toBe("112px")
+  })
+
+  it("measures wrapped header spacing and keeps following output on resize", async () => {
+    const geometry = setGeometry(0)
+    await act(async () => resizeHeader())
+    await flushFrames()
+    expect((container.firstElementChild as HTMLElement).style.getPropertyValue("--session-header-height")).toBe("120px")
+    headerHeight = 280
+    geometry.setScrollHeight(1160)
+    await act(async () => resizeHeader())
+    await flushFrames()
+    expect((container.firstElementChild as HTMLElement).style.getPropertyValue("--session-header-height")).toBe("280px")
+    expect(geometry.element.scrollTop).toBe(960)
+  })
+
+  it("preserves reading intent and tab restoration when overlay height changes", async () => {
+    const geometry = setGeometry(240)
+    await scroll(geometry.element)
+    await flushFrames()
+    geometry.resetWrites()
+    headerHeight = 280
+    await act(async () => resizeHeader())
+    await flushFrames()
+    expect(geometry.writes).toBe(0)
+    await select("Todos")
+    geometry.element.scrollTop = 0
+    headerHeight = 120
+    await act(async () => resizeHeader())
+    await select("Activity")
+    await flushFrames()
+    expect(geometry.element.scrollTop).toBe(240)
+    await act(async () => root.unmount())
+    expect(disconnectHeader).toHaveBeenCalledOnce()
+  })
+
+  it("does not take scroll ownership when hiding or showing tool calls reduces content", async () => {
+    const geometry = setGeometry(240)
+    await scroll(geometry.element)
+    await flushFrames()
+    geometry.resetWrites()
+    const toggle = container.querySelector<HTMLButtonElement>('[aria-label="Show tool calls"]')!
+    await act(async () => toggle.click())
+    geometry.setScrollHeight(700)
+    await flushFrames()
+    expect(geometry.writes).toBe(0)
+    expect(activity().scrollTop).toBe(240)
+    await act(async () => toggle.click())
+    geometry.setScrollHeight(1000)
+    await flushFrames()
+    expect(geometry.writes).toBe(0)
+    expect(activity().scrollTop).toBe(240)
   })
 
   it("keeps a scrolled-up viewport in place during message progress", async () => {
@@ -190,6 +363,7 @@ describe("SessionDetail Activity scrolling", () => {
     await flushFrames()
     geometry.resetWrites()
     await render({ title: "Busy session", status: "busy" })
+    expect(container.querySelector('[aria-label="OpenCode is working"]')).not.toBeNull()
     await flushFrames()
     expect(geometry.writes).toBe(0)
 
@@ -200,5 +374,24 @@ describe("SessionDetail Activity scrolling", () => {
 
     expect(activity().scrollTop).toBe(440)
     expect(geometry.writes).toBe(0)
+  })
+
+  it("follows pending responses only while pinned, including tab round trips", async () => {
+    const geometry = setGeometry(800)
+    await scroll(geometry.element)
+    geometry.setScrollHeight(1_100)
+    await render({ status: "busy" })
+    await flushFrames()
+    expect(activity().scrollTop).toBe(900)
+
+    activity().scrollTop = 240
+    await scroll(geometry.element)
+    await select("Todos")
+    await render({ status: "idle" })
+    await render({ status: "busy" })
+    await select("Activity")
+    await flushFrames()
+    expect(container.querySelector('[aria-label="OpenCode is working"]')).not.toBeNull()
+    expect(activity().scrollTop).toBe(240)
   })
 })

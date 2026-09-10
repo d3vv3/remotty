@@ -9,10 +9,18 @@ let routePairingBundle = location.pathname === "/pair" && location.hash
   : undefined
 if (routePairingBundle) history.replaceState({}, "", "/pair")
 
+const hasStoredIdentityMarker = () => {
+  try {
+    return Boolean(localStorage.getItem(CURRENT_IDENTITY_MARKER))
+  } catch {
+    return false
+  }
+}
+
 export function App() {
   const [pairingBundle] = useState(routePairingBundle)
   const [homeReady, setHomeReady] = useState(
-    () => location.pathname !== "/" || !localStorage.getItem(CURRENT_IDENTITY_MARKER),
+    () => location.pathname !== "/" || !hasStoredIdentityMarker(),
   )
   useEffect(() => {
     routePairingBundle = undefined

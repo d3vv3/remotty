@@ -1,0 +1,259 @@
+/* Shared Remotty design contract. Components and static pages consume this file. */
+@font-face {
+  font-family: "Barlow";
+  src: url("/fonts/barlow-regular-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Barlow";
+  src: url("/fonts/barlow-semibold-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Barlow";
+  src: url("/fonts/barlow-bold-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/ibm-plex-mono-regular-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/ibm-plex-mono-semibold-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/ibm-plex-mono-bold-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --background: #111719;
+  --surface: #171e21;
+  --surface-raised: #20292d;
+  --surface-hover: #283236;
+  --surface-selected: #303a3d;
+  --text: #edf1f2;
+  --text-muted: #9aa9b5;
+  --text-dim: #6f8190;
+  --border: #303b40;
+  --border-strong: #4a595f;
+  --accent: #e8a83c;
+  --accent-hover: #f2ba59;
+  --on-accent: #18202a;
+  --focus: #56b8b0;
+  --success: #67b78b;
+  --on-success: #08111f;
+  --warning: #e7ad50;
+  --on-warning: #08111f;
+  --danger: #df7068;
+  --on-danger: #08111f;
+  --info: #53aaa7;
+  --on-info: #08111f;
+
+  --success-surface: #10271f;
+  --warning-surface: #2b2213;
+  --danger-surface: #2b171c;
+  --info-surface: #0d292d;
+  --accent-surface: #2a2418;
+  --message-own-surface: #efbc54;
+  --message-own-text: #242016;
+  --message-own-muted: #51432b;
+  --navigation-selected-surface: #554329;
+  --navigation-selected-text: #ffd486;
+  --code-background: #07101b;
+  --code-surface: #0b1724;
+  --code-text: #d6e0e4;
+  --code-border: #244052;
+  --diff-added: #9ad5ae;
+  --diff-added-surface: #123024;
+  --diff-removed: #f0a09a;
+  --diff-removed-surface: #371d23;
+  --diff-hunk: #83c9c4;
+  --diff-hunk-surface: #123037;
+  --overlay: #030812bd;
+  --shadow-color: #02071180;
+  --selection: #e8a83c;
+  --on-selection: #18202a;
+
+  --status-idle: #8293a0;
+  --status-busy: #e7ad50;
+  --status-input: #53aaa7;
+  --status-error: #df7068;
+  --agent-secondary: #78a8d8;
+  --agent-accent: #ba91cc;
+  --agent-success: #75bd91;
+  --agent-warning: #e5ae5c;
+  --agent-primary: #e49b70;
+  --agent-error: #dd7a80;
+  --agent-info: #61b4bb;
+
+  --theme-color: #111719;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --background: #ffffff;
+  --surface: #fafaf7;
+  --surface-raised: #ffffff;
+  --surface-hover: #f0f1ed;
+  --surface-selected: #edf0ec;
+  --text: #172332;
+  --text-muted: #596775;
+  --text-dim: #7a858d;
+  --border: #e0e4df;
+  --border-strong: #acb5b3;
+  --accent: #925506;
+  --accent-hover: #7f4905;
+  --on-accent: #ffffff;
+  --focus: #087d79;
+  --success: #287851;
+  --on-success: #ffffff;
+  --warning: #8f5a08;
+  --on-warning: #ffffff;
+  --danger: #aa3f3d;
+  --on-danger: #ffffff;
+  --info: #086a6b;
+  --on-info: #ffffff;
+
+  --success-surface: #dcebe1;
+  --warning-surface: #f2e7ce;
+  --danger-surface: #f3dcda;
+  --info-surface: #d9e9e7;
+  --accent-surface: #eee0c9;
+  --message-own-surface: #f4d392;
+  --message-own-text: #242016;
+  --message-own-muted: #51432b;
+  --navigation-selected-surface: #f8dfad;
+  --navigation-selected-text: var(--accent);
+  --code-background: #e3e5e2;
+  --code-surface: #ebece8;
+  --code-text: #253847;
+  --code-border: #b8c5c8;
+  --diff-added: #1e6844;
+  --diff-added-surface: #d4e8da;
+  --diff-removed: #973936;
+  --diff-removed-surface: #efd6d3;
+  --diff-hunk: #146c70;
+  --diff-hunk-surface: #d4e7e6;
+  --overlay: #10192370;
+  --shadow-color: #1d2b3814;
+  --selection: #d89028;
+  --on-selection: #172332;
+
+  --status-idle: #72808b;
+  --status-busy: #a66b0c;
+  --status-input: #086a6b;
+  --status-error: #aa3f3d;
+  --agent-secondary: #3972a8;
+  --agent-accent: #83549c;
+  --agent-success: #347953;
+  --agent-warning: #9a650e;
+  --agent-primary: #a85635;
+  --agent-error: #a63f4b;
+  --agent-info: #257681;
+
+  --theme-color: #ffffff;
+}
+
+:root {
+  --brand: #ffbc48;
+  --brand-hover: #ffca70;
+  --on-brand: #182024;
+  --font-ui: "Barlow", "Arial Narrow", system-ui, sans-serif;
+  --font-display: "Barlow", "Arial Narrow", system-ui, sans-serif;
+  --font-code: "IBM Plex Mono", "Cascadia Mono", ui-monospace, monospace;
+  --font-size-xs: 12px;
+  --font-size-sm: 14px;
+  --font-size-md: 16px;
+  --font-size-lg: 16px;
+  --line-height-tight: 1.25;
+  --line-height-body: 1.6;
+  --font-weight-regular: 400;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --dock-radius: 28px;
+  --dock-gap: var(--space-2);
+  --dock-navigation-selected-surface: #f8dfad;
+  --dock-navigation-selected-text: #573b16;
+  --elevation-raised: 0 3px 10px var(--shadow-color);
+  --elevation-floating: 0 5px 14px var(--shadow-color), 0 2px 5px var(--shadow-color);
+  --elevation-overlay: 0 10px 28px var(--shadow-color);
+  --motion-fast: 120ms;
+  --motion-standard: 180ms;
+  /* The header transition occupies its own strip above the scroll viewport.
+     Theme semantic colors keep its tint quiet in both light and dark modes. */
+  --session-header-fade-size: 28px;
+  --activity-header-fade-size: 48px;
+  --subagent-header-fade-size: 48px;
+  --activity-header-fade: linear-gradient(to bottom, var(--background) 0%, transparent 100%);
+  --session-header-coverage: 12px;
+  --session-header-pill-surface: var(--surface-raised);
+  --session-header-fade: linear-gradient(to bottom, var(--background) 0, var(--background) calc(100% - var(--session-header-fade-size)), transparent 100%);
+  --ease-standard: cubic-bezier(.2, 0, 0, 1);
+
+  /* Deprecated elevation aliases. */
+  --shadow-soft: var(--elevation-overlay);
+  --shadow-raised: var(--elevation-raised);
+
+  /* Compatibility aliases. New work should use semantic names above. */
+  --ink: var(--text);
+  --muted: var(--text-muted);
+  --dim: var(--text-dim);
+  --line: var(--border);
+  --line-bright: var(--border-strong);
+  --void: var(--background);
+  --panel: var(--surface);
+  --raised: var(--surface-raised);
+  --acid: var(--accent);
+  --coral: var(--danger);
+  --cyan: var(--info);
+  --amber: var(--warning);
+  --red: var(--danger);
+  --green: var(--success);
+
+  --opencode-agent-secondary: var(--agent-secondary);
+  --opencode-agent-accent: var(--agent-accent);
+  --opencode-agent-success: var(--agent-success);
+  --opencode-agent-warning: var(--agent-warning);
+  --opencode-agent-primary: var(--agent-primary);
+  --opencode-agent-error: var(--agent-error);
+  --opencode-agent-info: var(--agent-info);
+}

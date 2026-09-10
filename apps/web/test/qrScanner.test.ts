@@ -19,4 +19,15 @@ describe("pairing QR scanner", () => {
     expect(app).toContain("DecodeHintType.TRY_HARDER")
     expect(app).toContain("delayBetweenScanAttempts: 50")
   })
+
+  it("moves focus into the modal and delegates focus restoration and Escape handling", async () => {
+    const [app, focusHook] = await Promise.all([
+      appSource(),
+      readFile(new URL("../src/hooks/useDialogFocus.ts", import.meta.url), "utf8"),
+    ])
+    expect(app).toContain("useDialogFocus({ onClose })")
+    expect(app).toContain("autoFocus aria-label=\"Close scanner\"")
+    expect(focusHook).toContain('event.key === "Escape"')
+    expect(focusHook).toContain("restoreTargetRef.current)?.focus()")
+  })
 })

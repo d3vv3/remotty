@@ -1,30 +1,26 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from "react"
-import { ArrowLeft, Bot, Check, ChevronDown, Code2, CircleStop, Clock3, LoaderCircle, Send, UserRound, X } from "lucide-react"
-import ReactMarkdown from "react-markdown"
-import remarkGfm from "remark-gfm"
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react"
+import { ArrowLeft, Folder, GitBranch, CircleStop, Code2, ListTodo, GitCompareArrows, MessagesSquare, Network, LoaderCircle } from "lucide-react"
 import type { PermissionRequest, QuestionRequest, SessionSummary } from "@remotty/protocol"
-import { Button, IconButton } from "../../../components/ui"
+import { Button, IconButton, Tabs } from "../../../components/ui"
 import { PermissionPanel } from "../../permissions"
 import { QuestionPanel } from "../../questions"
 import { applyPreparedMessageProgress, commitManifestForRefresh, commitPreparedCanonicalMessages, emptyMessageCache, formatMessageCacheSaveFailure, isMessageCacheSaveFailure, messageCacheErrorDetail, messageInventory, migrateMessageCache, prepareCanonicalMessages, prepareMessageProgress, shouldReportCacheFailure, visibleCachedMessages, type CacheFailure, type MessageCache } from "../model/messageCache"
 import { mergeByMessageId, promptDeliveryState } from "../model/messageReconciliation"
-import { resolveAgentColor } from "../model/agentColor"
-import { deliveryBadgeForMessage, deliveryLabel, type DeliveryState } from "../model/messagePresentation"
+import { activityPresentation } from "../model/activityPresentation"
+import { sessionHeaderStatus } from "../model/sessionHeaderStatus"
 import { clearSubmittedDraft, resourceArray, retainedSessionState, type SessionResourceRevisions } from "../model/sessionState"
 import { visibleSubagents } from "../model/subagentActivityState"
 import type { SessionAgent, SessionSubagent } from "../model/sessionTypes"
+import type { FileDiff, SessionMessage, SessionTodo, WorkspaceDiff } from "../model/sessionContent"
+import { useActivityScroll } from "../hooks/useActivityScroll"
+import { useOverlayHeight } from "../hooks/useOverlayHeight"
+import { useShowToolCalls } from "../hooks/useShowToolCalls"
+import { ActivityMessages } from "./ActivityMessages"
+import { AgentPicker } from "./AgentPicker"
+import { Changes } from "./Changes"
+import { Composer } from "./Composer"
 import { SubagentActivity } from "./SubagentActivity"
-
-type MessagePart = { type: string; text?: string; tool?: string; time?: { start?: number; end?: number }; state?: { status?: string; title?: string; input?: Record<string, unknown>; output?: string; error?: string; metadata?: Record<string, unknown> } }
-type SessionMessage = { info: { id: string; role: string; parentID?: string; time?: { created?: number }; delivery?: DeliveryState; legacyPrompt?: boolean; knownMessageIds?: string[] }; parts: MessagePart[] }
-type FileDiff = { file: string; status?: "added" | "modified" | "deleted" | "untracked"; additions: number; deletions: number; patch?: string; binary?: boolean; truncated?: boolean }
-type WorkspaceDiff = { state: "ok" | "not_git"; files: FileDiff[]; truncated: boolean }
-type WorkspacePatch = { patch?: string; truncated: boolean }
-type SessionTodo = { id: string; content: string; status: string; priority: string }
-
-const ACTIVITY_BOTTOM_THRESHOLD = 80
-const isNearActivityBottom = (element: Pick<HTMLElement, "scrollHeight" | "scrollTop" | "clientHeight">) =>
-  element.scrollHeight - element.scrollTop - element.clientHeight <= ACTIVITY_BOTTOM_THRESHOLD
+import { Todos } from "./Todos"
 
 export function SessionDetail({
   session,
@@ -64,6 +60,8 @@ export function SessionDetail({
   onPromptFocused: () => void
 }) {
   const retained = retainedSessionState.read(sessionKey)
+  const [showToolCalls, setShowToolCalls] = useShowToolCalls()
+  const [selectorHeight, setSelectorHeight] = useState(0)
   const [messages, setMessages] = useState<SessionMessage[]>(() => retained?.messages as SessionMessage[] ?? [])
   const messageCacheRef = useRef<MessageCache<SessionMessage>>(retained?.messageCache as MessageCache<SessionMessage> ?? emptyMessageCache())
   const [diffs, setDiffs] = useState<FileDiff[]>(() => retained?.diffs as FileDiff[] ?? [])
@@ -74,18 +72,17 @@ export function SessionDetail({
   const [prompt, setPrompt] = useState(() => retained?.draft ?? "")
   const [sending, setSending] = useState(false)
   const [tab, setTab] = useState<"activity" | "todos" | "changes" | "subagents">(() => retained?.tab ?? "activity")
+  const headerOverlay = useOverlayHeight<HTMLElement>(tab !== "subagents")
+  const dockOverlay = useOverlayHeight<HTMLDivElement>()
   const [agent, setAgent] = useState(() => retained?.agent ?? session.agent ?? agents[0]?.name ?? "")
   const [selectedChildId, setSelectedChildId] = useState(() => retained?.selectedChildId)
-  const [agentMenuOpen, setAgentMenuOpen] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [messagesLoading, setMessagesLoading] = useState(true)
+  const [messagesError, setMessagesError] = useState(false)
   const [messageCacheReadySession, setMessageCacheReadySession] = useState<string>()
   const [, setClock] = useState(0)
   const promptRef = useRef<HTMLTextAreaElement>(null)
-  const detailContentRef = useRef<HTMLDivElement>(null)
   const mountedRef = useRef(true)
-  const followOutputRef = useRef(true)
-  const activityScrollTopRef = useRef(0)
-  const activityRestorePendingRef = useRef(false)
   const snapshotRef = useRef<Record<string, string>>({})
   const generationRef = useRef(0)
   const messageRefreshGenerationRef = useRef(0)
@@ -93,13 +90,10 @@ export function SessionDetail({
   const diffGenerationRef = useRef(0)
   const lastPersistenceFailureRef = useRef<CacheFailure | undefined>(undefined)
   const lastTodoPersistenceFailureRef = useRef<CacheFailure | undefined>(undefined)
-  const selectedAgent = agents.find((item) => item.name === agent)
-  const agentColors = useMemo(() => agents.map((item, index) => resolveAgentColor(item.color, index, item.agentTheme)), [agents])
-  const selectedAgentIndex = agents.findIndex((item) => item.name === agent)
-  const selectedAgentColor = resolveAgentColor(selectedAgent?.color, selectedAgentIndex >= 0 ? selectedAgentIndex : 0, selectedAgent?.agentTheme)
-  const selectedAgentStyle = { "--agent-color": selectedAgentColor } as CSSProperties
   const visibleSubagentEntries = useMemo(() => visibleSubagents(subagents), [subagents])
+  const subagentsWorking = subagents.some((child) => child.status === "busy" || child.status === "retry")
   const showComposer = tab !== "subagents"
+  const headerStatus = sessionHeaderStatus(session, permission, question)
   const persistMessageCache = useCallback((cache: MessageCache<SessionMessage>) => {
     messageCacheRef.current = cache
     const visible = visibleCachedMessages(cache)
@@ -169,6 +163,7 @@ export function SessionDetail({
       const generationRef = key === "messages" ? messageRefreshGenerationRef : todosRefreshGenerationRef
       const generation = ++generationRef.current
       const owns = () => mountedRef.current && generation === generationRef.current
+      if (key === "messages") setMessagesLoading(true)
       try {
         const progress = key === "messages" ? async (partial: SessionMessage[], isRequestActive: () => boolean) => {
           if (!owns() || !isRequestActive()) return
@@ -184,7 +179,7 @@ export function SessionDetail({
             ? result as { deltaManifest: any; messages: SessionMessage[] }
             : undefined
           const values = resourceArray(result)
-          if (!values) return false
+          if (!values) throw new Error("The relay returned invalid activity data.")
           const next = values as T[]
           const snapshot = JSON.stringify(next)
           if (key === "messages" || snapshotRef.current[key] !== snapshot) {
@@ -206,10 +201,14 @@ export function SessionDetail({
             if (key === "todos") persistTodosCache(next as SessionTodo[])
           }
         }
+        if (owns() && key === "messages") setMessagesError(false)
         return owns()
       } catch (error) {
+        if (owns() && key === "messages") setMessagesError(true)
         if (owns() && key === "messages" && !isMessageCacheSaveFailure(error)) onError(messageCacheErrorDetail(error))
         return false
+      } finally {
+        if (owns() && key === "messages") setMessagesLoading(false)
       }
     }
     const outcomes = await Promise.all(resources.map(async (resource) => [resource, resource === "messages"
@@ -234,6 +233,8 @@ export function SessionDetail({
     ++diffGenerationRef.current
     setMessageCacheReadySession(undefined)
     setLoading(true)
+    setMessagesLoading(true)
+    setMessagesError(false)
     const remembered = retainedSessionState.read(sessionKey)
     if (remembered?.messageCache) {
       messageCacheRef.current = remembered.messageCache as MessageCache<SessionMessage>
@@ -295,7 +296,7 @@ export function SessionDetail({
   useEffect(() => {
     if (messageCacheReadySession !== session.id) return
     const retainedRevision = retainedSessionState.read(sessionKey)?.refreshed?.messages
-    if (retainedRevision === resourceRevisions.messages) { setLoading(false); return }
+    if (retainedRevision === resourceRevisions.messages) { setLoading(false); setMessagesLoading(false); return }
     const timeout = window.setTimeout(() => void refresh(["messages"]).then((outcome) => {
       if (!outcome.messages) return
       retainedSessionState.write(sessionKey, { refreshed: { ...(retainedSessionState.read(sessionKey)?.refreshed ?? {}), messages: resourceRevisions.messages } })
@@ -322,33 +323,11 @@ export function SessionDetail({
     return () => window.clearTimeout(timeout)
   }, [tab, revision, session.id, resourceRevisions.diffs, sessionKey])
 
-  const visibleMessages = useMemo(
-    () => messages.filter((message) => message.parts.some((part) => part.type === "text" || part.type === "tool")),
-    [messages],
+  const presentation = useMemo(
+    () => activityPresentation(messages, session.status, loading || messagesLoading, messagesError),
+    [messages, session.status, loading, messagesLoading, messagesError],
   )
-  const isThinking = useMemo(
-    () => messages.some((message) => message.parts.some((part) => part.type === "reasoning" && part.time?.start && !part.time.end)),
-    [messages],
-  )
-
-  useLayoutEffect(() => {
-    if (tab !== "activity") return
-    const frame = requestAnimationFrame(() => {
-      const element = detailContentRef.current
-      if (!element) return
-      if (followOutputRef.current) {
-        element.scrollTop = element.scrollHeight
-      } else if (activityRestorePendingRef.current) {
-        element.scrollTop = activityScrollTopRef.current
-      }
-      if (followOutputRef.current || activityRestorePendingRef.current) {
-        activityScrollTopRef.current = element.scrollTop
-        followOutputRef.current = isNearActivityBottom(element)
-      }
-      activityRestorePendingRef.current = false
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [tab, visibleMessages, loading, isThinking, session.status])
+  const activityScroll = useActivityScroll(tab === "activity", [presentation, loading, showToolCalls, headerOverlay.height, dockOverlay.height])
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -401,287 +380,82 @@ export function SessionDetail({
     }
   }
 
-  const resizePrompt = () => {
-    const textarea = promptRef.current
-    if (!textarea) return
-    textarea.style.height = "42px"
-    const height = Math.min(textarea.scrollHeight, 82)
-    textarea.style.height = `${height}px`
-    textarea.style.overflowY = textarea.scrollHeight > 82 ? "auto" : "hidden"
-  }
-
-  useEffect(resizePrompt, [prompt])
-
-  const handlePromptKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return
-    event.preventDefault()
-    event.currentTarget.form?.requestSubmit()
-  }
   const selectTab = (next: "activity" | "todos" | "changes" | "subagents") => {
-    if (tab === "activity" && next !== "activity" && detailContentRef.current) {
-      const element = detailContentRef.current
-      activityScrollTopRef.current = element.scrollTop
-      followOutputRef.current = isNearActivityBottom(element)
-    }
-    if (tab !== "activity" && next === "activity") activityRestorePendingRef.current = true
+    activityScroll.beforeTabChange(tab === "activity" && next !== "activity", tab !== "activity" && next === "activity")
     setTab(next)
   }
 
   return (
-    <div className="session-detail">
-      <header className="detail-header">
+    <div className="session-detail" data-tab={tab} style={{ "--session-dock-height": `${dockOverlay.height}px`, "--session-header-height": `${headerOverlay.height}px`, "--subagent-selector-height": `${tab === "subagents" ? selectorHeight : 0}px` } as CSSProperties}>
+      {tab !== "subagents" && <header ref={headerOverlay.ref} className="detail-header" data-status={headerStatus.state}>
+        <div className="session-header-pill" data-active={session.status === "busy" || session.status === "retry"}>
         <IconButton className="back-button" aria-label="Back" icon={<ArrowLeft size={20} />} onClick={onBack} />
-        <div>
-          <div className="title-line"><span className={`status-dot ${session.status}`} /><h2>{session.title}</h2></div>
-          <p>{session.directory}</p>
-        </div>
-        <div className="detail-actions">
-          <div className="agent-control">
-            <button
-              type="button"
-              className="agent-picker"
-              style={selectedAgentStyle}
-              aria-haspopup="listbox"
-              aria-expanded={agentMenuOpen}
-              onClick={() => setAgentMenuOpen((open) => !open)}
-            >
-              <span className="agent-picker-color" /><Bot size={15} />
-              <span>{agent || "Select agent"}</span>
-              <ChevronDown size={14} />
-            </button>
-            {agentMenuOpen && (
-              <div className="agent-menu" role="listbox">
-                {agents.map((item, index) => (
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={item.name === agent}
-                    className={item.name === agent ? "selected" : ""}
-                    style={{ "--agent-color": agentColors[index] } as CSSProperties}
-                    key={item.name}
-                    onClick={() => { setAgent(item.name); setAgentMenuOpen(false) }}
-                  >
-                    <span className="agent-color" style={{ background: agentColors[index] }} />
-                    <span><strong>{item.name}</strong>{item.description && <small>{item.description}</small>}</span>
-                    {item.name === agent && <Check size={14} />}
-                  </button>
-                ))}
-              </div>
-            )}
+        <div className="session-heading">
+          <h2 title={session.title} aria-describedby="session-context-description">{session.title}</h2>
+          <div className="session-location">
+            <span className="session-folder" title={session.directory} aria-label={`Workspace: ${session.directory}`}><Folder size={14} aria-hidden="true" /><span>{session.directory.split("/").filter(Boolean).at(-1) ?? session.directory}</span></span>
+            {session.branch && <span className="session-branch" title={session.branch} aria-label={`Branch: ${session.branch}`}><GitBranch size={14} aria-hidden="true" /><span>{session.branch}</span></span>}
           </div>
-          {session.status === "busy" && (
-            <Button
-              variant="danger"
-              title="Stop agent"
-              startIcon={<CircleStop size={17} />}
-              onClick={() => void request({ type: "session.abort", sessionId: session.id }).catch((error) => onError(error.message))}
-            >Stop</Button>
-          )}
+          <span className={`session-status ${headerStatus.state} sr-only`} role="status" aria-atomic="true">{headerStatus.label}</span>
+          <span id="session-context-description" className="sr-only">Workspace: {session.directory}. {session.branch && <>Branch: {session.branch}. </>}{session.additions} additions . {session.deletions} deletions</span>
         </div>
-      </header>
-
-      <div className="tabs" role="tablist">
-        <button type="button" role="tab" aria-selected={tab === "activity"} className={tab === "activity" ? "active" : ""} onClick={() => selectTab("activity")}>Activity</button>
-        <button type="button" role="tab" aria-selected={tab === "todos"} className={tab === "todos" ? "active" : ""} onClick={() => selectTab("todos")}>Todos <span>{todos.filter((todo) => todo.status !== "completed" && todo.status !== "cancelled").length}</span></button>
-        <button type="button" role="tab" aria-selected={tab === "changes"} className={tab === "changes" ? "active" : ""} onClick={() => selectTab("changes")}>Changes <span>{diffs.length}</span></button>
-        {(supportsSubagents || visibleSubagentEntries.length > 0) && <button type="button" role="tab" aria-selected={tab === "subagents"} className={tab === "subagents" ? "active" : ""} onClick={() => selectTab("subagents")}>Subagents <span>{visibleSubagentEntries.length}</span></button>}
-      </div>
+        </div>
+      </header>}
 
       <div
+        id="session-tabpanel"
+        role="tabpanel"
+        tabIndex={0}
+        aria-labelledby={`session-view-${tab}-tab`}
         className={`detail-content ${tab === "subagents" ? "subagent-content" : ""}`}
-        ref={detailContentRef}
-        onScroll={(event) => {
-          if (tab !== "activity") return
-          const element = event.currentTarget
-          activityScrollTopRef.current = element.scrollTop
-          followOutputRef.current = isNearActivityBottom(element)
-        }}
+        ref={activityScroll.contentRef}
+        onScroll={activityScroll.onScroll}
       >
         {tab === "activity" ? (
           <div className="message-list">
-            {loading ? (
+            {loading || (messagesLoading && presentation.messages.length === 0) ? (
               <div className="empty-state"><LoaderCircle className="spin" size={22} /></div>
             ) : (
               <>
-                {visibleMessages.map((message) => <Message key={message.info.id} message={message} delivery={deliveryBadgeForMessage(message)} />)}
-                {visibleMessages.length === 0 && <div className="empty-state"><p>No message activity yet.</p></div>}
+                <ActivityMessages presentation={presentation} showToolCalls={showToolCalls} />
+                {!messagesLoading && !presentation.pending && presentation.messages.length === 0 && <div className="empty-state"><p>No message activity yet.</p></div>}
               </>
             )}
           </div>
         ) : tab === "todos" ? (
-          <div className="todo-list">
-            {todos.map((todo) => (
-              <div className={`todo-row ${todo.status}`} key={todo.id}>
-                <span className="todo-mark">{todo.status === "completed" ? <Check size={14} /> : todo.status === "in_progress" ? <LoaderCircle className="spin" size={14} /> : todo.status === "cancelled" ? <X size={14} /> : null}</span>
-                <span>{todo.content}</span>
-                <small>{todo.priority}</small>
-              </div>
-            ))}
-            {todos.length === 0 && <div className="empty-state"><p>No todos in this session.</p></div>}
-          </div>
+          <Todos todos={todos} />
         ) : tab === "changes" ? (
-          <div className="change-list">
-            {diffState === "loading" && <div className="empty-state"><LoaderCircle className="spin" size={22} /></div>}
-            {diffs.map((diff) => (
-              <ChangeEntry key={`${diffVersion}:${diff.file}`} diff={diff} sessionId={session.id} request={request} onError={onError} />
-            ))}
-            {diffTruncated && <p className="change-notice">Some files were omitted because the workspace contains more than 500 changes.</p>}
-            {diffState === "not_git" && <div className="empty-state"><p>{session.directory} is not a Git working tree.</p></div>}
-            {diffState === "ok" && diffs.length === 0 && <div className="empty-state"><p>The working tree matches the latest commit.</p></div>}
-            {diffState === "error" && <div className="empty-state"><p>Workspace changes could not be loaded.</p></div>}
-          </div>
-        ) : <SubagentActivity subagents={visibleSubagentEntries} selectedChildId={selectedChildId} onSelect={setSelectedChildId} request={request} revisions={subagentRevisions} />}
+          <Changes diffs={diffs} state={diffState} truncated={diffTruncated} version={diffVersion} directory={session.directory} sessionId={session.id} request={request} onError={onError} />
+        ) : <SubagentActivity subagents={visibleSubagentEntries} selectedChildId={selectedChildId} onSelect={setSelectedChildId} request={request} revisions={subagentRevisions} showToolCalls={showToolCalls} headerHeight={headerOverlay.height} dockHeight={dockOverlay.height} onSelectorHeight={setSelectorHeight} />}
       </div>
 
-      {(permission || question || showComposer) && <div className={`input-dock ${tab === "subagents" ? "subagent-dock" : ""}`}>
-        {permission && <PermissionPanel permission={permission} request={request} onError={onError} />}
-        {question && <QuestionPanel requestInfo={question} request={request} onError={onError} />}
-        {showComposer && (session.status === "busy" || session.status === "retry") && (
-          <div className="work-strip" role="status">
-            <span className="work-pulse"><i /><i /><i /></span>
-            <strong>{isThinking ? "Thinking" : "Working"}</strong>
-          </div>
-        )}
-        {showComposer && <form className="composer" onSubmit={submit}>
-          <textarea
-            ref={promptRef}
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            onKeyDown={handlePromptKeyDown}
-            placeholder={session.status === "idle" ? "Ask OpenCode to continue..." : "Send another instruction..."}
-            rows={1}
-            aria-label="Message OpenCode"
-          />
-          <IconButton variant="primary" type="submit" loading={sending} aria-label="Send prompt" icon={<Send size={19} />} disabled={!prompt.trim() || messageCacheReadySession !== session.id} />
-        </form>}
-      </div>}
+      <div ref={dockOverlay.ref} className="session-dock">
+        {(permission || question) && <div className="request-stack">
+          {permission && <PermissionPanel permission={permission} request={request} onError={onError} />}
+          {question && <QuestionPanel requestInfo={question} request={request} onError={onError} />}
+        </div>}
+        <div className="command-bar" role="group" aria-label="Session commands">
+          {showComposer && <AgentPicker agents={agents} value={agent} onChange={setAgent} />}
+          <Button className="tool-visibility-toggle" aria-label="Show tool calls" aria-pressed={showToolCalls} title={`Show tool calls: ${showToolCalls ? "on" : "off"}`} onClick={() => setShowToolCalls(!showToolCalls)} startIcon={<Code2 size={18} />}><span>Show tool calls</span></Button>
+          {session.status === "busy" && <Button variant="danger" size="icon" aria-label="Stop agent" title="Stop agent" startIcon={<CircleStop size={20} />} onClick={() => void request({ type: "session.abort", sessionId: session.id }).catch((error) => onError(error.message))} />}
+        </div>
+        {showComposer && <Composer value={prompt} onChange={setPrompt} onSubmit={submit} sending={sending} disabled={messageCacheReadySession !== session.id} idle={session.status === "idle"} promptRef={promptRef} />}
+      <nav className="session-tools" aria-label="Session tools">
+        <Tabs<"activity" | "todos" | "changes" | "subagents">
+          id="session-view"
+          label="Session views"
+          orientation="horizontal"
+          value={tab}
+          onChange={selectTab}
+          options={[
+            { value: "activity", label: <><MessagesSquare size={16} />Activity</>, panelId: "session-tabpanel" },
+            { value: "todos", label: <><ListTodo size={16} />Todos <span>{todos.filter((todo) => todo.status !== "completed" && todo.status !== "cancelled").length}</span></>, panelId: "session-tabpanel" },
+            { value: "changes", label: <><GitCompareArrows size={16} />Changes <span>{diffState === "idle" ? "-" : diffs.length}</span></>, panelId: "session-tabpanel" },
+            ...((supportsSubagents || visibleSubagentEntries.length > 0) ? [{ value: "subagents" as const, label: <><Network size={16} />Subagents <span>{visibleSubagentEntries.length}</span></>, working: subagentsWorking, accessibleLabel: subagentsWorking ? `Subagents, agents working, ${visibleSubagentEntries.length}` : undefined, panelId: "session-tabpanel" }] : []),
+          ]}
+        />
+      </nav>
+      </div>
     </div>
   )
-}
-function ChangeEntry({
-  diff,
-  sessionId,
-  request,
-  onError,
-}: {
-  diff: FileDiff
-  sessionId: string
-  request: (command: any) => Promise<unknown>
-  onError: (error?: string) => void
-}) {
-  const [patch, setPatch] = useState(diff.patch)
-  const [patchState, setPatchState] = useState<"idle" | "loading" | "ready" | "error">(diff.patch ? "ready" : "idle")
-  const [patchTruncated, setPatchTruncated] = useState(Boolean(diff.truncated))
-
-  const loadPatch = async () => {
-    if (patchState !== "idle" || diff.status === "untracked" || !diff.status) return
-    setPatchState("loading")
-    try {
-      const result = await request({ type: "workspace.diff.patch", sessionId, file: diff.file }) as WorkspacePatch
-      if (!result || typeof result.truncated !== "boolean" || (result.patch !== undefined && typeof result.patch !== "string")) throw new Error("The relay returned an invalid file patch.")
-      setPatch(result.patch)
-      setPatchTruncated(result.truncated)
-      setPatchState("ready")
-    } catch (error) {
-      setPatchState("error")
-      onError((error as Error).message)
-    }
-  }
-
-  return (
-    <details className="change-entry" onToggle={(event) => { if (event.currentTarget.open) void loadPatch() }}>
-      <summary className="change-row">
-        <small className={`change-status ${diff.status ?? "modified"}`}>{diff.status ?? "changed"}</small>
-        <code>{diff.file}</code>
-        <span><b>+{diff.additions}</b><i>-{diff.deletions}</i></span>
-        <ChevronDown size={15} />
-      </summary>
-      <div className="change-patch">
-        {patchState === "loading"
-          ? <p><LoaderCircle className="spin" size={15} /> Loading patch</p>
-          : patch
-            ? <pre><code>{patch}</code></pre>
-            : <p>{diff.status === "untracked" ? "Untracked file content is not transferred automatically." : !diff.status ? "Update the workspace plugin to view this patch." : diff.binary ? "Binary file changed." : patchTruncated ? "Patch is too large to display." : patchState === "error" ? "Patch could not be loaded." : "No textual patch is available."}</p>}
-      </div>
-    </details>
-  )
-}
-function Message({ message, delivery }: { message: SessionMessage; delivery?: DeliveryState }) {
-  const isUser = message.info.role === "user"
-  return (
-    <article className={`message ${message.info.role}`} aria-label={isUser ? "Your message" : "OpenCode response"}>
-      <div className="message-frame">
-        <span className="message-sigil" aria-hidden="true">
-          {isUser ? <UserRound size={15} /> : <Code2 size={16} />}
-        </span>
-        <div className="message-body">
-          {delivery && <span className="delivery-flag"><Clock3 size={12} /> {deliveryLabel(delivery)}</span>}
-          {message.info.time?.created && <time className="message-time" dateTime={new Date(message.info.time.created).toISOString()} title={new Date(message.info.time.created).toLocaleString()}>{relativeTime(message.info.time.created)}</time>}
-          {message.parts.map((part, index) => {
-            if (part.type === "text" && part.text) {
-              if (isUser) return <p key={index}>{part.text}</p>
-              return (
-                <div className="markdown" key={index}>
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    components={{
-                      a: ({ children, href }) => <a href={href} target="_blank" rel="noreferrer">{children}</a>,
-                    }}
-                  >
-                    {part.text}
-                  </ReactMarkdown>
-                </div>
-              )
-            }
-            if (part.type === "tool") {
-              const diff = typeof part.state?.metadata?.diff === "string" ? part.state.metadata.diff : undefined
-              const output = part.state?.output ?? part.state?.error
-              return (
-                <details className="tool-details" key={index}>
-                  <summary className="tool-line">
-                    <Code2 size={15} />
-                    <span>{part.state?.title ?? part.tool}</span>
-                    {diff && <small className="diff-available">Diff</small>}
-                    <small>{part.state?.status}</small>
-                    <ChevronDown size={14} className="tool-chevron" />
-                  </summary>
-                  <div className="tool-content">
-                    {diff && <DiffBlock diff={diff} />}
-                    {part.state?.input && Object.keys(part.state.input).length > 0 && (
-                      <section><strong>Input</strong><pre><code>{limited(JSON.stringify(part.state.input, null, 2), 20_000)}</code></pre></section>
-                    )}
-                    {output && (
-                      <section><strong>{part.state?.error ? "Error" : "Output"}</strong><pre><code>{limited(output, 30_000)}</code></pre></section>
-                    )}
-                  </div>
-                </details>
-              )
-            }
-            return null
-          })}
-        </div>
-      </div>
-    </article>
-  )
-}
-
-function DiffBlock({ diff }: { diff: string }) {
-  return (
-    <section className="tool-diff">
-      <strong>Diff</strong>
-      <pre><code>{limited(diff, 50_000).split("\n").map((line, index) => (
-        <span className={line.startsWith("+") && !line.startsWith("+++") ? "added" : line.startsWith("-") && !line.startsWith("---") ? "removed" : line.startsWith("@@") ? "hunk" : ""} key={index}>{line}{"\n"}</span>
-      ))}</code></pre>
-    </section>
-  )
-}
-
-const limited = (value: string, limit: number) => value.length > limit ? `${value.slice(0, limit)}\n\n[output truncated]` : value
-
-const relativeTime = (time: number) => {
-  const seconds = Math.max(0, Math.floor((Date.now() - time) / 1_000))
-  if (seconds < 60) return "now"
-  if (seconds < 3_600) return `${Math.floor(seconds / 60)}m`
-  if (seconds < 86_400) return `${Math.floor(seconds / 3_600)}h`
-  return `${Math.floor(seconds / 86_400)}d`
 }

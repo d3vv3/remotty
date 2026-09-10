@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { clearSubmittedDraft, createSessionStateStore, needsMessageRefresh, resourceArray } from "../src/features/session/model/sessionState"
-import { legacyChunkState, legacyManifestCompatible, queueProgress, queueProgressSnapshot, verifiedCanonicalMessages } from "../src/features/relay/useRelay"
+import { legacyChunkState, legacyManifestCompatible, queueProgress, queueProgressSnapshot, verifiedCanonicalMessages } from "../src/features/relay/relayModel"
 import { addChunk, createChunkAssembly } from "../src/features/relay/messageTransfer"
 
 describe("retained session state", () => {

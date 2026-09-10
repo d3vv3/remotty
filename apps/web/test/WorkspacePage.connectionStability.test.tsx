@@ -4,6 +4,7 @@ import { act, useEffect, useState } from "react"
 import { createRoot } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { SESSION_LIST_MAX_AGE_MS, WorkspacePage } from "../src/pages/WorkspacePage"
+import type { RoutedSession } from "../src/features/relay"
 
 const mocks = vi.hoisted(() => ({ useRelay: vi.fn(), sessionDetail: { mounts: 0, unmounts: 0, nextIdentity: 0 } }))
 
@@ -14,13 +15,15 @@ vi.mock("../src/features/relay", async (importOriginal) => ({
 vi.mock("../src/features/pairing", () => ({ routeForEnrollment: () => undefined, PairingScreen: () => <div data-testid="pairing" /> }))
 vi.mock("../src/features/pwa", () => ({ pwaBuildFromModuleScriptUrls: () => "test" }))
 vi.mock("../src/features/session", () => ({
-  SessionDetail: ({ session, onBack }: { session: { id: string }; onBack: () => void }) => {
+  SessionDetail: ({ session, onBack, loadCache }: { session: { id: string }; onBack: () => void; loadCache: (resource: string) => Promise<string | undefined> }) => {
     const [identity] = useState(() => ++mocks.sessionDetail.nextIdentity)
+    const [cached, setCached] = useState<string>()
+    useEffect(() => { void loadCache("messages").then(setCached) }, [loadCache])
     useEffect(() => {
       ++mocks.sessionDetail.mounts
       return () => { ++mocks.sessionDetail.unmounts }
     }, [])
-    return <div data-testid="session-detail" data-instance-id={identity}>Session detail: {session.id}<button onClick={onBack}>Back</button></div>
+    return <div data-testid="session-detail" data-instance-id={identity}>Session detail: {session.id}{cached}<button onClick={onBack}>Back</button></div>
   },
   promptDeliveryState: () => "failed",
 }))
@@ -29,7 +32,7 @@ const relay = { id: "relay", name: "Desktop", hostname: "host", platform: "linux
 const now = new Date("2026-08-29T12:00:00.000Z").valueOf()
 const session = { id: "session", title: "Cached session", directory: "/workspace", status: "idle" as const, updatedAt: now, additions: 0, deletions: 0, files: 0, workspaceRelayId: "relay", workspaceId: "workspace" }
 
-const relayState = (connection: "online" | "connecting" | "unstable" | "offline" | "disconnected", sessions = [session]) => ({
+const relayState = (connection: "online" | "connecting" | "unstable" | "offline" | "disconnected", sessions: RoutedSession[] = [session]) => ({
   connection,
   enrolled: true,
   relay,
@@ -90,7 +93,9 @@ describe("WorkspacePage connection stability", () => {
 
       expect(container.querySelector("[data-testid=session-detail]")?.textContent).toContain("session")
       expect(container.querySelector("[data-testid=session-detail]")?.getAttribute("data-instance-id")).toBe("1")
-      expect(container.textContent).not.toContain("Waiting for the local relay.")
+      expect(container.querySelector(".session-list")?.textContent).not.toContain("Workspace offline")
+      expect(container.querySelector(".inbox-count")?.textContent).toBe(connection === "online" ? "1" : "0")
+      expect(container.querySelector(".app-shell")?.classList.contains("has-selection")).toBe(true)
     }
     expect(mocks.sessionDetail.mounts).toBe(1)
     expect(mocks.sessionDetail.unmounts).toBe(0)
@@ -106,6 +111,111 @@ describe("WorkspacePage connection stability", () => {
 
     expect(container.querySelector("[data-testid=session-detail]")).toBeNull()
     expect(container.textContent).toContain("Waiting for the local relay.")
+  })
+
+  it("renders the actual error in the shared toast with dismissal and the existing six-second lifetime", async () => {
+    const state = { ...relayState("online"), error: "Snapshot failed: the workspace is unavailable" }
+    mocks.useRelay.mockReturnValue(state)
+    await act(async () => root.render(<WorkspacePage />))
+    expect(container.querySelector('.ui-toast[role="alert"] .ui-notice-content')?.textContent).toBe(state.error)
+    await act(async () => vi.advanceTimersByTime(5_999))
+    expect(state.setError).not.toHaveBeenCalled()
+    await act(async () => vi.advanceTimersByTime(1))
+    expect(state.setError).toHaveBeenCalledExactlyOnceWith(undefined)
+    state.setError.mockClear()
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Dismiss error"]')!.click())
+    expect(state.setError).toHaveBeenCalledExactlyOnceWith(undefined)
+  })
+
+  it("hides disconnected rows without changing cached selection and restores Ready rows on reconnect", async () => {
+    const connected = new Set(["relay"])
+    const state = { ...relayState("online"), isRelayConnected: (id: string) => connected.has(id) }
+    state.loadCache.mockResolvedValue("Cached conversation remains readable")
+    mocks.useRelay.mockReturnValue(state)
+    await act(async () => root.render(<WorkspacePage />))
+    expect(container.querySelector(".session-list")?.textContent).toContain("Cached session")
+
+    connected.clear()
+    await act(async () => root.render(<WorkspacePage />))
+    expect(container.querySelector(".session-list")?.textContent).not.toContain("Cached session")
+    expect(container.textContent).toContain("No connected workspace sessions.")
+    expect(container.querySelector(".session-list .spin")).toBeNull()
+    expect(container.querySelector(".workspace-group")).toBeNull()
+    expect(state.sessions).toEqual([session])
+    expect(container.querySelector("[data-testid=session-detail]")?.textContent).toContain("Cached conversation remains readable")
+    expect(state.loadCache).toHaveBeenCalledExactlyOnceWith("workspace", "messages", "session")
+    expect(container.querySelector("[data-testid=session-detail]")?.getAttribute("data-instance-id")).toBe("1")
+    expect(location.search).toBe("?session=session")
+    expect(state.saveCache).not.toHaveBeenCalled()
+
+    connected.add("relay")
+    await act(async () => root.render(<WorkspacePage />))
+    expect(container.querySelector(".session-list")?.textContent).toContain("Cached session")
+    expect(container.querySelector(".inbox-count")?.textContent).toBe("1")
+    expect(mocks.sessionDetail.mounts).toBe(1)
+    expect(mocks.sessionDetail.unmounts).toBe(0)
+  })
+
+  it("shows a settled empty list when the service is online but all workspaces are offline", async () => {
+    mocks.useRelay.mockReturnValue({ ...relayState("offline"), serviceConnected: true })
+    await act(async () => root.render(<WorkspacePage />))
+    expect(container.textContent).toContain("No connected workspace sessions.")
+    expect(container.textContent).not.toContain("Open a new OpenCode session")
+    expect(container.querySelector(".session-list .spin")).toBeNull()
+    expect(container.querySelector("[data-testid=session-detail]")).not.toBeNull()
+  })
+
+  it("groups and counts connected Ready and busy sessions using the existing age cutoff even while unstable", async () => {
+    const sessions: RoutedSession[] = [
+      { ...session, title: "Ready session", updatedAt: now - SESSION_LIST_MAX_AGE_MS },
+      { ...session, id: "busy", title: "Busy session", status: "busy" },
+      { ...session, id: "offline", title: "Offline session", workspaceRelayId: "offline" },
+      { ...session, id: "old", title: "Old session", updatedAt: now - SESSION_LIST_MAX_AGE_MS - 1 },
+      { ...session, id: "other", title: "Offline folder", directory: "/other", workspaceRelayId: "offline" },
+    ]
+    mocks.useRelay.mockReturnValue({
+      ...relayState("unstable", sessions),
+      serviceConnected: true,
+      relays: [relay, { ...relay, id: "offline" }],
+      isRelayConnected: (id: string) => id === "relay",
+      permissions: [{ workspaceRelayId: "offline", sessionID: "offline" }, { workspaceRelayId: "relay", sessionID: "busy" }],
+    })
+    await act(async () => root.render(<WorkspacePage />))
+    const list = container.querySelector(".session-list")!
+    expect(list.textContent).toContain("Ready session")
+    expect(list.textContent).toContain("Busy session")
+    expect(list.textContent).not.toContain("Offline")
+    expect(list.textContent).not.toContain("Old session")
+    expect(list.querySelectorAll(".workspace-group")).toHaveLength(1)
+    expect(list.querySelector(".workspace-heading b")?.textContent).toBe("2")
+    expect(container.querySelector(".inbox-count")?.textContent).toBe("2")
+    expect(container.querySelector(".navigator-attention")?.textContent).toBe("1 session needs your attention")
+    expect(container.textContent).toContain("1 connected workspace")
+  })
+
+  it("dismisses settings with focus restored and keeps utility actions connected", async () => {
+    history.replaceState({}, "", "/app")
+    const state = relayState("online")
+    mocks.useRelay.mockReturnValue(state)
+    await act(async () => root.render(<WorkspacePage />))
+    const settings = container.querySelector<HTMLDetailsElement>(".inbox-utilities")!
+    const trigger = settings.querySelector("summary")!
+    await act(async () => trigger.click())
+    expect(settings.open).toBe(true)
+    expect(settings.querySelector('a')?.textContent).toBe("View source")
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
+    expect(settings.open).toBe(false)
+    expect(document.activeElement).toBe(trigger)
+    await act(async () => trigger.click())
+    await act(async () => document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })))
+    expect(settings.open).toBe(false)
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Enable notifications"]')!.click())
+    expect(state.toggleNotifications).toHaveBeenCalledOnce()
+    await act(async () => trigger.click())
+    const disconnect = [...settings.querySelectorAll("button")].find(button => button.textContent === "Disconnect")!
+    await act(async () => disconnect.click())
+    expect(state.disconnect).toHaveBeenCalledOnce()
+    expect(location.pathname).toBe("/pair")
   })
 
   it("shows recent sessions and hides sessions strictly older than one week", async () => {

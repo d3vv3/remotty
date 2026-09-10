@@ -1,20 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { AlertTriangle, Bell, BellOff, ChevronDown, ChevronRight, Code2, Folder, Github, GitBranch, Laptop, LoaderCircle, LogOut, Plus, RefreshCw, Wifi, WifiOff, X } from "lucide-react"
-import type { PairingBundle, RelayInfo, SessionSummary } from "@remotty/protocol"
-import { Button, IconButton } from "../components/ui"
-import { NOTIFICATION_PROMPT_SEEN, shouldOfferPushNotifications } from "../features/notifications"
+import { Bell, BellOff, ChevronDown, Code2, Folder, Github, LoaderCircle, LogOut, Plus, RefreshCw, Settings2, Wifi, WifiOff } from "lucide-react"
+import type { PairingBundle } from "@remotty/protocol"
+import { Button, EmptyState, ErrorToast, IconButton, ThemeControl } from "../components/ui"
+import { clearNotificationPromptSeen, markNotificationPromptSeen, notificationPromptWasSeen, shouldOfferPushNotifications } from "../features/notifications"
 import { PairingScreen, routeForEnrollment } from "../features/pairing"
-import { pwaBuildFromModuleScriptUrls } from "../features/pwa"
-import { effectiveConnectionPresentation, exactConnectionTime, relayConnectionPresentation, relaySupportsSessionCreate, serviceConnectionPresentation, stableWorkspaceKey, useRelay, workspaceSessionKey, type RoutedSession } from "../features/relay"
-import { promptDeliveryState, SessionDetail } from "../features/session"
+import { effectiveConnectionPresentation, stableWorkspaceKey, useRelay, workspaceSessionKey, type RoutedSession } from "../features/relay"
+import { SessionDetail } from "../features/session"
+import { ConnectionDetails, folderName, isSessionVisibleInList, NewSessionDialog, NotificationPrompt, SESSION_LIST_MAX_AGE_MS, SessionRow, sessionKey } from "../features/workspace"
+import { useVisualViewport } from "../hooks/useVisualViewport"
+import { useDismissibleDetails } from "../hooks/useDismissibleDetails"
 
-export const SESSION_LIST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000
-
-export const isSessionVisibleInList = (session: Pick<SessionSummary, "updatedAt">, now: number) =>
-  session.updatedAt >= now - SESSION_LIST_MAX_AGE_MS
+export { SESSION_LIST_MAX_AGE_MS, isSessionVisibleInList }
 
 export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle }) {
   const relayState = useRelay(initialBundle)
+  const viewportStyle = useVisualViewport()
+  const utilitiesRef = useDismissibleDetails()
   const [connectionDetailsOpen, setConnectionDetailsOpen] = useState(false)
   const connectionTriggerRef = useRef<HTMLButtonElement>(null)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
@@ -25,9 +26,7 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
   )
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
   const [notificationPromptOpen, setNotificationPromptOpen] = useState(false)
-  const [enablingNotifications, setEnablingNotifications] = useState(false)
   const [clock, setClock] = useState(() => Date.now())
-  const sessionKey = (session: SessionSummary & { workspaceRelayId?: string; workspaceId?: string }) => `${session.workspaceId ?? session.workspaceRelayId ?? ""}:${session.id}`
   const selected = relayState.sessions.find((session) =>
     sessionKey(session) === selectedKey || `${session.workspaceRelayId}:${session.id}` === selectedKey || (!selectedKey?.includes(":") && session.id === selectedKey),
   )
@@ -39,9 +38,9 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
     : Promise.resolve(), [relayState.saveCache, selected?.workspaceId, selected?.id])
   const connectedRelayIds = relayState.relays.filter((relay) => relayState.isRelayConnected(relay.id)).map((relay) => relay.id)
   const connectionPresentation = effectiveConnectionPresentation(relayState.connection, connectedRelayIds, relayState.relays.length, relayState.relayHealth)
-  const visibleSessions = useMemo(
-    () => relayState.sessions.filter((session) => isSessionVisibleInList(session, clock)),
-    [relayState.sessions, clock],
+  // Connection membership is read through a stable callback backed by a ref.
+  const visibleSessions = relayState.sessions.filter(
+    (session) => relayState.isRelayConnected(session.workspaceRelayId) && isSessionVisibleInList(session, clock),
   )
   const sessionGroups = useMemo(() => {
     const groups = new Map<string, RoutedSession[]>()
@@ -58,6 +57,7 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
     ...relayState.permissions.map((item) => `${item.workspaceRelayId}:${item.sessionID}`),
     ...relayState.questions.map((item) => `${item.workspaceRelayId}:${item.sessionID}`),
   ]), [relayState.permissions, relayState.questions])
+  const visibleAttentionCount = visibleSessions.filter((session) => attentionKeys.has(`${session.workspaceRelayId}:${session.id}`)).length
 
   useEffect(() => {
     if (!relayState.error) return
@@ -78,22 +78,14 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
       enabled: relayState.notificationsEnabled,
       supported,
       permission,
-      seen: localStorage.getItem(NOTIFICATION_PROMPT_SEEN) === "true",
+      seen: notificationPromptWasSeen(),
     })) setNotificationPromptOpen(true)
   }, [relayState.connection, relayState.relay, relayState.notificationsEnabled])
 
   const closeNotificationPrompt = () => {
-    localStorage.setItem(NOTIFICATION_PROMPT_SEEN, "true")
+    markNotificationPromptSeen()
     setNotificationPromptOpen(false)
   }
-  const closeConnectionDetails = useCallback(() => {
-    setConnectionDetailsOpen(false)
-    requestAnimationFrame(() => connectionTriggerRef.current?.focus())
-  }, [])
-  const closeNewSession = useCallback(() => {
-    setNewSessionOpen(false)
-    requestAnimationFrame(() => newSessionTriggerRef.current?.focus())
-  }, [])
   const createSession = useCallback(async (relayId: string) => {
     const relay = relayState.relays.find((candidate) => candidate.id === relayId)
     if (!relay) throw new Error("The selected workspace is unavailable.")
@@ -121,7 +113,7 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
     return (
       <PairingScreen
         onConnect={(bundle) => {
-          localStorage.removeItem(NOTIFICATION_PROMPT_SEEN)
+          clearNotificationPromptSeen()
           void relayState.connect(bundle)
         }}
         error={relayState.error}
@@ -130,48 +122,35 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
   }
 
   return (
-    <main className="app-shell">
-      <header className="topbar">
-        <div className="brand-lockup">
-          <span className="brand-mark"><Code2 size={18} /></span>
-          <strong>remotty</strong>
-        </div>
-        <div className={`connection-state ${connectionPresentation.tone}`}>
-          <button ref={connectionTriggerRef} className="connection-button" onClick={() => setConnectionDetailsOpen(true)} aria-haspopup="dialog" aria-expanded={connectionDetailsOpen} aria-controls="connection-status-dialog">
-            {connectionPresentation.state === "online" ? <Wifi size={15} /> : <WifiOff size={15} />}
-            {connectionPresentation.label}
-          </button>
-          <a className="notification-button" title="View source" aria-label="View source" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer"><Github size={15} /></a>
-          <button
-            className={`notification-button ${relayState.notificationsEnabled ? "enabled" : ""}`}
-            title={relayState.notificationsEnabled ? "Disable notifications" : "Enable notifications"}
-            onClick={() => void relayState.toggleNotifications()}
-          >
-            {relayState.notificationsEnabled ? <Bell size={15} /> : <BellOff size={15} />}
-          </button>
-        </div>
-      </header>
-
+    <main className={`app-shell ${selected ? "has-selection" : ""}`} style={viewportStyle}>
       <div className="workspace-layout">
-        <aside className={`session-panel ${selected ? "mobile-hidden" : ""}`}>
-          <section className="relay-summary">
-            <div className="machine-icon"><Laptop size={20} /></div>
+        <aside aria-label="Workspace navigator" className={`session-panel ${selected ? "mobile-hidden" : ""}`}>
+          <header className="navigator-header">
             <div>
-              <h1>{relayState.relays.length > 1 ? `${relayState.relays.length} workspaces` : relayState.relay?.name ?? "Connecting"}</h1>
-              <p>{relayState.relays.length > 1 ? "OpenCode sessions grouped by folder" : relayState.relay?.workspace ?? "Waiting for your OpenCode relay"}</p>
+              <div className="inbox-brand"><span className="brand-mark"><Code2 size={20} /></span>Remotty</div>
+              <h1>Your sessions<span className="inbox-count">{visibleSessions.length}</span></h1>
+              <p>{relayState.relays.length > 1 ? `${connectedRelayIds.length} connected ${connectedRelayIds.length === 1 ? "workspace" : "workspaces"}` : relayState.relay?.name ?? "Connecting to your workspace"}</p>
+              {visibleAttentionCount > 0 && <p className="navigator-attention">{visibleAttentionCount} {visibleAttentionCount === 1 ? "session needs" : "sessions need"} your attention</p>}
             </div>
-            <IconButton aria-label="Disconnect" icon={<LogOut size={18} />} onClick={() => { history.replaceState({}, "", "/pair"); relayState.disconnect() }} />
-          </section>
+            <details ref={utilitiesRef} className="inbox-utilities">
+              <summary aria-label="Settings"><Settings2 size={21} /></summary>
+              <div>
+                <span>Appearance <ThemeControl /></span>
+                <a href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer"><Github size={18} />View source</a>
+                <button onClick={() => { history.replaceState({}, "", "/pair"); relayState.disconnect() }}><LogOut size={18} />Disconnect</button>
+              </div>
+            </details>
+          </header>
 
           <div className="section-heading">
-            <span>Sessions</span>
             <div className="section-actions">
-              <IconButton
+              <Button
                 ref={newSessionTriggerRef}
+                variant="primary"
                 aria-label="New session"
-                icon={<Plus size={18} />}
+                startIcon={<Plus size={20} />}
                 onClick={() => setNewSessionOpen(true)}
-              />
+              >New session</Button>
               <IconButton
                 aria-label="Refresh sessions"
                 icon={<RefreshCw size={17} />}
@@ -180,26 +159,19 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
               />
             </div>
           </div>
-          <div className="session-legend" aria-label="Session status colors">
-            <span><i className="status-dot idle" />Finished</span>
-            <span><i className="status-dot busy" />Working</span>
-            <span><i className="status-dot needs-input" />Needs attention</span>
-            <span><i className="status-dot error" />Offline</span>
-          </div>
-
           <div className="session-list">
             {sessionGroups.map(([directory, sessions]) => (
               <section className="workspace-group" key={directory}>
                 <button className="workspace-heading" title={directory} aria-expanded={!collapsedGroups.has(directory)} onClick={() => toggleGroup(directory)}>
-                  <Folder size={14} />
-                  <span><strong>{folderName(directory)}</strong><small>{directory}</small></span>
+                  <Folder size={18} />
+                  <span><strong>{folderName(directory)}</strong></span>
                   <b>{sessions.length}</b><ChevronDown className={collapsedGroups.has(directory) ? "collapsed" : ""} size={16} />
                 </button>
                 {!collapsedGroups.has(directory) && sessions.map((session) => (
                   <SessionRow
                     key={sessionKey(session)}
                     session={session}
-                    selected={sessionKey(session) === selectedKey}
+                    selected={selected !== undefined && sessionKey(session) === sessionKey(selected)}
                     needsInput={attentionKeys.has(`${session.workspaceRelayId}:${session.id}`)}
                     offline={!relayState.isRelayConnected(session.workspaceRelayId)}
                     onSelect={() => { relayState.setError(undefined); setSelectedKey(sessionKey(session)) }}
@@ -208,16 +180,37 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
               </section>
             ))}
             {visibleSessions.length === 0 && (
-              <div className="empty-state">
-                <LoaderCircle size={22} className={relayState.connection === "online" ? "" : "spin"} />
+              <EmptyState icon={relayState.serviceConnected && connectedRelayIds.length === 0
+                ? <WifiOff size={22} />
+                : <LoaderCircle size={22} className={relayState.serviceConnected ? "" : "spin"} />}>
                 <p>
-                  {relayState.connection === "online"
-                    ? "Open a new OpenCode session to get started."
+                  {relayState.serviceConnected
+                    ? connectedRelayIds.length === 0
+                      ? "No connected workspace sessions."
+                      : "Open a new OpenCode session to get started."
                     : "Waiting for the local relay."}
                 </p>
-              </div>
+              </EmptyState>
             )}
           </div>
+          <footer className="topbar">
+            <div className={`connection-state ${connectionPresentation.tone}`}>
+              <button ref={connectionTriggerRef} className="connection-button" onClick={() => setConnectionDetailsOpen(true)} aria-haspopup="dialog" aria-expanded={connectionDetailsOpen} aria-controls="connection-status-dialog">
+                {connectionPresentation.state === "online" ? <Wifi size={15} /> : <WifiOff size={15} />}
+                {connectionPresentation.label}
+              </button>
+              <button
+                className={`notification-button ${relayState.notificationsEnabled ? "enabled" : ""}`}
+                title={relayState.notificationsEnabled ? "Disable notifications" : "Enable notifications"}
+                aria-label={relayState.notificationsEnabled ? "Disable notifications" : "Enable notifications"}
+                aria-pressed={relayState.notificationsEnabled}
+                onClick={() => void relayState.toggleNotifications()}
+              >
+                {relayState.notificationsEnabled ? <Bell size={15} /> : <BellOff size={15} />}
+                <span>Notifications</span>
+              </button>
+            </div>
+          </footer>
         </aside>
 
         <section className={`detail-panel ${!selected ? "mobile-hidden" : ""}`}>
@@ -253,195 +246,11 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
       </div>
 
       {relayState.error && (
-        <div className="toast" role="alert"><AlertTriangle size={17} /><span>{relayState.error}</span><IconButton className="toast-dismiss" aria-label="Dismiss error" icon={<X size={16} />} onClick={() => relayState.setError(undefined)} /></div>
+        <ErrorToast message={relayState.error} onDismiss={() => relayState.setError(undefined)} />
       )}
-      {connectionDetailsOpen && <ConnectionDetails relayState={relayState} onClose={closeConnectionDetails} />}
-      {newSessionOpen && <NewSessionDialog relays={relayState.relays} isConnected={relayState.isRelayConnected} onCreate={createSession} onClose={closeNewSession} />}
-      {notificationPromptOpen && (
-        <div className="notification-prompt-overlay" role="presentation">
-          <section className="notification-prompt" role="dialog" aria-modal="true" aria-labelledby="notification-prompt-title">
-            <IconButton className="notification-prompt-close" aria-label="Close notification prompt" title="Not now" icon={<X size={18} />} onClick={closeNotificationPrompt} />
-            <span className="notification-prompt-icon"><Bell size={24} /></span>
-            <p>Stay in the loop</p>
-            <h2 id="notification-prompt-title">Enable Push notifications?</h2>
-            <span>Get an alert when an agent finishes, asks a question, or needs approval.</span>
-            <div>
-              <Button onClick={closeNotificationPrompt}>Not now</Button>
-              <Button
-                variant="primary"
-                loading={enablingNotifications}
-                loadingLabel="Enable Push"
-                startIcon={<Bell size={17} />}
-                onClick={() => {
-                  setEnablingNotifications(true)
-                  void relayState.toggleNotifications().finally(() => {
-                    setEnablingNotifications(false)
-                    closeNotificationPrompt()
-                  })
-                }}
-              >Enable Push</Button>
-            </div>
-          </section>
-        </div>
-      )}
+      {connectionDetailsOpen && <ConnectionDetails relayState={relayState} onClose={() => setConnectionDetailsOpen(false)} triggerRef={connectionTriggerRef} />}
+      {newSessionOpen && <NewSessionDialog relays={relayState.relays} isConnected={relayState.isRelayConnected} onCreate={createSession} onClose={() => setNewSessionOpen(false)} triggerRef={newSessionTriggerRef} />}
+      {notificationPromptOpen && <NotificationPrompt onEnable={relayState.toggleNotifications} onClose={closeNotificationPrompt} />}
     </main>
   )
 }
-
-function SessionRow({ session, needsInput, offline, selected, onSelect }: { session: SessionSummary; needsInput: boolean; offline: boolean; selected: boolean; onSelect: () => void }) {
-  const state = offline ? "error" : needsInput ? "needs-input" : session.status
-  const stateLabel = offline ? "Workspace offline" : needsInput ? "Needs attention" : session.status === "idle" ? "Ready or finished" : session.status === "error" ? "Error" : "Working or retrying"
-  return (
-    <button className={`session-row ${selected ? "selected" : ""}`} onClick={onSelect}>
-      <span className={`status-dot ${state}`} title={stateLabel} aria-label={stateLabel} />
-      <span className="session-copy">
-        <strong>{session.title}</strong>
-        <span><GitBranch size={13} /><i>{session.branch ?? "no branch"}</i></span>
-      </span>
-      <span className="session-meta">
-        <time>{relativeTime(session.updatedAt)}</time>
-        <span className="diff-count"><b>+{session.additions}</b> <i>-{session.deletions}</i></span>
-      </span>
-      <ChevronRight size={17} />
-    </button>
-  )
-}
-
-function ConnectionDetails({ relayState, onClose }: { relayState: ReturnType<typeof useRelay>; onClose: () => void }) {
-  const closeRef = useRef<HTMLButtonElement>(null)
-  const dialogRef = useRef<HTMLElement>(null)
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    closeRef.current?.focus()
-    const escape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") onClose()
-      if (event.key !== "Tab") return
-      const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])") ?? [])]
-      if (!focusable.length) return
-      const first = focusable[0]!
-      const last = focusable.at(-1)!
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
-    }
-    window.addEventListener("keydown", escape)
-    return () => window.removeEventListener("keydown", escape)
-  }, [onClose])
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
-    return () => window.clearInterval(timer)
-  }, [])
-  const refresh = () => { void relayState.request({ type: "snapshot.request" }).catch((error) => relayState.setError(error.message)) }
-  const connectedRelayIds = relayState.relays.filter((relay) => relayState.isRelayConnected(relay.id)).map((relay) => relay.id)
-  const overall = effectiveConnectionPresentation(relayState.connection, connectedRelayIds, relayState.relays.length, relayState.relayHealth)
-  const service = serviceConnectionPresentation(relayState.serviceConnected, overall)
-  const pwaBuild = useMemo(
-    () => pwaBuildFromModuleScriptUrls([...document.querySelectorAll<HTMLScriptElement>('script[type="module"][src]')].map((script) => script.src), location.origin),
-    [],
-  )
-  return (
-    <div className="connection-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <section ref={dialogRef} className="connection-dialog" id="connection-status-dialog" role="dialog" aria-modal="true" aria-labelledby="connection-title">
-        <header><h2 id="connection-title">Connection status</h2><IconButton ref={closeRef} aria-label="Close connection status" title="Close" icon={<X size={18} />} onClick={onClose} /></header>
-        <div className="connection-dialog-body"><div className={`connection-row ${service.state}`}><span>Remotty service</span><b>{service.label}</b></div>
-        {relayState.relays.map((relay) => {
-          const health = relayState.relayHealth[relay.id]
-          const presentation = relayConnectionPresentation(relayState.isRelayConnected(relay.id), health, now)
-          return <div className={`connection-row ${presentation.state}`} key={relay.id}><span>Your computer<small>{relay.name} . {relay.workspace}</small></span><b>{presentation.label}<small>{presentation.detail}</small></b></div>
-        })}
-        <div className="connection-row"><span>OpenCode data</span><b>{relayState.lastSyncedAt && now - relayState.lastSyncedAt < 60_000 ? "Current" : "Stale"}<small>{relayState.lastSyncedAt ? `Updated ${exactConnectionTime(relayState.lastSyncedAt, now)}` : "Not yet synced"}</small></b></div>
-        <div className="connection-row"><span>PWA build</span><b><code>{pwaBuild}</code></b></div></div>
-        <footer><Button onClick={onClose}>Close</Button><Button variant="primary" startIcon={<RefreshCw size={15} />} onClick={refresh}>Refresh</Button></footer>
-      </section>
-    </div>
-  )
-}
-
-function NewSessionDialog({
-  relays,
-  isConnected,
-  onCreate,
-  onClose,
-}: {
-  relays: RelayInfo[]
-  isConnected: (relayId: string) => boolean
-  onCreate: (relayId: string) => Promise<void>
-  onClose: () => void
-}) {
-  const available = useMemo(
-    () => relays.filter((relay) => isConnected(relay.id) && relaySupportsSessionCreate(relay)),
-    [isConnected, relays],
-  )
-  const [relayId, setRelayId] = useState(() => available[0]?.id ?? "")
-  const [creating, setCreating] = useState(false)
-  const [error, setError] = useState<string>()
-  const closeRef = useRef<HTMLButtonElement>(null)
-  const dialogRef = useRef<HTMLElement>(null)
-
-  useEffect(() => {
-    if (!available.some((relay) => relay.id === relayId)) setRelayId(available[0]?.id ?? "")
-  }, [available, relayId])
-  useEffect(() => {
-    closeRef.current?.focus()
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape" && !creating) onClose()
-      if (event.key !== "Tab") return
-      const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>("button, select, [tabindex]:not([tabindex='-1'])") ?? [])]
-        .filter((element) => !element.hasAttribute("disabled"))
-      if (!focusable.length) return
-      const first = focusable[0]!
-      const last = focusable.at(-1)!
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
-    }
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [creating, onClose])
-
-  const create = async () => {
-    if (!relayId || creating) return
-    setCreating(true)
-    setError(undefined)
-    try {
-      await onCreate(relayId)
-    } catch (cause) {
-      const message = (cause as Error).message
-      setError(promptDeliveryState(message) === "uncertain"
-        ? "Session creation outcome is uncertain. Refresh sessions before trying again."
-        : message)
-      setCreating(false)
-    }
-  }
-
-  return (
-    <div className="connection-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !creating) onClose() }}>
-      <section ref={dialogRef} className="connection-dialog new-session-dialog" role="dialog" aria-modal="true" aria-labelledby="new-session-title">
-        <header><h2 id="new-session-title">New session</h2><IconButton ref={closeRef} aria-label="Close new session" title="Close" icon={<X size={18} />} onClick={onClose} disabled={creating} /></header>
-        <div className="new-session-body">
-          <label htmlFor="new-session-workspace">Workspace</label>
-          <select id="new-session-workspace" value={relayId} onChange={(event) => setRelayId(event.target.value)} disabled={creating}>
-            {relays.map((relay) => {
-              const connected = isConnected(relay.id)
-              const supported = relaySupportsSessionCreate(relay)
-              const suffix = !connected ? " (offline)" : !supported ? " (update plugin)" : ""
-              return <option key={relay.id} value={relay.id} disabled={!connected || !supported}>{relay.name} - {folderName(relay.workspace)}{suffix}</option>
-            })}
-          </select>
-          {relayId && <small>{relays.find((relay) => relay.id === relayId)?.workspace}</small>}
-          {!available.length && <p className="form-error" role="status">No connected workspace supports session creation. Reconnect after updating the OpenCode plugin.</p>}
-          {error && <p className="form-error" role="alert">{error}</p>}
-        </div>
-        <footer><Button onClick={onClose} disabled={creating}>Cancel</Button><Button variant="primary" loading={creating} loadingLabel="Create" startIcon={<Plus size={16} />} onClick={() => void create()} disabled={!relayId}>Create</Button></footer>
-      </section>
-    </div>
-  )
-}
-
-const relativeTime = (time: number) => {
-  const seconds = Math.max(0, Math.floor((Date.now() - time) / 1_000))
-  if (seconds < 60) return "now"
-  if (seconds < 3_600) return `${Math.floor(seconds / 60)}m`
-  if (seconds < 86_400) return `${Math.floor(seconds / 3_600)}h`
-  return `${Math.floor(seconds / 86_400)}d`
-}
-
-const folderName = (directory: string) => directory.split(/[\\/]/).filter(Boolean).at(-1) ?? directory

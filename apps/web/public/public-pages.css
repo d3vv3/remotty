@@ -1,0 +1,62 @@
+* { box-sizing: border-box; }
+html { color-scheme: dark; background: var(--background); }
+body { min-width: 320px; margin: 0; color: var(--text); background: var(--background); font-family: "Barlow", ui-sans-serif, sans-serif; line-height: 1.6; }
+a { color: var(--info); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+a:hover { color: var(--accent); }
+:where(a, button):focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.site-header, main, footer { width: min(100% - 40px, 1080px); margin: auto; }
+.site-header { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 24px; border-bottom: 1px solid var(--border); }
+.brand, h1, h2, .eyebrow, .section-number, code, pre { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+.brand { color: var(--text); font-size: 15px; font-weight: 800; text-decoration: none; }
+nav, footer { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; font: 10px "IBM Plex Mono", ui-monospace, monospace; text-transform: uppercase; }
+nav a { color: var(--text-muted); text-decoration: none; }
+.theme-toggle { width: 38px; height: 38px; display: grid; place-items: center; padding: 0; color: var(--text); border: 1px solid var(--border); border-radius: 3px; background: var(--surface); cursor: pointer; }
+.theme-toggle span { width: 14px; height: 14px; display: block; border: 2px solid currentColor; border-radius: 50%; }
+.theme-toggle[aria-pressed="true"] span { background: currentColor; }
+main { padding: 76px 0 56px; }
+section { min-width: 0; display: grid; grid-template-columns: minmax(180px, .55fr) minmax(0, 1.45fr); gap: 20px 52px; padding: 46px 0; border-top: 1px solid var(--border); }
+section > *, ol, ul, li { min-width: 0; }
+.intro { display: block; max-width: 940px; padding: 18px 0 92px; border: 0; }
+.eyebrow, .section-number { grid-column: 1; margin: 0; color: var(--accent); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+h1, h2 { margin: 0; letter-spacing: 0; line-height: .95; }
+h1 { max-width: 900px; margin-top: 24px; color: var(--text); font-family: "Barlow", ui-sans-serif, sans-serif; font-size: clamp(56px, 10vw, 116px); font-weight: 800; text-transform: uppercase; }
+h2 { grid-column: 1; font-family: "Barlow", ui-sans-serif, sans-serif; font-size: clamp(26px, 4vw, 42px); }
+.intro > p:last-child { max-width: 700px; margin: 32px 0 0; color: var(--text-muted); font-size: 18px; }
+section > :where(ol, ul, pre, p):not(.eyebrow):not(.section-number) { grid-column: 2; }
+.steps .eyebrow { grid-column: 1; }
+.steps h2 { grid-column: 2; }
+ol, ul { width: 100%; max-width: 780px; margin: 0; padding-left: 24px; }
+li { margin: 0 0 18px; }
+ol li::marker { color: var(--accent); font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 700; }
+pre { width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; margin: 12px 0 18px; padding: 16px; color: var(--text); border-left: 3px solid var(--accent); background: var(--surface-raised); font-size: 12px; white-space: pre; }
+code { font-size: .9em; }
+li > code, p > code { padding: 2px 4px; color: var(--text); background: var(--surface-raised); }
+p > code, li > code { overflow-wrap: anywhere; word-break: break-word; }
+.warning { padding: 13px 16px; color: var(--danger); border-left: 3px solid var(--danger); background: var(--surface); }
+.details p, .commands p, .steps > p:not(.eyebrow) { margin-top: 0; color: var(--text-muted); }
+footer { padding: 34px 0 46px; border-top: 1px solid var(--border); color: var(--text-muted); }
+footer a { color: var(--text-muted); text-decoration: none; }
+@media (max-width: 680px) {
+  .site-header, main, footer { width: min(100% - 28px, 1080px); }
+  .site-header { align-items: flex-start; flex-direction: column; gap: 12px; padding: 14px 0; }
+  main { padding-top: 50px; }
+  section { grid-template-columns: 1fr; padding: 38px 0; }
+  section > :where(ol, ul, pre, p):not(.eyebrow):not(.section-number), .steps h2 { grid-column: 1; }
+  .intro { padding-bottom: 66px; }
+  h1 { font-size: clamp(40px, 12vw, 64px); }
+}
+
+/* Native Remotty entry point; palette and sizing come from the shared contract. */
+.brand, h1, h2, .eyebrow, .section-number { font-family: var(--font-ui); }
+.brand { font-size: 22px; }
+nav, footer { font: 14px var(--font-ui); text-transform: none; }
+.theme-toggle { width: 44px; height: 44px; border-radius: var(--radius-md); }
+h1 { font-size: clamp(40px, 7vw, 80px); line-height: 1.05; letter-spacing: -1px; text-transform: none; }
+h2 { line-height: 1.15; }
+.eyebrow, .section-number { font-size: 14px; text-transform: none; }
+pre, .warning { border-radius: var(--radius-sm); }
+@media (max-width: 680px) {
+  main { padding-top: 28px; }
+  .intro { padding-bottom: 40px; }
+  nav { gap: 16px; }
+}

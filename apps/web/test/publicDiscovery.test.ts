@@ -63,17 +63,26 @@ describe("public discovery artifacts", () => {
     expect(viteConfig).not.toContain("navigateFallbackAllowlist: [/^\\/.*$/]")
   })
 
-  it("serves install styling from a CSP-compatible external stylesheet", async () => {
-    const [install, css, nginx] = await Promise.all([
+  it("serves install styling and theme behavior from CSP-compatible shared assets", async () => {
+    const [install, css, themeControl, nginx] = await Promise.all([
       readFile(new URL("../public/install/index.html", import.meta.url), "utf8"),
-      readFile(new URL("../public/install/install.css", import.meta.url), "utf8"),
+      readFile(new URL("../public/public-pages.css", import.meta.url), "utf8"),
+      readFile(new URL("../public/install/theme-control.js", import.meta.url), "utf8"),
       readFile(new URL("../../../deploy/nginx.conf", import.meta.url), "utf8"),
     ])
 
-    expect(install).toContain('href="/install/install.css"')
+    expect(install).toContain('src="/theme-init.js"')
+    expect(install).toContain('href="/design-tokens.css"')
+    expect(install).toContain('href="/public-pages.css"')
+    expect(install).toContain('src="/install/theme-control.js"')
     expect(install).not.toContain("<style")
-    expect(install).not.toContain("<script")
-    expect(css).toContain(":root")
+    expect(install).not.toContain("<script>")
+    expect(install).not.toContain(" onload=")
+    expect(css).toContain("var(--background)")
+    expect(css).toContain("var(--accent)")
+    expect(themeControl).toContain("window.remottyTheme.get()")
+    expect(themeControl).toContain("window.remottyTheme.set(")
+    expect(themeControl).toContain('"remotty-theme-change"')
     expect(nginx).toContain("style-src 'self'")
     expect(nginx).toContain("script-src 'self'")
   })

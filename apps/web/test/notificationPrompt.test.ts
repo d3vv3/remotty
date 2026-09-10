@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { shouldOfferPushNotifications } from "../src/features/notifications/notificationPrompt"
+import { clearNotificationPromptSeen, markNotificationPromptSeen, notificationPromptWasSeen, shouldOfferPushNotifications } from "../src/features/notifications/notificationPrompt"
 
 const ready = {
   connected: true,
@@ -25,5 +25,11 @@ describe("shouldOfferPushNotifications", () => {
   it("does not offer Push when unsupported or blocked", () => {
     expect(shouldOfferPushNotifications({ ...ready, supported: false, permission: "unsupported" })).toBe(false)
     expect(shouldOfferPushNotifications({ ...ready, permission: "denied" })).toBe(false)
+  })
+
+  it("continues when prompt-seen storage is unavailable", () => {
+    expect(notificationPromptWasSeen()).toBe(false)
+    expect(() => markNotificationPromptSeen()).not.toThrow()
+    expect(() => clearNotificationPromptSeen()).not.toThrow()
   })
 })

@@ -21,7 +21,7 @@ const slice = (id: string, sessionId: string, updatedAt: number): RelaySlice => 
 })
 
 describe("relay snapshot aggregation and routing", () => {
-  it("shows all active subagents before the three newest inactive children without mutating the input", () => {
+  it("shows only the three newest subagents across statuses without mutating the input", () => {
     const children = [
       { id: "idle-old", status: "idle", updatedAt: 1 },
       { id: "busy-old", status: "busy", updatedAt: 4 },
@@ -33,7 +33,7 @@ describe("relay snapshot aggregation and routing", () => {
     ] as const
 
     expect(visibleSubagents(children).map((child) => child.id)).toEqual([
-      "busy-new", "busy-old", "retry", "idle-new", "idle-mid", "idle-fourth",
+      "busy-new", "idle-new", "idle-mid",
     ])
     expect(children.map((child) => child.id)).toEqual([
       "idle-old", "busy-old", "idle-new", "retry", "idle-mid", "busy-new", "idle-fourth",

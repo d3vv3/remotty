@@ -18,7 +18,7 @@ import {
   type SessionSummary,
   type MessageDeltaManifest,
 } from "@remotty/protocol"
-import { currentDeviceName } from "../../infrastructure/storage"
+import { currentDeviceName } from "../../../infrastructure/storage"
 import {
   deleteIdentity,
   loadCachedResource,
@@ -29,14 +29,16 @@ import {
   setCurrentIdentity,
   saveCachedResource,
   type DeviceIdentity,
-} from "../../infrastructure/storage"
-import { acceptsRelayPosition, acceptsWorkspaceRelayPosition, aggregateRelaySlices, bumpResourceRevisions, bumpSessionRevisions, commandRelayId, handoffRelayHello, normalizeRelaySlice, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, type RelaySlice, type ResourceRevisions } from "./relayState"
-import { healthSummary } from "./connectionPresentation"
-import { addChunk, assembledMessages, completeChunks, createChunkAssembly, exactManifestMessages, orderByManifest, validManifest, type ChunkAssembly } from "./messageTransfer"
-import { HANDSHAKE_TIMEOUT_MS, hasSequenceGap, readOnlyCommand, reconnectDelay, requestInactivityMs, retryPlan, shouldExpireHandshakeWatchdog, shouldReconnectTransportOnResume } from "./transportPolicy"
-import { messageCacheErrorDetail, shouldReportCacheFailure, type CacheFailure, verifyDeltaSnapshot } from "../session/model/messageCache"
-import { retainedSessionState } from "../session/model/sessionState"
-import { serializePushSubscription } from "../notifications"
+} from "../../../infrastructure/storage"
+import { acceptsRelayPosition, acceptsWorkspaceRelayPosition, aggregateRelaySlices, bumpResourceRevisions, bumpSessionRevisions, commandRelayId, handoffRelayHello, normalizeRelaySlice, resolveConnectedWorkspaceRelay, sessionRevisionKey, stableWorkspaceKey, type RelaySlice, type ResourceRevisions } from "../relayState"
+import { healthSummary } from "../connectionPresentation"
+import { addChunk, assembledMessages, completeChunks, createChunkAssembly, orderByManifest, validManifest, type ChunkAssembly } from "../messageTransfer"
+import { HANDSHAKE_TIMEOUT_MS, hasSequenceGap, readOnlyCommand, reconnectDelay, requestInactivityMs, retryPlan, shouldExpireHandshakeWatchdog, shouldReconnectTransportOnResume } from "../transportPolicy"
+import { cacheNamespace, commandForRelayCapabilities, legacyChunkState, legacyManifestCompatible, notificationsEnabledFromStorage, queueProgress, queueProgressSnapshot, verifiedCanonicalMessages, type RelayRequest } from "../relayModel"
+import { messageCacheErrorDetail, shouldReportCacheFailure, type CacheFailure, verifyDeltaSnapshot } from "../../session/model/messageCache"
+import { retainedSessionState } from "../../session/model/sessionState"
+import { serializePushSubscription } from "../../notifications"
+import { persistNotificationPreference } from "../../notifications/notificationPreference"
 
 type PendingRequest = {
   relayId: string
@@ -56,69 +58,8 @@ type PendingRequest = {
   completionScheduled: boolean
 }
 
-/** Keeps the manifest-provided order while omitting unverified or duplicate message ids. */
-export const verifiedCanonicalMessages = <T>(messages: T[], verified: ReadonlySet<string>) => {
-  const seen = new Set<string>()
-  return messages.filter((message) => {
-    const id = (message as { info?: { id?: unknown } }).info?.id
-    if (typeof id !== "string" || !id || !verified.has(id) || seen.has(id)) return false
-    seen.add(id)
-    return true
-  })
-}
-
-export const legacyManifestCompatible = (chunks: ChunkAssembly, total: number) =>
-  chunks.total === undefined || chunks.total === total
-
-/** Resolves a transient relay ID when available; stable workspace IDs need no live slice. */
-export const cacheNamespace = (cacheRelayId: string, relay?: Pick<RelaySlice["relay"], "workspaceId" | "hostname" | "workspace">) =>
-  relay ? stableWorkspaceKey(relay) : cacheRelayId
-
-/** Computes legacy progress only after its canonical manifest is available. */
-export const legacyChunkState = (chunks: ChunkAssembly, manifestIds: string[] | undefined, verified: ReadonlySet<string>) => {
-  const messages = assembledMessages(chunks)
-  if (!manifestIds) return { progress: [] as unknown[], complete: false as const }
-  const progress = verifiedCanonicalMessages(orderByManifest(messages, manifestIds), verified)
-  if (!completeChunks(chunks)) return { progress, complete: false as const }
-  return { progress, complete: true as const, messages: exactManifestMessages(messages, manifestIds) }
-}
-
-/** Preserve callback order without blocking encrypted frame receipt. */
-export const queueProgress = (pending: Pick<PendingRequest, "progress" | "progressChain">, messages: unknown[], onFailure?: (cause: unknown) => void, isActive: () => boolean = () => true) => {
-  if (!messages.length || !pending.progress) return pending.progressChain
-  pending.progressChain = pending.progressChain.then(() => isActive() ? pending.progress?.(messages, isActive) : undefined)
-  void pending.progressChain.catch((cause) => { onFailure?.(cause) })
-  return pending.progressChain
-}
-
-const progressSignature = (messages: unknown[]) => JSON.stringify(messages.map((message) => (message as { info?: { id?: unknown } }).info?.id))
-
-/** Queues a canonical snapshot only when it differs from this request's prior progress. */
-export const queueProgressSnapshot = (pending: Pick<PendingRequest, "progress" | "progressChain" | "progressSignature" | "completionScheduled">, messages: unknown[], isActive: () => boolean, onFailure?: (cause: unknown) => void) => {
-  if (!messages.length || !pending.progress || pending.completionScheduled) return pending.progressChain
-  const signature = progressSignature(messages)
-  if (signature === pending.progressSignature) return pending.progressChain
-  pending.progressSignature = signature
-  return queueProgress(pending, messages, onFailure, isActive)
-}
-
-export type RelayRequest = ClientCommand extends infer Command
-  ? Command extends { requestId: string } ? Omit<Command, "requestId"> : never
-  : never
-
 const MAX_FRAME_AGE_MS = 5 * 60 * 1_000
 const MAX_RECENT_MESSAGES = 1_000
-
-export const commandForRelayCapabilities = (command: RelayRequest, capabilities?: { messageChunks?: boolean; messageDelta?: 1; promptMessageId?: 1; relayPromptMessageId?: 1; workspaceDiff?: 1 }): RelayRequest => {
-  if (command.type === "session.prompt") {
-    const { messageId: _messageId, ...legacy } = command
-    return legacy
-  }
-  if (command.type === "session.messages" && capabilities?.messageDelta && command.sync) return command
-  if (command.type === "session.messages" && capabilities?.messageChunks) return { ...command, chunked: true, sync: undefined }
-  if (command.type === "workspace.diff" && !capabilities?.workspaceDiff) return { type: "session.diff", sessionId: command.sessionId }
-  return command
-}
 
 const httpBrokerUrl = (identity: DeviceIdentity) => {
   const url = new URL(identity.brokerUrl)
@@ -221,8 +162,10 @@ export function useRelay(initialBundle?: PairingBundle) {
   const [sessionRevisions, setSessionRevisions] = useState<Record<string, number>>({})
   const [resourceRevisions, setResourceRevisions] = useState<ResourceRevisions>({})
   const [notificationsEnabled, setNotificationsEnabled] = useState(
-    () => localStorage.getItem("remotty-notifications") === "enabled" &&
-      typeof Notification !== "undefined" && Notification.permission === "granted",
+    () => notificationsEnabledFromStorage(
+      () => localStorage.getItem("remotty-notifications"),
+      typeof Notification === "undefined" ? undefined : Notification.permission,
+    ),
   )
   const [error, setError] = useState<string>()
   const [serviceConnected, setServiceConnected] = useState(false)
@@ -953,7 +896,7 @@ export function useRelay(initialBundle?: PairingBundle) {
     setServiceConnected(false)
     setEnrolled(false)
     setNotificationsEnabled(false)
-    localStorage.removeItem("remotty-notifications")
+    persistNotificationPreference(false)
     cleanupRef.current = (async () => {
       if (identity) await unregisterPush(identity)
       if (identity) await deleteIdentity(identity)
@@ -1006,14 +949,14 @@ export function useRelay(initialBundle?: PairingBundle) {
     try {
       if (notificationsEnabled) {
         await unregisterPush(identity)
-        localStorage.removeItem("remotty-notifications")
+        persistNotificationPreference(false)
         setNotificationsEnabled(false)
         return
       }
       const permission = await Notification.requestPermission()
       if (permission !== "granted") throw new Error("Notification permission was not granted.")
       await registerPush(identity)
-      localStorage.setItem("remotty-notifications", "enabled")
+      persistNotificationPreference(true)
       setNotificationsEnabled(true)
     } catch (cause) {
       setError((cause as Error).message)

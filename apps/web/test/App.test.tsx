@@ -48,6 +48,7 @@ describe("App route composition", () => {
   afterEach(async () => {
     await act(async () => root.unmount())
     container.remove()
+    vi.restoreAllMocks()
   })
 
   const renderApp = async () => {
@@ -60,6 +61,13 @@ describe("App route composition", () => {
 
     expect(container.querySelector("[data-testid=landing]")).toBeTruthy()
     expect(container.querySelectorAll("[data-testid=pwa-update]")).toHaveLength(1)
+  })
+
+  it("renders the landing page when identity marker storage is unavailable", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("blocked") })
+    await renderApp()
+
+    expect(container.querySelector("[data-testid=landing]")).toBeTruthy()
   })
 
   it("mounts the privacy page and the global update prompt", async () => {

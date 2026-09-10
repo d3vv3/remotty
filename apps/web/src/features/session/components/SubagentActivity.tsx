@@ -1,20 +1,44 @@
-import { useLayoutEffect, useRef, useState } from "react"
-import { LoaderCircle } from "lucide-react"
+import { useLayoutEffect, useRef, useState, type CSSProperties } from "react"
+import { Bot, LoaderCircle } from "lucide-react"
+import { StatusIndicator, WarningNotice } from "../../../components/ui"
 import { needsMessageRefresh, resourceArray, retainedSessionState } from "../model/sessionState"
-import { childWorkLabel } from "../model/subagentActivityState"
+import { subagentDisplayTitle, visibleSubagents } from "../model/subagentActivityState"
+import { activityPresentation } from "../model/activityPresentation"
 import type { SessionSubagent } from "../model/sessionTypes"
+import type { SessionMessage as Message } from "../model/sessionContent"
+import { ActivityMessages } from "./ActivityMessages"
+import { useHorizontalOverflow } from "../hooks/useHorizontalOverflow"
+import { useActivityScroll } from "../hooks/useActivityScroll"
+import { useOverlayHeight } from "../hooks/useOverlayHeight"
 
-type Message = { info: { id: string; role: string }; parts: Array<{ type: string; text?: string; tool?: string; time?: { start?: number; end?: number }; state?: { title?: string; status?: string; input?: unknown; output?: string; error?: string } }> }
-const limited = (value: string, limit = 20_000) => value.length > limit ? `${value.slice(0, limit)}\n\n[output truncated]` : value
+const statusLabel = (status: SessionSubagent["status"]) => ({ busy: "Working", retry: "Retrying", idle: "Ready", error: "Error" })[status]
 
-export function SubagentActivity({ subagents, selectedChildId, onSelect, request, revisions }: { subagents: SessionSubagent[]; selectedChildId?: string; onSelect: (id: string) => void; request: (command: any) => Promise<unknown>; revisions: Record<string, number> }) {
-  const child = subagents.find((item) => item.id === selectedChildId) ?? subagents[0]
+export function SubagentActivity({ subagents, selectedChildId, onSelect, request, revisions, showToolCalls = true, headerHeight = 0, dockHeight = 0, onSelectorHeight }: { subagents: SessionSubagent[]; selectedChildId?: string; onSelect: (id: string) => void; request: (command: any) => Promise<unknown>; revisions: Record<string, number>; showToolCalls?: boolean; headerHeight?: number; dockHeight?: number; onSelectorHeight?: (height: number) => void }) {
+  const entries = visibleSubagents(subagents)
+  const child = entries.find((item) => item.id === selectedChildId) ?? entries[0]
   const childKey = child ? `${child.workspaceId}:${child.id}` : ""
   const [messages, setMessages] = useState<Message[]>(() => retainedSessionState.read(childKey)?.messages as Message[] ?? [])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(() => child ? needsMessageRefresh(retainedSessionState.read(childKey), revisions[child.id] ?? 0) : false)
   const [error, setError] = useState<string>()
   const requestRef = useRef(request)
-  const messageScrollRef = useRef<HTMLDivElement>(null)
+  const selectedPillRef = useRef<HTMLButtonElement>(null)
+  const selectorOverlay = useOverlayHeight<HTMLDivElement>()
+  useLayoutEffect(() => {
+    onSelectorHeight?.(selectorOverlay.height)
+  }, [onSelectorHeight, selectorOverlay.height])
+  const entryIds = entries.map((item) => item.id).join(":")
+  const { scrollRef: selectorRef, hasOverflowRight } = useHorizontalOverflow(entryIds)
+  useLayoutEffect(() => {
+    const list = selectorRef.current
+    const pill = selectedPillRef.current
+    if (!list || !pill) return
+    const viewport = list.getBoundingClientRect()
+    const selected = pill.getBoundingClientRect()
+    if (viewport.right <= viewport.left) return
+    // Keep the focus outline inside the scroll viewport, including at either end.
+    const offset = selected.left < viewport.left + 12 ? selected.left - viewport.left - 12 : selected.right > viewport.right - 12 ? selected.right - viewport.right + 12 : 0
+    if (offset) list.scrollBy({ left: offset, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" })
+  }, [childKey, entryIds])
   requestRef.current = request
   useLayoutEffect(() => {
     if (!child) { setMessages([]); setError(undefined); setLoading(false); return }
@@ -36,13 +60,32 @@ export function SubagentActivity({ subagents, selectedChildId, onSelect, request
     }).catch((cause) => { if (active) setError((cause as Error).message) }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [child?.id, childKey, child ? revisions[child.id] : 0])
-  const workLabel = childWorkLabel(child?.status, messages)
-  useLayoutEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      const scroll = messageScrollRef.current
-      if (scroll) scroll.scrollTop = scroll.scrollHeight
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [childKey, messages, loading, error, workLabel])
-  return <div className="subagent-view"><div className="subagent-list">{subagents.map((item) => <button key={item.id} className={item.id === child?.id ? "selected" : ""} onClick={() => onSelect(item.id)}><span className={`status-dot ${item.status}`} /><strong>{item.title}</strong><small>parent {item.parentSessionId} . {new Date(item.updatedAt).toLocaleString()}</small></button>)}</div><div className="subagent-messages">{workLabel && <div className="work-strip" role="status"><span className="work-pulse"><i /><i /><i /></span><strong>{workLabel}</strong></div>}<div className="subagent-message-scroll" ref={messageScrollRef}><div className="message-list">{loading && <div className="empty-state"><LoaderCircle className="spin" size={22} /></div>}{error && <p className="change-notice">Activity refresh failed: {error}</p>}{messages.map((message) => <article className={`message ${message.info.role}`} key={message.info.id}><div className="message-body">{message.parts.map((part, index) => part.type === "text" ? <p key={index}>{part.text}</p> : part.type === "tool" ? <details className="tool-details" key={index}><summary className="tool-line"><span>{part.state?.title ?? part.tool ?? "Tool"}</span><small>{part.state?.status}</small></summary><div className="tool-content">{part.state?.input !== undefined && <section><strong>Input</strong><pre><code>{limited(JSON.stringify(part.state.input, null, 2))}</code></pre></section>}{(part.state?.output || part.state?.error) && <section><strong>{part.state?.error ? "Error" : "Output"}</strong><pre><code>{limited(part.state.error ?? part.state.output!)}</code></pre></section>}</div></details> : null)}</div></article>)}{!loading && child && messages.length === 0 && <div className="empty-state"><p>No message activity yet.</p></div>}</div></div></div></div>
+  const presentation = activityPresentation(messages, child?.status, loading, Boolean(error), "all")
+  const { pending } = presentation
+  const activityScroll = useActivityScroll(true, [childKey, messages, loading, error, pending, showToolCalls, headerHeight, selectorOverlay.height, dockHeight])
+  return <div className="subagent-view" style={{ "--subagent-selector-height": `${selectorOverlay.height}px` } as CSSProperties}>
+    <div ref={selectorOverlay.ref} className="subagent-selector" data-overflow-right={hasOverflowRight}>
+    <div className="subagent-list" ref={selectorRef} role="group" aria-label="Latest subagents">{entries.map((item) => {
+      const agent = item.agent?.trim() || "Subagent"
+      const title = subagentDisplayTitle(item.title)
+      const status = statusLabel(item.status)
+      const selected = item.id === child?.id
+      const active = item.status === "busy" || item.status === "retry"
+      return <button key={item.id} type="button" ref={selected ? selectedPillRef : undefined} className={`subagent-pill${selected ? " selected" : ""}`} data-status={item.status} aria-pressed={selected} aria-label={`${title} . ${agent} . ${status}`} onClick={() => onSelect(item.id)}>
+        <strong title={title}>{title}</strong>
+        <span className="subagent-pill-meta"><span className="subagent-agent" title={agent}><Bot size={15} aria-hidden="true" /><span>{agent}</span></span>{!active && <span className={`subagent-status ${item.status}`}><StatusIndicator state={item.status} />{status}</span>}</span>
+      </button>
+    })}</div>
+    </div>
+    <div className="subagent-messages">
+      <div className="subagent-message-scroll" ref={activityScroll.contentRef} onScroll={activityScroll.onScroll}>
+        <div className="message-list">
+          {loading && <div className="empty-state"><LoaderCircle className="spin" size={22} /></div>}
+          {error && <WarningNotice>Activity refresh failed: {error}</WarningNotice>}
+          <ActivityMessages presentation={presentation} showToolCalls={showToolCalls} />
+          {!loading && !pending && child && presentation.messages.length === 0 && <div className="empty-state"><p>No message activity yet.</p></div>}
+        </div>
+      </div>
+    </div>
+  </div>
 }
