@@ -90,7 +90,10 @@ describe("SubagentActivity selection", () => {
     }
     for (const status of ["busy", "retry"] as const) {
       await render(status)
-      expect(container.querySelectorAll('[role="status"][aria-label="OpenCode is working"]')).toHaveLength(1)
+      const author = bylines === 1 ? "OpenCode" : "explore"
+      expect(container.querySelectorAll(`[role="status"][aria-label="${author} (subagent) is thinking"]`)).toHaveLength(1)
+      expect(container.querySelector(".pending-response .lucide-network")).not.toBeNull()
+      expect(container.querySelector(".pending-response .lucide-brain")).not.toBeNull()
       expect(container.querySelectorAll(".entry-byline")).toHaveLength(bylines)
       expect(container.querySelector(".message:last-child .pending-response")).not.toBeNull()
       expect(container.querySelector(".work-strip")).toBeNull()

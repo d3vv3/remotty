@@ -24,7 +24,7 @@ it.each(["content", "all"] as const)("filters only tools in %s activity and pres
   expect(container.querySelectorAll("article")).toHaveLength(1)
   expect(container.textContent).toContain("Keep this answer")
   await render(false, "busy")
-  expect(container.querySelectorAll('[aria-label="OpenCode is working"]')).toHaveLength(1)
+  expect(container.querySelectorAll('[aria-label="OpenCode is thinking"]')).toHaveLength(1)
   expect(container.querySelectorAll("article")).toHaveLength(2)
   await render(true)
   expect(container.querySelectorAll(".tool-details")).toHaveLength(2)

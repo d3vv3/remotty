@@ -2,6 +2,7 @@ import { Clock3, ListTodo, Code2, ChevronDown } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { PendingResponse } from "./PendingResponse"
+import { messageAuthor, type PendingPhase } from "../model/activityPresentation"
 import { deliveryLabel, type DeliveryState } from "../model/messagePresentation"
 import { limited, relativeTime, type MessagePart, type SessionMessage } from "../model/sessionContent"
 
@@ -24,11 +25,12 @@ export function ToolDetails({ part }: { part: MessagePart }) {
   </details>
 }
 
-export function ActivityMessage({ message, delivery, pending = false }: { message: SessionMessage; delivery?: DeliveryState; pending?: boolean }) {
+export function ActivityMessage({ message, delivery, pending = false, pendingPhase = "thinking", subagent = false }: { message: SessionMessage; delivery?: DeliveryState; pending?: boolean; pendingPhase?: PendingPhase; subagent?: boolean }) {
   const isUser = message.info.role === "user"
-  return <article className={`message ${message.info.role}`} aria-label={isUser ? "Your message" : "OpenCode response"}>
+  const author = messageAuthor(message)
+  return <article className={`message ${message.info.role}`} aria-label={isUser ? "Your message" : `${author} response`}>
     <header className="entry-byline">
-      <strong>{isUser ? "You" : message.info.role === "system" ? "System" : "OpenCode"}</strong>
+      <strong>{author}</strong>
       {message.info.time?.created && <time className="message-time" dateTime={new Date(message.info.time.created).toISOString()} title={new Date(message.info.time.created).toLocaleString()}>{relativeTime(message.info.time.created)}</time>}
       {delivery && <span className={`delivery-flag${delivery === "accepted" ? " delivery-queued" : ""}`} role="status" aria-label={deliveryLabel(delivery)} title={deliveryLabel(delivery)}>
         {delivery === "accepted" ? <ListTodo size={16} aria-hidden="true" /> : <><Clock3 size={12} aria-hidden="true" />{deliveryLabel(delivery)}</>}
@@ -38,7 +40,7 @@ export function ActivityMessage({ message, delivery, pending = false }: { messag
         {message.parts.map((part, index) => part.type === "text" && part.text
           ? isUser ? <p key={index}>{part.text}</p> : <div className="markdown" key={index}><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: ({ children, href }) => <a href={href} target="_blank" rel="noreferrer">{children}</a> }}>{part.text}</ReactMarkdown></div>
           : part.type === "tool" ? <ToolDetails part={part} key={index} /> : null)}
-        {pending && <PendingResponse />}
+        {pending && <PendingResponse phase={pendingPhase} author={author} subagent={subagent} />}
     </div>
   </article>
 }

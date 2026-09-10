@@ -19,8 +19,9 @@ export type SessionMessage = {
   info: {
     id: string
     role: string
+    agent?: string
     parentID?: string
-    time?: { created?: number }
+    time?: { created?: number; completed?: number }
     delivery?: DeliveryState
     legacyPrompt?: boolean
     knownMessageIds?: string[]

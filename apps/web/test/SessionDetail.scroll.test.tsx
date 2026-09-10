@@ -239,7 +239,7 @@ describe("SessionDetail Activity scrolling", () => {
     expect(pane().style.getPropertyValue("--session-header-height")).toBe("120px")
     expect(pane().style.getPropertyValue("--subagent-selector-height")).toBe("0px")
     expect(geometry.element.scrollTop).toBe(240)
-    expect(container.querySelector('[aria-label="OpenCode is working"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="OpenCode is thinking"]')).not.toBeNull()
     await select("Subagents")
     headerHeight = 112
     await act(async () => resizeSelector())
@@ -363,7 +363,7 @@ describe("SessionDetail Activity scrolling", () => {
     await flushFrames()
     geometry.resetWrites()
     await render({ title: "Busy session", status: "busy" })
-    expect(container.querySelector('[aria-label="OpenCode is working"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="OpenCode is thinking"]')).not.toBeNull()
     await flushFrames()
     expect(geometry.writes).toBe(0)
 
@@ -391,7 +391,7 @@ describe("SessionDetail Activity scrolling", () => {
     await render({ status: "busy" })
     await select("Activity")
     await flushFrames()
-    expect(container.querySelector('[aria-label="OpenCode is working"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="OpenCode is thinking"]')).not.toBeNull()
     expect(activity().scrollTop).toBe(240)
   })
 })

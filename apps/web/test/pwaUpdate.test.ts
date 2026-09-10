@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest"
 import { shouldShowPwaUpdate } from "../src/features/pwa/pwaUpdate"
 
 describe("controlled PWA updates", () => {
+  it("removes only the update dialog bottom border", async () => {
+    const css = await readFile(new URL("../src/styles.css", import.meta.url), "utf8")
+    expect(css).toMatch(/\.notification-prompt \{[^}]*border: 1px solid var\(--accent\)/)
+    expect(css).toContain(".update-prompt { border-bottom: 0; }")
+  })
   it("waits for user confirmation and gives both update paths", async () => {
     const [config, app] = await Promise.all([
       readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),

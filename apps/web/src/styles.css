@@ -252,6 +252,8 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .entry-byline strong { color: var(--accent); font-weight: var(--font-weight-semibold); }
 .message.user .entry-byline strong { color: var(--info); }
 .message-body { width: 100%; min-width: 0; max-width: 100%; }
+.pending-response { display: flex; align-items: center; gap: 8px; min-height: 24px; color: var(--info); }
+.pending-response > svg { flex: 0 0 18px; }
 .pending-response > span { display: flex; align-items: center; gap: 5px; min-height: 24px; }
 .pending-response i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); opacity: .6; }
 @keyframes pending-response-pulse { 50% { opacity: 1; transform: translateY(-3px); } }
@@ -377,6 +379,11 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 
 .notification-prompt-overlay { position: fixed; inset: 0; z-index: 90; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: 18px; background: var(--overlay); }
 .notification-prompt { position: relative; width: 100%; min-width: 0; max-width: 440px; padding: 32px; border: 1px solid var(--accent); border-radius: var(--radius-lg); background: var(--surface-raised); box-shadow: var(--elevation-overlay); }
+.update-prompt { border-bottom: 0; }
+.pwa-install-invitation { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin: 0 0 16px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-raised); }
+.pwa-install-invitation strong { color: var(--text); font-size: 14px; }
+.pwa-install-invitation p { margin: 6px 0 12px; color: var(--text-muted); font-size: 13px; line-height: 1.5; }
+.pwa-install-invitation button { border-radius: 999px; }
 .notification-prompt-close { position: absolute; top: 10px; right: 10px; }
 .notification-prompt-icon { width: 48px; height: 48px; display: grid; place-items: center; color: var(--on-accent); border-radius: 4px; background: var(--accent); box-shadow: var(--shadow-raised); }
 .notification-prompt > p { margin: 25px 0 8px; color: var(--cyan); font-family: var(--mono); font-size: 11px; font-weight: 700; text-transform: uppercase; }
@@ -590,8 +597,8 @@ body { font-size: var(--font-size-md); }
 .command-bar .ui-button--danger.ui-button--icon > .ui-button__icon { position: static; width: 20px; height: 20px; }
 .command-bar .ui-button--danger:not(:disabled):hover { color: var(--danger); border-color: var(--danger); background: var(--surface-hover); }
 .tool-visibility-toggle { flex: 0 0 auto; min-height: 44px; }
-.tool-visibility-toggle[aria-pressed="true"] { color: var(--accent); background: var(--surface-selected); }
-.tool-visibility-toggle[aria-pressed="false"] { color: var(--text-muted); }
+.command-bar .tool-visibility-toggle[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--accent-surface); }
+.command-bar .tool-visibility-toggle[aria-pressed="false"] { color: var(--text-muted); border-color: var(--border-strong); background: var(--surface); }
 .permission-panel strong, .question-block p { font-size: 16px; }
 .permission-description { font-size: 14px; }
 .question-title, .question-block > span, .question-actions button { font-family: var(--font-ui); font-size: 14px; text-transform: none; }

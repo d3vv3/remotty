@@ -60,7 +60,7 @@ export function SubagentActivity({ subagents, selectedChildId, onSelect, request
     }).catch((cause) => { if (active) setError((cause as Error).message) }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [child?.id, childKey, child ? revisions[child.id] : 0])
-  const presentation = activityPresentation(messages, child?.status, loading, Boolean(error), "all")
+  const presentation = activityPresentation(messages, child?.status, loading, Boolean(error), "all", { agent: child?.agent, subagent: true })
   const { pending } = presentation
   const activityScroll = useActivityScroll(true, [childKey, messages, loading, error, pending, showToolCalls, headerHeight, selectorOverlay.height, dockHeight])
   return <div className="subagent-view" style={{ "--subagent-selector-height": `${selectorOverlay.height}px` } as CSSProperties}>

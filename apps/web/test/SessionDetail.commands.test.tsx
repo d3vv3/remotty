@@ -68,6 +68,25 @@ describe("Native conversation commands", () => {
     expect(request).toHaveBeenCalledWith({ type: "session.abort", sessionId: "session" })
   })
 
+  it("does not relabel historical responses when the prompt agent changes", async () => {
+    await act(async () => root.unmount())
+    const messages = [
+      { info: { id: "plan", role: "assistant", agent: "plan" }, parts: [{ type: "text", text: "Plan recorded" }] },
+      { info: { id: "build", role: "assistant", agent: "build" }, parts: [{ type: "text", text: "Build recorded" }] },
+      { info: { id: "legacy", role: "assistant" }, parts: [{ type: "text", text: "Legacy recorded" }] },
+    ]
+    retainedSessionState.write(sessionKey, { messages, messageCache: {
+      version: 2, canonical: { manifest: messages.map((message) => ({ id: message.info.id, fingerprint: message.info.id })), records: Object.fromEntries(messages.map((message) => [message.info.id, { message, fingerprint: message.info.id }])), syncedAt: 0 }, staged: { records: {} }, local: { messages: [] },
+    } })
+    root = createRoot(container)
+    await renderSession("idle")
+    const bylines = () => [...container.querySelectorAll(".entry-byline strong")].map((entry) => entry.textContent)
+    expect(bylines()).toEqual(["plan", "build", "OpenCode"])
+    await act(async () => container.querySelector<HTMLButtonElement>(".agent-picker")!.click())
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>("[role=option]")].find((option) => option.textContent === "plan")!.click())
+    expect(bylines()).toEqual(["plan", "build", "OpenCode"])
+  })
+
   it.each(["busy", "retry"] as const)("signals an older %s child outside the three visible entries on every tab", async (status) => {
     const children: SessionSubagent[] = [status, "idle", "error", "idle"].map((status, index) => ({ id: `child${index}`, status: status as SessionSubagent["status"], title: `Child ${index}`, updatedAt: index, workspaceId: "commands", parentSessionId: "session", rootSessionId: "session", directory: "/project", additions: 0, deletions: 0, files: 0 }))
     await renderSession("idle", undefined, undefined, children)

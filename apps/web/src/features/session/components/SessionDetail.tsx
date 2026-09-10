@@ -324,8 +324,8 @@ export function SessionDetail({
   }, [tab, revision, session.id, resourceRevisions.diffs, sessionKey])
 
   const presentation = useMemo(
-    () => activityPresentation(messages, session.status, loading || messagesLoading, messagesError),
-    [messages, session.status, loading, messagesLoading, messagesError],
+    () => activityPresentation(messages, session.status, loading || messagesLoading, messagesError, "content", { agent: session.agent }),
+    [messages, session.status, session.agent, loading, messagesLoading, messagesError],
   )
   const activityScroll = useActivityScroll(tab === "activity", [presentation, loading, showToolCalls, headerOverlay.height, dockOverlay.height])
 

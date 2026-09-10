@@ -9,6 +9,7 @@ import { SessionDetail } from "../features/session"
 import { ConnectionDetails, folderName, isSessionVisibleInList, NewSessionDialog, NotificationPrompt, SESSION_LIST_MAX_AGE_MS, SessionRow, sessionKey } from "../features/workspace"
 import { useVisualViewport } from "../hooks/useVisualViewport"
 import { useDismissibleDetails } from "../hooks/useDismissibleDetails"
+import { PwaInstallPrompt } from "../features/pwa/PwaInstallPrompt"
 
 export { SESSION_LIST_MAX_AGE_MS, isSessionVisibleInList }
 
@@ -160,6 +161,7 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
             </div>
           </div>
           <div className="session-list">
+            <PwaInstallPrompt eligible={relayState.enrolled === true && !selected && !notificationPromptOpen && !connectionDetailsOpen && !newSessionOpen} />
             {sessionGroups.map(([directory, sessions]) => (
               <section className="workspace-group" key={directory}>
                 <button className="workspace-heading" title={directory} aria-expanded={!collapsedGroups.has(directory)} onClick={() => toggleGroup(directory)}>

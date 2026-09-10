@@ -5,7 +5,7 @@ import { Button, Dialog } from "../../components/ui"
 import { CURRENT_IDENTITY_MARKER } from "../../infrastructure/storage/deviceStore"
 import { activatePwaUpdate, shouldShowPwaUpdate } from "./pwaUpdate"
 
-export function PwaUpdatePrompt() {
+export function PwaUpdatePrompt({ onVisibilityChange }: { onVisibilityChange?: (visible: boolean) => void } = {}) {
   const {
     needRefresh: [needRefresh],
     updateServiceWorker,
@@ -19,6 +19,10 @@ export function PwaUpdatePrompt() {
   try { paired = Boolean(localStorage.getItem(CURRENT_IDENTITY_MARKER)) } catch { /* Continue without persisted identity. */ }
   const visible = shouldShowPwaUpdate(needRefresh, pathname, paired)
   const updating = updateState === "activating"
+  useEffect(() => {
+    onVisibilityChange?.(visible && !deferred)
+    return () => onVisibilityChange?.(false)
+  }, [visible, deferred, onVisibilityChange])
   useEffect(() => {
     if (!needRefresh) setDeferred(false)
   }, [needRefresh])

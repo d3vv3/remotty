@@ -2,6 +2,8 @@ import { useEffect, useState } from "react"
 import { CURRENT_IDENTITY_MARKER, loadCurrentIdentity } from "../infrastructure/storage"
 import { pairingBundleFrom, routeForStoredIdentity } from "../features/pairing"
 import { PwaUpdatePrompt } from "../features/pwa"
+import { PwaInstallContext, PwaUpdateVisibleContext } from "../features/pwa/PwaInstallPrompt"
+import { usePwaInstall } from "../features/pwa/hooks/usePwaInstall"
 import { LandingPage, PrivacyPage, WorkspacePage } from "../pages"
 
 let routePairingBundle = location.pathname === "/pair" && location.hash
@@ -18,6 +20,8 @@ const hasStoredIdentityMarker = () => {
 }
 
 export function App() {
+  const install = usePwaInstall()
+  const [updateVisible, setUpdateVisible] = useState(false)
   const [pairingBundle] = useState(routePairingBundle)
   const [homeReady, setHomeReady] = useState(
     () => location.pathname !== "/" || !hasStoredIdentityMarker(),
@@ -42,5 +46,7 @@ export function App() {
   const page = location.pathname === "/" ? <LandingPage />
     : location.pathname === "/privacy" ? <PrivacyPage />
     : <WorkspacePage initialBundle={pairingBundle} />
-  return <>{page}<PwaUpdatePrompt /></>
+  return <PwaInstallContext.Provider value={install}><PwaUpdateVisibleContext.Provider value={updateVisible}>
+    {page}<PwaUpdatePrompt onVisibilityChange={setUpdateVisible} />
+  </PwaUpdateVisibleContext.Provider></PwaInstallContext.Provider>
 }

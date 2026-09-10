@@ -21,7 +21,7 @@ describe.each(["primary", "subagent"] as const)("%s pending responses", (view) =
   const loadCache = vi.fn(async () => undefined)
   const saveCache = vi.fn(async () => {})
   const onError = vi.fn()
-  const pending = () => container.querySelectorAll('[role=status][aria-label="OpenCode is working"]')
+  const pending = () => container.querySelectorAll('.pending-response[role=status]')
   const render = async (status: "idle" | "busy" | "retry" | "error", revision = 0) => {
     await act(async () => root.render(view === "primary" ? <SessionDetail
       session={{ id: "session", title: "Pending test", directory: "/project", status, updatedAt: 1, additions: 0, deletions: 0, files: 0 }}
@@ -94,6 +94,85 @@ describe.each(["primary", "subagent"] as const)("%s pending responses", (view) =
     expect(pending()).toHaveLength(0)
     expect(retainedSessionState.read(key)?.messages).toEqual(messages)
     expect(saveCache).not.toHaveBeenCalled()
+  })
+
+  it.each([true, false])("shows current tool phases with tool visibility %s", async (showToolCalls) => {
+    const prompt: SessionMessage = { info: { id: "prompt", role: "user" }, parts: [{ type: "text", text: "Review" }] }
+    const visibility = view === "primary" ? "content" : "all"
+    const paint = async (messages: SessionMessage[], status = "busy") => {
+      const original = JSON.stringify(messages)
+      await act(async () => root.render(<ActivityMessages showToolCalls={showToolCalls} presentation={activityPresentation(messages, status, false, false, visibility)} />))
+      expect(JSON.stringify(messages)).toBe(original)
+    }
+    for (const status of ["pending", "running", "completed", "error"]) {
+      const tool: SessionMessage = { info: { id: "tool", role: "assistant" }, parts: [{ type: "tool", tool: "read", state: { status } }] }
+      await paint([prompt, tool])
+      expect(pending()).toHaveLength(1)
+      const indicator = pending()[0]!
+      const active = status === "pending" || status === "running"
+      expect(indicator.getAttribute("aria-label")).toBe(active ? "OpenCode is running a tool" : "OpenCode is thinking")
+      expect(indicator.getAttribute("title")).toBe(indicator.getAttribute("aria-label"))
+      expect(indicator.firstElementChild?.classList.contains(active ? "lucide-wrench" : "lucide-brain")).toBe(true)
+      expect(indicator.firstElementChild?.getAttribute("width")).toBe("18")
+      expect(indicator.firstElementChild?.getAttribute("aria-hidden")).toBe("true")
+      expect(indicator.lastElementChild?.querySelectorAll("i")).toHaveLength(3)
+      expect(container.querySelectorAll(".tool-details")).toHaveLength(showToolCalls ? 1 : 0)
+    }
+    const stale: SessionMessage = { info: { id: "stale", role: "assistant" }, parts: [{ type: "tool", state: { status: "running" } }] }
+    for (const parts of [[], [{ type: "reasoning", text: "Internal" }], [{ type: "text", text: "Reviewing" }]]) {
+      await paint([prompt, stale, { info: { id: "latest", role: "assistant" }, parts }], "retry")
+      expect(pending()).toHaveLength(1)
+      expect(pending()[0]!.getAttribute("aria-label")).toBe("OpenCode is thinking")
+      if (!parts.length) expect(container.querySelectorAll('article[aria-label="OpenCode response"]')).toHaveLength(showToolCalls ? 2 : 1)
+    }
+    for (const messages of [[stale, prompt], [prompt, { ...stale, info: { ...stale.info, time: { completed: 1 } } }]]) {
+      await paint(messages)
+      expect(pending()[0]!.getAttribute("aria-label")).toBe("OpenCode is thinking")
+    }
+    await paint([prompt, stale], "idle")
+    expect(pending()).toHaveLength(0)
+    expect(container.querySelector(".lucide-brain, .lucide-wrench")).toBeNull()
+  })
+
+  it("preserves recorded authors when agent context changes", async () => {
+    const messages: SessionMessage[] = [
+      { info: { id: "user", role: "user", agent: "build" }, parts: [{ type: "text", text: "Hi" }] },
+      { info: { id: "system", role: "system", agent: "build" }, parts: [{ type: "text", text: "Notice" }] },
+      ...["plan", "build", undefined, "  "].map((agent, index) => ({ info: { id: `answer-${index}`, role: "assistant", agent }, parts: [{ type: "text", text: "Reply" }] })),
+    ]
+    const original = JSON.stringify(messages)
+    for (const agent of ["explore", "review"]) {
+      await act(async () => root.render(<ActivityMessages presentation={activityPresentation(messages, "idle", false, false, "all", { agent })} />))
+      expect([...container.querySelectorAll(".entry-byline strong")].map((entry) => entry.textContent)).toEqual(["You", "System", "plan", "build", "OpenCode", "OpenCode"])
+      expect(container.querySelector('[aria-label="Your message"]')).not.toBeNull()
+      expect(container.querySelector('[aria-label="System response"]')).not.toBeNull()
+      expect(container.querySelector('[aria-label="plan response"]')).not.toBeNull()
+    }
+    expect(JSON.stringify(messages)).toBe(original)
+  })
+
+  it.each(["thinking", "tool"] as const)("shows subagent context alongside %s", async (phase) => {
+    const messages: SessionMessage[] = [{ info: { id: "child", role: "assistant", agent: "explore" }, parts: phase === "tool" ? [{ type: "tool", tool: "read", state: { status: "running" } }] : [] }]
+    await act(async () => root.render(<ActivityMessages showToolCalls={false} presentation={activityPresentation(messages, "busy", false, false, "all", { agent: "other", subagent: true })} />))
+    expect(pending()).toHaveLength(1)
+    expect(pending()[0]!.querySelector(".lucide-network")).not.toBeNull()
+    expect(pending()[0]!.querySelector(phase === "tool" ? ".lucide-wrench" : ".lucide-brain")).not.toBeNull()
+    expect(pending()[0]!.getAttribute("aria-label")).toBe(`explore (subagent) is ${phase === "tool" ? "running a tool" : "thinking"}`)
+    expect(pending()[0]!.querySelectorAll("i")).toHaveLength(3)
+  })
+
+  it("uses context for a synthetic response and Network for task delegation", async () => {
+    await act(async () => root.render(<ActivityMessages presentation={activityPresentation([], "busy", false, false, "all", { agent: "explore", subagent: true })} />))
+    expect(container.querySelector(".entry-byline strong")?.textContent).toBe("explore")
+    expect(pending()[0]!.getAttribute("aria-label")).toBe("explore (subagent) is thinking")
+    const task: SessionMessage = { info: { id: "task", role: "assistant", agent: "build" }, parts: [{ type: "tool", tool: "task", state: { status: "running" } }] }
+    await act(async () => root.render(<ActivityMessages showToolCalls={false} presentation={activityPresentation([task], "busy", false, false)} />))
+    expect(pending()).toHaveLength(1)
+    expect(pending()[0]!.getAttribute("aria-label")).toBe("build is running a subagent")
+    expect(pending()[0]!.querySelector(".lucide-network")).not.toBeNull()
+    expect(pending()[0]!.querySelector(".lucide-wrench, .lucide-brain")).toBeNull()
+    const finished = { ...task, info: { ...task.info, time: { completed: 1 } } }
+    expect(activityPresentation([finished], "busy", false, false).pendingPhase).toBe("thinking")
   })
 
   it("reuses the trailing empty assistant after tools and retains history after invalid refreshes", async () => {
