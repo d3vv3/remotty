@@ -4,7 +4,7 @@ export function PublicFooter() {
   return (
     <footer className="public-footer">
       <div className="public-footer__inner">
-        <PublicBrand />
+        <div><PublicBrand /><p className="public-footer__note">OpenCode, wherever you are.</p></div>
         <nav aria-label="Footer navigation">
           <a href="/install/">Install</a>
           <a href="/pair">Pair</a>

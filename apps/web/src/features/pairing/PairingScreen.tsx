@@ -26,9 +26,9 @@ export function PairingScreen({ onConnect, error }: { onConnect: (bundle: Pairin
       <PublicHeader active="pair" />
       <section className="pairing-layout">
         <div className="pairing-intro">
-          <p className="public-kicker">Encrypted enrollment / 10 minute invite</p>
-          <h1>Pair this <em>browser.</em></h1>
-          <p>Paste the invite token printed by the local CLI, or scan its QR code.</p>
+          <p className="public-kicker">Bring your session with you</p>
+          <h1>Make the <em>connection.</em></h1>
+          <p>Paste the invite from your computer, or scan its QR code. Your encrypted invite is valid for ten minutes.</p>
           <form onSubmit={submit} className="pairing-form">
             <Field id="pairing-code" label={<><KeyRound aria-hidden="true" /> Encrypted invite</>} error={pairingError ?? error}>
               {(controlProps) => <div className="pairing-form__controls">
@@ -38,6 +38,7 @@ export function PairingScreen({ onConnect, error }: { onConnect: (bundle: Pairin
               </div>}
             </Field>
           </form>
+          <p className="pairing-help">Your keys stay on your devices. <a href="/privacy">How pairing stays private</a></p>
         </div>
         <aside className="pairing-runbook" aria-labelledby="runbook-title">
           <h2 id="runbook-title"><Terminal aria-hidden="true" /> Install and pair</h2>

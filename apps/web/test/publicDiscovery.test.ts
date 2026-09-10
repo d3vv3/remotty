@@ -97,7 +97,8 @@ describe("public discovery artifacts", () => {
     ])
 
     for (const source of [env, compose, dockerfile]) expect(source).not.toContain("VITE_REMOTTY_URL")
-    expect(landing).toContain('href="/install/"')
+    expect(landing).toContain('href="#get-started"')
+    expect(landing).toContain('id="get-started"')
     expect(pairing).toContain(canonicalPair)
   })
 })

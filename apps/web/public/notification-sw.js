@@ -177,8 +177,8 @@ const handlePush = async (frame) => {
     requireInteraction: payload.requireInteraction === true,
     actions,
     data: notificationData(payload.data, identity.key),
-    icon: "/icon-192.png",
-    badge: "/notification-badge.png",
+    icon: "/notification-icon-v2.png",
+    badge: "/notification-badge-v2.png",
   })
 }
 

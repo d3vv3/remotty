@@ -1,6 +1,7 @@
 import { Github, LockKeyhole, Terminal } from "lucide-react"
 import { ThemeControl } from "../ui/ThemeControl"
 import { PublicBrand } from "./PublicBrand"
+import { PublicAction } from "./PublicAction"
 
 type PublicHeaderProps = {
   active?: "install" | "pair" | "privacy"
@@ -16,7 +17,7 @@ export function PublicHeader({ active }: PublicHeaderProps) {
           <a aria-label="Privacy" aria-current={active === "privacy" ? "page" : undefined} href="/privacy"><LockKeyhole aria-hidden="true" /> <span>Privacy</span></a>
           <a aria-label="View remotty source on GitHub" className="public-header__source" href="https://github.com/d3vv3/remotty" target="_blank" rel="noreferrer"><Github aria-hidden="true" /> <span>Source</span></a>
           <ThemeControl />
-          <a className="public-action public-action--compact" aria-current={active === "pair" ? "page" : undefined} href="/pair">Pair device</a>
+           <PublicAction compact aria-current={active === "pair" ? "page" : undefined} href="/pair">Pair device</PublicAction>
         </div>
       </nav>
     </header>

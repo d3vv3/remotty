@@ -8,7 +8,7 @@ import {
 import { webcrypto } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { runInNewContext } from "node:vm"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 const source = readFileSync(new URL("../public/notification-sw.js", import.meta.url), "utf8")
 
@@ -39,6 +39,22 @@ const workerCrypto = () => {
 }
 
 describe("notification service worker security boundary", () => {
+  it("passes versioned local branding to the notification API after opening a payload", async () => {
+    const showNotification = vi.fn()
+    // Isolate rendering from IndexedDB and crypto, which have separate coverage below.
+    const renderingSource = source.replace(/const (currentIdentity|verifyAndOpen|rememberMessage) =/g, "const unused_$1 =")
+    const context = {
+      TextEncoder, TextDecoder,
+      self: { addEventListener: vi.fn(), registration: { showNotification } },
+      currentIdentity: async () => ({ enrolled: true, key: "device" }),
+      rememberMessage: async () => true,
+      verifyAndOpen: async () => ({ type: "notification.show", title: "Ready", body: "Finished", tag: "session", actions: [], data: { workspaceRelayId: "relay" }, icon: "/old-icon.png", image: "/old-image.png" }),
+    }
+    await runInNewContext(`${renderingSource}\nhandlePush({ sender: "relay", messageId: "message", issuedAt: 1 })`, context)
+    expect(showNotification).toHaveBeenCalledWith("Ready", expect.objectContaining({ icon: "/notification-icon-v2.png", badge: "/notification-badge-v2.png" }))
+    expect(showNotification.mock.calls[0][1]).not.toHaveProperty("image")
+  })
+
   it("posts only an opaque frame for permission actions", () => {
     expect(source).toContain('const DB_VERSION = 2')
     expect(source).toContain('database.createObjectStore("cache", { keyPath: "key" })')
@@ -49,8 +65,8 @@ describe("notification service worker security boundary", () => {
     expect(source).toContain("event.preventDefault?.()")
     expect(source).toContain("event.stopImmediatePropagation?.()")
     expect(source).toContain('typeof data.targetSessionId === "string" ? data.targetSessionId : data.sessionId')
-    expect(source).toContain('icon: "/icon-192.png"')
-    expect(source).toContain('badge: "/notification-badge.png"')
+    expect(source).toContain('icon: "/notification-icon-v2.png"')
+    expect(source).toContain('badge: "/notification-badge-v2.png"')
   })
 
   it("opens the source session for notification body clicks", () => {

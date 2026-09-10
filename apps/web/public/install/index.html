@@ -15,23 +15,32 @@
     <script src="/install/theme-control.js" defer></script>
     <title>Install remotty</title>
   </head>
-  <body>
-    <header class="site-header">
-      <a class="brand" href="/">remotty</a>
-      <nav aria-label="Primary"><a href="/pair">Pair</a><a href="/privacy">Privacy</a><a href="https://github.com/d3vv3/remotty">GitHub</a><button class="theme-toggle" type="button" aria-label="Use light theme" title="Use light theme" aria-pressed="false"><span aria-hidden="true"></span></button></nav>
+  <body class="install-page">
+    <header class="public-header">
+      <nav class="public-header__inner" aria-label="Primary navigation">
+        <a class="public-brand" href="/" aria-label="remotty home"><span class="public-brand__mark"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6M14 4l-4 16" /></svg></span>remotty</a>
+        <div class="public-header__links">
+          <a href="/install/" aria-label="Install remotty" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m4 5 6 6-6 6m8 2h8" /></svg><span>Install</span></a>
+          <a href="/privacy" aria-label="Privacy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg><span>Privacy</span></a>
+          <a class="public-header__source" href="https://github.com/d3vv3/remotty">Source</a>
+          <button class="theme-toggle" type="button" aria-label="Use light theme" title="Use light theme" aria-pressed="false"><span aria-hidden="true"></span></button>
+          <a class="public-action public-action--compact" href="/pair">Pair device</a>
+        </div>
+      </nav>
     </header>
     <main>
       <section class="intro">
-        <p class="eyebrow">Field guide / OpenCode remote control</p>
-        <h1>Install and pair.</h1>
+        <p class="eyebrow">A few minutes at your computer</p>
+        <h1>Take your sessions<br />with you.</h1>
         <p>Connect an installable PWA to a local OpenCode session. Pairing is local, encrypted, and does not require an account.</p>
+        <a class="public-action" href="#hosted-title">Install and pair &rarr;</a>
       </section>
       <section class="requirements" aria-labelledby="requirements-title">
-        <p class="section-number">00 / Before you begin</p><h2 id="requirements-title">Requirements</h2>
+        <p class="section-number">Before you begin</p><h2 id="requirements-title">What you'll need</h2>
         <ul><li>OpenCode installed on the computer running the session.</li><li>Node.js 22 or newer for the one-off <code>npx</code> command.</li><li>A browser on the device to pair. HTTPS is required outside localhost.</li></ul>
       </section>
       <section class="steps" aria-labelledby="hosted-title">
-        <p class="eyebrow">01 / Hosted service</p>
+        <p class="eyebrow">Hosted service</p>
         <h2 id="hosted-title">Pair a device</h2>
         <ol>
           <li><strong>Install the OpenCode plugin.</strong><pre tabindex="0" aria-label="OpenCode plugin install command"><code>opencode plugin opencode-remotty --global --force</code></pre></li>
@@ -42,14 +51,14 @@
         </ol>
       </section>
       <section class="steps" aria-labelledby="custom-title">
-        <p class="eyebrow">02 / Custom broker or PWA</p>
+        <p class="eyebrow">Custom broker or PWA</p>
         <h2 id="custom-title">Set both endpoints explicitly</h2>
         <p>Use the CLI's supported <code>--broker</code> and <code>--app</code> options when the broker or browser app is not hosted by remotty.</p>
         <pre tabindex="0" aria-label="Custom broker pairing command"><code>npx --yes --package opencode-remotty@latest remotty pair --broker wss://broker.example/ws --app https://app.example</code></pre>
         <p>Use <code>ws://</code> and <code>http://</code> only for loopback local development.</p>
       </section>
       <section class="commands" aria-labelledby="commands-title">
-        <p class="section-number">03 / Reference</p><h2 id="commands-title">Commands</h2>
+        <p class="section-number">Keep this handy</p><h2 id="commands-title">Commands</h2>
         <pre tabindex="0" aria-label="remotty command reference"><code>npx --yes --package opencode-remotty@latest remotty pair
 npx --yes --package opencode-remotty@latest remotty invite
 npx --yes --package opencode-remotty@latest remotty devices
@@ -60,11 +69,11 @@ npx --yes --package opencode-remotty@latest remotty status</code></pre>
         <p>For an upgrade, reinstall the plugin with <code>opencode plugin opencode-remotty --global --force</code>, quit OpenCode, then run <code>opencode --continue</code>.</p>
       </section>
       <section class="details" aria-labelledby="troubleshooting-title">
-        <p class="section-number">04 / Operations</p><h2 id="troubleshooting-title">Configuration and troubleshooting</h2>
+        <p class="section-number">When you need a hand</p><h2 id="troubleshooting-title">Configuration and troubleshooting</h2>
         <p>The CLI stores relay authority keys, device records, invitation hashes, and revocation state in <code>~/.config/remotty/config.json</code>, or <code>$XDG_CONFIG_HOME/remotty/config.json</code> when <code>XDG_CONFIG_HOME</code> is set. It creates the file with mode <code>0600</code>.</p>
         <ul><li>Invite expired: run <code>npx --yes --package opencode-remotty@latest remotty invite</code> and pair again.</li><li>Wrong hosted endpoint: create a new invite with the correct <code>--broker</code> and <code>--app</code> values.</li><li>Plugin does not appear: rerun the OpenCode plugin install command, quit OpenCode, then run <code>opencode --continue</code>.</li><li>Device access should end: use <code>npx --yes --package opencode-remotty@latest remotty devices</code> to find its ID, then <code>npx --yes --package opencode-remotty@latest remotty revoke &lt;device-id&gt;</code>.</li></ul>
       </section>
     </main>
-    <footer><a href="/pair">Pair</a><a href="/privacy">Privacy</a><a href="https://github.com/d3vv3/remotty">GitHub</a><a href="https://www.npmjs.com/package/opencode-remotty">npm</a><a href="/llms.txt">llms.txt</a></footer>
+    <footer class="public-footer"><div class="public-footer__inner"><div><a class="public-brand" href="/" aria-label="remotty home"><span class="public-brand__mark"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6M14 4l-4 16" /></svg></span>remotty</a><p class="public-footer__note">OpenCode, wherever you are.</p></div><nav aria-label="Footer navigation"><a href="/pair">Pair</a><a href="/privacy">Privacy</a><a href="https://github.com/d3vv3/remotty">GitHub</a><a href="https://www.npmjs.com/package/opencode-remotty">npm</a><a href="/llms.txt">llms.txt</a><a href="https://github.com/d3vv3/remotty/blob/main/LICENSE">AGPL-3.0</a></nav></div></footer>
   </body>
 </html>

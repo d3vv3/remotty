@@ -40,7 +40,7 @@ describe("public page redesign", () => {
     expect(appCss).toContain("overflow-y: auto")
     expect(appCss).toContain(".public-page .public-action")
     expect(appCss).toContain(".numbered-workflow > li > div { min-width: 0; }")
-    expect(staticCss).toContain("section > *, ol, ul, li { min-width: 0; }")
+    expect(staticCss).toContain(".install-page section > *, .install-page :where(ol, ul, li) { min-width: 0; }")
     for (const source of [landing, pairing]) expect(source).toContain("tabIndex={0}")
     expect(install).toContain('tabindex="0"')
     expect(install).toContain('aria-label="remotty command reference"')

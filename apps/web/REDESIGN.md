@@ -9,6 +9,8 @@ Barlow and IBM Plex Mono (code and paths) are self-hosted with OFL licenses.
 
 The first three pass sections below are historical. The fourth pass describes the
 current consumer-app refinement and supersedes the platform-native direction.
+The final public refresh section describes the current landing, privacy, pairing,
+and install surfaces; their earlier screenshots are historical.
 
 ## Design ownership
 
@@ -324,3 +326,56 @@ The original app server at **127.0.0.1:5173** returned HTTP **200** afterward.
 Browser evidence uses mocked relay boundaries. Real pairing, camera hardware, push,
 installed-PWA behavior, physical phone keyboards, Firefox, and WebKit were not
 exercised in this pass.
+
+## Public refresh: your agents, within reach
+
+The public pages now extend the consumer app's Barlow typography, amber pill
+actions, floating rounded navigation, message-shaped warm callouts, and quiet
+charcoal/mineral surfaces. Privacy information uses the shared teal tokens.
+`PublicHeader`, `PublicFooter`, `PublicBrand`, and the new `PublicAction` own React
+public chrome. `public/public-pages.css` owns its styling and the static install
+guide; `src/public.css` imports it and owns routed public layouts. The existing
+central tokens, first-paint theme script, theme persistence, and working app CSS
+are unchanged. No dependencies or release versions changed.
+
+The landing leads with "Your agents. Within reach.", install/pair actions, and a
+real session image. Desktop displays it at 340px wide; mobile places the actions
+first and limits the image to 280px. The old fabricated `PhonePreview` is removed.
+The user-authorized `Screenshot_20260910-142159.png` was cropped from 1080*2400 to
+1080*2214 at (0, 120), removing only OS status/gesture regions. Conversation pixels
+were not replaced. Metadata-stripped WebP assets are 360*738 (34,306 bytes) and
+720*1476 (79,196 bytes), with responsive sources, explicit dimensions and descriptive
+alt text. The original stays outside the repository.
+
+Pairing retains its Field validation, paste flow, autofocus, scanner dialog focus,
+BarcodeDetector/ZXing fallback, camera errors and cleanup. The compact scanner
+sheet inherits the public surfaces. Privacy retains every data-handling disclosure
+and security boundary. The static guide keeps every command, endpoint option,
+restart instruction, warning, reference link and heading anchor. Theme JavaScript,
+crawler artifacts, application routing and production routing are unchanged.
+
+Validation used Node 24.15.0 and pnpm 11.6.0:
+
+- Web typecheck and build passed; the existing >500kB bundle advisory remains.
+- Full web suite: 49 files, 344 tests passed. New rendered-content tests cover the
+  image and optimized files, navigation, privacy disclosures, complete command
+  reference, and invalid pasted-invite field association. Focused public tests
+  passed again after the final static style adjustments. `git diff --check` passed.
+- Actual production-build routes `/`, `/privacy`, `/pair`, `/install/` were loaded
+  at 320, 390 and 1440px in both themes in Chromium and Firefox: 24 cases each.
+  Screenshots were opened for visual review. Chromium additionally checked CTA
+  contrast (at least 4.5:1), feature-anchor navigation, command keyboard scrolling,
+  footer reachability, theme controls, and camera-error/Escape/paste fallback;
+  it reported no page errors. Both browsers passed horizontal-overflow checks.
+- Evidence and rerunnable scripts are under `/tmp/opencode/public-consumer-*`:
+  `public-consumer-results.json`, `public-consumer-firefox-results.json`, and PNGs
+  for each route/theme/width, plus feature and scanner views.
+- The existing loopback server on 5173 remains available and real public routes
+  were checked there. Vite's `/install/` falls through to the SPA pairing screen;
+  use `/install/index.html` in development. The production preview served the
+  actual static guide at `/install/`. Temporary production-preview and Firefox
+  processes were stopped after verification.
+
+No real pairing, invites, device changes, camera hardware, push delivery, PWA
+installation, or physical phone keyboard was exercised. No commit or deployment
+was made. `.serena/` and unrelated workspace content were preserved.

@@ -5,12 +5,25 @@ import { VitePWA } from "vite-plugin-pwa"
 
 export default defineConfig({
   plugins: [
+    {
+      name: "static-install-guide",
+      configureServer(server) {
+        // Vite's public middleware serves files, not directory indexes.
+        server.middlewares.use((req, _res, next) => {
+          if (req.url && /^\/install\/?(?:\?|$)/.test(req.url)) {
+            req.url = req.url.replace(/^\/install\/?/, "/install/index.html")
+          }
+          next()
+        })
+      },
+    },
     tailwindcss(),
     react(),
     VitePWA({
       registerType: "prompt",
       devOptions: { enabled: true },
       workbox: {
+        globPatterns: ["**/*.{js,css,html,ico,png,svg,webp,woff2}"],
         importScripts: ["/notification-sw.js"],
         navigateFallbackAllowlist: [/^\/(?:privacy|pair|app)?$/],
       },

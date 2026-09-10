@@ -1,62 +1,74 @@
-* { box-sizing: border-box; }
-html { color-scheme: dark; background: var(--background); }
-body { min-width: 320px; margin: 0; color: var(--text); background: var(--background); font-family: "Barlow", ui-sans-serif, sans-serif; line-height: 1.6; }
-a { color: var(--info); text-decoration-thickness: 1px; text-underline-offset: 3px; }
-a:hover { color: var(--accent); }
-:where(a, button):focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
-.site-header, main, footer { width: min(100% - 40px, 1080px); margin: auto; }
-.site-header { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 24px; border-bottom: 1px solid var(--border); }
-.brand, h1, h2, .eyebrow, .section-number, code, pre { font-family: "IBM Plex Mono", ui-monospace, monospace; }
-.brand { color: var(--text); font-size: 15px; font-weight: 800; text-decoration: none; }
-nav, footer { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; font: 10px "IBM Plex Mono", ui-monospace, monospace; text-transform: uppercase; }
-nav a { color: var(--text-muted); text-decoration: none; }
-.theme-toggle { width: 38px; height: 38px; display: grid; place-items: center; padding: 0; color: var(--text); border: 1px solid var(--border); border-radius: 3px; background: var(--surface); cursor: pointer; }
-.theme-toggle span { width: 14px; height: 14px; display: block; border: 2px solid currentColor; border-radius: 50%; }
+/* Shared public chrome. Both React pages and the static guide use these classes. */
+:where(.public-page, .install-page) { color: var(--text); background: var(--background); font: 16px/1.6 var(--font-ui); }
+:where(.public-page, .install-page) ::selection { color: var(--on-selection); background: var(--selection); }
+:where(.public-page, .install-page), :where(.public-page, .install-page) :where(pre, code) { scrollbar-color: var(--border-strong) var(--surface); }
+:where(.public-page, .install-page) :where(a, button, input, code, pre):focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.public-header { position: sticky; top: 12px; z-index: 30; width: min(100% - 32px, 1120px); margin: 16px auto 0; border: 1px solid var(--border); border-radius: var(--dock-radius); background: var(--surface-raised); box-shadow: var(--elevation-floating); }
+.public-header__inner { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 64px; padding: 8px 12px 8px 16px; }
+.public-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text); font: 700 24px var(--font-ui); text-decoration: none; }
+.public-brand__mark { width: 34px; height: 34px; display: grid; place-items: center; color: var(--on-brand); background: var(--brand); border-radius: 10px 10px 10px 3px; }
+.public-header__links { display: flex; align-items: center; gap: 6px; }
+.public-header__links > a:not(.public-action) { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-width: 44px; min-height: 44px; padding: 0 10px; color: var(--text-muted); border-radius: var(--dock-radius); font: 600 15px var(--font-ui); text-decoration: none; }
+.public-header__links > a:not(.public-action):hover, .public-header__links > a[aria-current="page"] { color: var(--accent); background: var(--accent-surface); }
+.public-header__links svg { width: 18px; height: 18px; }
+.public-action { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px; padding: 10px 22px; border: 1px solid var(--brand); border-radius: var(--dock-radius); color: var(--on-brand); background: var(--brand); font: 600 16px/1.4 var(--font-ui); text-decoration: none; }
+.public-action:hover { color: var(--on-brand); background: var(--brand-hover); border-color: var(--brand-hover); }
+.public-action svg { width: 18px; height: 18px; }
+.public-action--secondary { color: var(--text); border-color: var(--border-strong); background: var(--surface); }
+.public-action--secondary:hover { color: var(--text); border-color: var(--border-strong); background: var(--surface-hover); }
+.public-action--compact { min-height: 44px; padding: 8px 16px; }
+.public-header :where(.theme-toggle, .theme-control) { width: 44px; height: 44px; min-height: 44px; display: grid; place-items: center; padding: 0; color: var(--text-muted); border: 0; border-radius: var(--dock-radius); background: var(--surface); cursor: pointer; }
+.theme-toggle span { width: 16px; height: 16px; border: 2px solid currentColor; border-radius: 50%; }
 .theme-toggle[aria-pressed="true"] span { background: currentColor; }
-main { padding: 76px 0 56px; }
-section { min-width: 0; display: grid; grid-template-columns: minmax(180px, .55fr) minmax(0, 1.45fr); gap: 20px 52px; padding: 46px 0; border-top: 1px solid var(--border); }
-section > *, ol, ul, li { min-width: 0; }
-.intro { display: block; max-width: 940px; padding: 18px 0 92px; border: 0; }
-.eyebrow, .section-number { grid-column: 1; margin: 0; color: var(--accent); font-size: 10px; font-weight: 700; text-transform: uppercase; }
-h1, h2 { margin: 0; letter-spacing: 0; line-height: .95; }
-h1 { max-width: 900px; margin-top: 24px; color: var(--text); font-family: "Barlow", ui-sans-serif, sans-serif; font-size: clamp(56px, 10vw, 116px); font-weight: 800; text-transform: uppercase; }
-h2 { grid-column: 1; font-family: "Barlow", ui-sans-serif, sans-serif; font-size: clamp(26px, 4vw, 42px); }
-.intro > p:last-child { max-width: 700px; margin: 32px 0 0; color: var(--text-muted); font-size: 18px; }
-section > :where(ol, ul, pre, p):not(.eyebrow):not(.section-number) { grid-column: 2; }
-.steps .eyebrow { grid-column: 1; }
-.steps h2 { grid-column: 2; }
-ol, ul { width: 100%; max-width: 780px; margin: 0; padding-left: 24px; }
-li { margin: 0 0 18px; }
-ol li::marker { color: var(--accent); font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 700; }
-pre { width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; margin: 12px 0 18px; padding: 16px; color: var(--text); border-left: 3px solid var(--accent); background: var(--surface-raised); font-size: 12px; white-space: pre; }
-code { font-size: .9em; }
-li > code, p > code { padding: 2px 4px; color: var(--text); background: var(--surface-raised); }
-p > code, li > code { overflow-wrap: anywhere; word-break: break-word; }
-.warning { padding: 13px 16px; color: var(--danger); border-left: 3px solid var(--danger); background: var(--surface); }
-.details p, .commands p, .steps > p:not(.eyebrow) { margin-top: 0; color: var(--text-muted); }
-footer { padding: 34px 0 46px; border-top: 1px solid var(--border); color: var(--text-muted); }
-footer a { color: var(--text-muted); text-decoration: none; }
-@media (max-width: 680px) {
-  .site-header, main, footer { width: min(100% - 28px, 1080px); }
-  .site-header { align-items: flex-start; flex-direction: column; gap: 12px; padding: 14px 0; }
-  main { padding-top: 50px; }
-  section { grid-template-columns: 1fr; padding: 38px 0; }
-  section > :where(ol, ul, pre, p):not(.eyebrow):not(.section-number), .steps h2 { grid-column: 1; }
-  .intro { padding-bottom: 66px; }
-  h1 { font-size: clamp(40px, 12vw, 64px); }
-}
+.public-footer { width: min(100% - 48px, 1080px); margin: auto; padding: 32px 0; border-top: 1px solid var(--border); }
+.public-footer__inner { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.public-footer__note { margin: 10px 0 0; color: var(--text-muted); font-size: 14px; }
+.public-footer nav { display: flex; flex-wrap: wrap; gap: 4px 20px; }
+.public-footer nav a { display: inline-flex; align-items: center; min-height: 44px; color: var(--text-muted); font: 15px var(--font-ui); text-decoration: none; }
+.public-footer nav a:hover { color: var(--accent); }
 
-/* Native Remotty entry point; palette and sizing come from the shared contract. */
-.brand, h1, h2, .eyebrow, .section-number { font-family: var(--font-ui); }
-.brand { font-size: 22px; }
-nav, footer { font: 14px var(--font-ui); text-transform: none; }
-.theme-toggle { width: 44px; height: 44px; border-radius: var(--radius-md); }
-h1 { font-size: clamp(40px, 7vw, 80px); line-height: 1.05; letter-spacing: -1px; text-transform: none; }
-h2 { line-height: 1.15; }
-.eyebrow, .section-number { font-size: 14px; text-transform: none; }
-pre, .warning { border-radius: var(--radius-sm); }
-@media (max-width: 680px) {
-  main { padding-top: 28px; }
-  .intro { padding-bottom: 40px; }
-  nav { gap: 16px; }
+/* Static install guide: native document scrolling, the same tokens and chrome. */
+.install-page { min-width: 320px; margin: 0; }
+.install-page *, .install-page *::before, .install-page *::after { box-sizing: border-box; }
+.install-page a:not(.public-action):not(.public-brand) { text-underline-offset: 4px; }
+.install-page main { width: min(100% - 48px, 1080px); margin: auto; padding: 48px 0; }
+.install-page section { min-width: 0; display: grid; grid-template-columns: minmax(0, .7fr) minmax(0, 1.3fr); gap: 18px 48px; padding: 40px 0; border-top: 1px solid var(--border); scroll-margin-top: 110px; }
+.install-page section > *, .install-page :where(ol, ul, li) { min-width: 0; }
+.install-page .intro { display: block; padding: 36px; margin-bottom: 48px; border: 0; border-radius: var(--dock-radius) var(--dock-radius) var(--radius-xs) var(--dock-radius); color: var(--message-own-text); background: var(--message-own-surface); }
+.install-page :where(.eyebrow, .section-number) { grid-column: 1; margin: 0; color: var(--accent); font-weight: 600; }
+.install-page .intro .eyebrow { color: inherit; }
+.install-page :where(h1, h2) { margin: 0; font-family: var(--font-display); font-weight: 700; line-height: 1.1; letter-spacing: -.025em; }
+.install-page h1 { max-width: 700px; margin-top: 16px; font-size: clamp(42px, 5vw, 64px); }
+.install-page h2 { grid-column: 1; font-size: clamp(28px, 3vw, 38px); overflow-wrap: anywhere; }
+.install-page .intro > p:not(.eyebrow) { max-width: 650px; margin: 20px 0 24px; font-size: 20px; }
+.install-page .intro .public-action { color: var(--text); border-color: var(--border); background: var(--surface); }
+.install-page section > :where(ol, ul, pre, p):not(.eyebrow):not(.section-number) { grid-column: 2; }
+.install-page .steps h2 { grid-column: 2; scroll-margin-top: 110px; }
+.install-page :where(ol, ul) { width: 100%; margin: 0; padding-left: 24px; }
+.install-page li { margin-bottom: 20px; }
+.install-page ol li::marker { color: var(--accent); font-weight: 600; }
+.install-page pre { width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; margin: 12px 0 18px; padding: 16px; color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); font: 13px/1.6 var(--font-code); white-space: pre; }
+.install-page code { font-family: var(--font-code); font-size: .9em; }
+.install-page pre code { font-size: inherit; }
+.install-page :where(li, p) > code { padding: 2px 4px; color: var(--text); background: var(--surface-selected); border-radius: var(--radius-xs); overflow-wrap: anywhere; }
+.install-page .warning { padding: 16px; color: var(--warning); border-radius: var(--radius-lg); background: var(--warning-surface); }
+.install-page :where(.details, .commands, .steps) > p:not(.eyebrow) { margin: 0; color: var(--text-muted); }
+.install-page main a:not(.public-action) { color: var(--info); }
+@media (max-width: 760px) {
+  .public-header .public-header__links > .public-header__source { display: none; }
+  .public-footer__inner { align-items: flex-start; flex-direction: column; }
+}
+@media (max-width: 640px) {
+  .public-header { top: 8px; width: calc(100% - 16px); margin-top: 8px; }
+  .public-header__inner { min-height: 60px; gap: 4px; padding: 6px 8px 6px 12px; }
+  .public-brand { gap: 8px; font-size: 22px; }
+  .public-header__links { gap: 0; }
+  .public-header__links > a:not(.public-action) { padding: 0; }
+  .public-header__links > a:not(.public-action) span, .public-header .public-action { display: none; }
+  .public-footer { width: calc(100% - 32px); }
+  .install-page main { width: calc(100% - 32px); padding-top: 28px; }
+  .install-page section { grid-template-columns: 1fr; gap: 16px; padding: 32px 0; }
+  .install-page section > :where(ol, ul, pre, p):not(.eyebrow):not(.section-number), .install-page .steps h2 { grid-column: 1; }
+  .install-page .intro { padding: 28px 24px; margin-bottom: 24px; }
+  .install-page .intro > p:not(.eyebrow) { font-size: 18px; }
 }
