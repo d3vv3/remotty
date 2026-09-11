@@ -2,7 +2,7 @@
 import { act } from "react"
 import { createRoot } from "react-dom/client"
 import { expect, it, vi } from "vitest"
-import { useHorizontalOverflow } from "../src/features/session/hooks/useHorizontalOverflow"
+import { useHorizontalOverflow } from "../src/hooks/useHorizontalOverflow"
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 

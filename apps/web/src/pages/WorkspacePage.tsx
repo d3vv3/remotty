@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Bell, BellOff, ChevronDown, Code2, Folder, Github, LoaderCircle, LogOut, Plus, RefreshCw, Settings2, Wifi, WifiOff } from "lucide-react"
+import { Bell, BellOff, Check, Code2, Folder, Github, LoaderCircle, LogOut, Plus, RefreshCw, Settings2, Wifi, WifiOff } from "lucide-react"
 import type { PairingBundle } from "@remotty/protocol"
 import { Button, EmptyState, ErrorToast, IconButton, ThemeControl } from "../components/ui"
 import { clearNotificationPromptSeen, markNotificationPromptSeen, notificationPromptWasSeen, shouldOfferPushNotifications } from "../features/notifications"
 import { PairingScreen, routeForEnrollment } from "../features/pairing"
-import { effectiveConnectionPresentation, stableWorkspaceKey, useRelay, workspaceSessionKey, type RoutedSession } from "../features/relay"
+import { effectiveConnectionPresentation, stableWorkspaceKey, useRelay, workspaceSessionKey } from "../features/relay"
 import { SessionDetail } from "../features/session"
-import { ConnectionDetails, folderName, isSessionVisibleInList, NewSessionDialog, NotificationPrompt, SESSION_LIST_MAX_AGE_MS, SessionRow, sessionKey } from "../features/workspace"
+import { ConnectionDetails, isSessionVisibleInList, NewSessionDialog, NotificationPrompt, SESSION_LIST_MAX_AGE_MS, SessionRow, sessionKey } from "../features/workspace"
+import { useSessionFilters } from "../features/workspace/hooks/useSessionFilters"
+import { useHorizontalOverflow } from "../hooks/useHorizontalOverflow"
 import { useVisualViewport } from "../hooks/useVisualViewport"
 import { useDismissibleDetails } from "../hooks/useDismissibleDetails"
 import { PwaInstallPrompt } from "../features/pwa/PwaInstallPrompt"
@@ -26,7 +28,6 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
   const [selectedKey, setSelectedKey] = useState<string | undefined>(
     () => new URLSearchParams(location.search).get("session") ?? undefined,
   )
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
   useNotificationNavigation(relayState.enrolled, setSelectedKey)
   const [notificationPromptOpen, setNotificationPromptOpen] = useState(false)
   const [clock, setClock] = useState(() => Date.now())
@@ -42,24 +43,15 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
   const connectedRelayIds = relayState.relays.filter((relay) => relayState.isRelayConnected(relay.id)).map((relay) => relay.id)
   const connectionPresentation = effectiveConnectionPresentation(relayState.connection, connectedRelayIds, relayState.relays.length, relayState.relayHealth)
   // Connection membership is read through a stable callback backed by a ref.
-  const visibleSessions = relayState.sessions.filter(
+  const eligibleSessions = relayState.sessions.filter(
     (session) => relayState.isRelayConnected(session.workspaceRelayId) && isSessionVisibleInList(session, clock),
   )
-  const sessionGroups = useMemo(() => {
-    const groups = new Map<string, RoutedSession[]>()
-    for (const session of visibleSessions) {
-      const group = groups.get(session.directory)
-      if (group) group.push(session)
-      else groups.set(session.directory, [session])
-    }
-    return [...groups.entries()].sort(
-      ([, left], [, right]) => Math.max(...right.map((session) => session.updatedAt)) - Math.max(...left.map((session) => session.updatedAt)),
-    )
-  }, [visibleSessions])
   const attentionKeys = useMemo(() => new Set([
     ...relayState.permissions.map((item) => `${item.workspaceRelayId}:${item.sessionID}`),
     ...relayState.questions.map((item) => `${item.workspaceRelayId}:${item.sessionID}`),
   ]), [relayState.permissions, relayState.questions])
+  const { folders, filteredSessions: visibleSessions, toggleFolder, showAllFolders } = useSessionFilters(eligibleSessions, attentionKeys)
+  const { scrollRef: folderFiltersRef, hasOverflowRight: foldersOverflowRight } = useHorizontalOverflow(JSON.stringify(folders.map(folder => [folder.directory, folder.label])))
   const visibleAttentionCount = visibleSessions.filter((session) => attentionKeys.has(`${session.workspaceRelayId}:${session.id}`)).length
 
   useEffect(() => {
@@ -99,12 +91,6 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
     setSelectedKey(key)
     setNewSessionOpen(false)
   }, [relayState.relays, relayState.request])
-  const toggleGroup = (directory: string) => setCollapsedGroups((current) => {
-    const next = new Set(current)
-    if (next.has(directory)) next.delete(directory)
-    else next.add(directory)
-    return next
-  })
 
   useEffect(() => {
     const route = routeForEnrollment(relayState.enrolled)
@@ -162,28 +148,32 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
               />
             </div>
           </div>
+          {folders.length > 0 && <div className="folder-filters-row" data-overflow-right={foldersOverflowRight}>
+            <div ref={folderFiltersRef} className="folder-filters" role="group" aria-label="Filter by folder">
+            {folders.map(folder => <Button key={folder.directory} className="folder-filter" title={folder.directory}
+              aria-label={folder.directory} aria-pressed={folder.enabled} onClick={() => toggleFolder(folder.directory)}
+              startIcon={folder.enabled ? <Check size={14} /> : <Folder size={14} />}>
+              <span>{folder.label}</span>
+            </Button>)}
+            </div>
+          </div>}
           <div className="session-list">
             <PwaInstallPrompt eligible={relayState.enrolled === true && !selected && !notificationPromptOpen && !connectionDetailsOpen && !newSessionOpen} />
-            {sessionGroups.map(([directory, sessions]) => (
-              <section className="workspace-group" key={directory}>
-                <button className="workspace-heading" title={directory} aria-expanded={!collapsedGroups.has(directory)} onClick={() => toggleGroup(directory)}>
-                  <Folder size={18} />
-                  <span><strong>{folderName(directory)}</strong></span>
-                  <b>{sessions.length}</b><ChevronDown className={collapsedGroups.has(directory) ? "collapsed" : ""} size={16} />
-                </button>
-                {!collapsedGroups.has(directory) && sessions.map((session) => (
-                  <SessionRow
-                    key={sessionKey(session)}
-                    session={session}
-                    selected={selected !== undefined && sessionKey(session) === sessionKey(selected)}
-                    needsInput={attentionKeys.has(`${session.workspaceRelayId}:${session.id}`)}
-                    offline={!relayState.isRelayConnected(session.workspaceRelayId)}
-                    onSelect={() => { relayState.setError(undefined); setSelectedKey(sessionKey(session)) }}
-                  />
-                ))}
-              </section>
+            {visibleSessions.map((session) => (
+              <SessionRow
+                key={sessionKey(session)}
+                session={session}
+                selected={selected !== undefined && sessionKey(session) === sessionKey(selected)}
+                needsInput={attentionKeys.has(`${session.workspaceRelayId}:${session.id}`)}
+                offline={!relayState.isRelayConnected(session.workspaceRelayId)}
+                onSelect={() => { relayState.setError(undefined); setSelectedKey(sessionKey(session)) }}
+              />
             ))}
-            {visibleSessions.length === 0 && (
+            {visibleSessions.length === 0 && eligibleSessions.length > 0 && <EmptyState icon={<Folder size={22} />}>
+              <p>No folders selected.</p>
+              <Button onClick={showAllFolders}>Show all folders</Button>
+            </EmptyState>}
+            {eligibleSessions.length === 0 && (
               <EmptyState icon={relayState.serviceConnected && connectedRelayIds.length === 0
                 ? <WifiOff size={22} />
                 : <LoaderCircle size={22} className={relayState.serviceConnected ? "" : "spin"} />}>

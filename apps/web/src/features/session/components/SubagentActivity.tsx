@@ -7,7 +7,7 @@ import { activityPresentation } from "../model/activityPresentation"
 import type { SessionSubagent } from "../model/sessionTypes"
 import type { SessionMessage as Message } from "../model/sessionContent"
 import { ActivityMessages } from "./ActivityMessages"
-import { useHorizontalOverflow } from "../hooks/useHorizontalOverflow"
+import { useHorizontalOverflow } from "../../../hooks/useHorizontalOverflow"
 import { useActivityScroll } from "../hooks/useActivityScroll"
 import { useOverlayHeight } from "../hooks/useOverlayHeight"
 

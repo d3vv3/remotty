@@ -46,7 +46,6 @@ describe("Button", () => {
     expect(workspace).toContain('className="connection-button"')
     expect(workspace).toContain('className={`notification-button ${relayState.notificationsEnabled ? "enabled" : ""}`}')
     expect(pwaUpdatePrompt).toContain('className="pwa-update-affordance"')
-    expect(workspace).toContain('className="workspace-heading"')
     expect(tabs).toContain('role="tab"')
     expect(questionPanel).toContain('className="question-title"')
     expect(agentPicker).toContain('className="agent-picker"')

@@ -5,6 +5,17 @@ import { cacheNamespace } from "../src/features/relay/relayModel"
 const source = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8")
 
 describe("layout source contracts", () => {
+  it("contains the folder overflow overlay within its neutral row without masking pills or intercepting input", () => {
+    const css = source("../src/styles.css")
+    expect(css).toMatch(/\.folder-filters-row \{[^}]*position: relative;[^}]*background: var\(--surface\);/)
+    const overlay = css.match(/\.folder-filters-row\[data-overflow-right="true"\]::after \{([^}]*)\}/)?.[1]
+    expect(overlay).toContain("inset: 4px 0 12px auto;")
+    expect(overlay).toContain("linear-gradient(to right, transparent, var(--surface))")
+    expect(overlay).toContain("pointer-events: none;")
+    expect(overlay).not.toContain("mask")
+    expect(css).not.toMatch(/\.folder-filters[^{}]*(?:hover|focus)/)
+    expect(css).toMatch(/\.folder-filters \.folder-filter \{[^}]*min-height: 44px;/)
+  })
   it("keeps metadata on one line with shrinkable branch text and delivery at the right", () => {
     const css = source("../src/styles.css")
     expect(css).toMatch(/\.session-header-pill \{[^}]*grid-template-columns: auto minmax\(0, 1fr\);/)
@@ -81,7 +92,9 @@ describe("layout source contracts", () => {
     expect(sessionDetail).toContain("const visibleSubagentEntries = useMemo(() => visibleSubagents(subagents), [subagents])")
     expect(sessionDetail).toContain("Subagents <span>{visibleSubagentEntries.length}</span>")
     expect(sessionDetail).toContain("<SubagentActivity subagents={visibleSubagentEntries}")
-    expect(workspace).toContain("if (group) group.push(session)")
+    expect(workspace).toContain("visibleSessions.map((session)")
+    expect(workspace).not.toContain("collapsedGroups")
+    expect(workspace).toContain('aria-label="Filter by folder"')
     expect(sessionDetail).toContain("messageRefreshGenerationRef")
     expect(sessionDetail).toContain("todosRefreshGenerationRef")
     expect(sessionDetail).toContain("const selectTab")
