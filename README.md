@@ -89,6 +89,10 @@ VAPID_SUBJECT=mailto:admin@example.com
 
 Push and PWA installation require HTTPS outside localhost. The current broker keeps room metadata and Push subscriptions in memory. Use shared persistence before running multiple broker replicas.
 
+Notification body clicks probe same-origin app windows concurrently for up to 250 ms and prefer the most recently focused standalone window with an enrolled workspace receiver. That window is focused and receives a versioned service-worker message containing only the session key; React selects the session and replaces `/app?session=...` without reloading, preserving retained session drafts. Unknown sessions remain selected while waiting for a snapshot. Permission-action clicks keep their existing encrypted command path.
+
+When no installed workspace responds as ready, or focusing or messaging it fails, the worker calls `clients.openWindow` with the in-scope app URL. The browser and OS decide whether that opens the installed app or a browser window; installed-app launch cannot be guaranteed on every platform. Older or suspended clients may miss the probe deadline. Routing has no acknowledgement after the readiness probe, so a client that closes or stops processing messages immediately afterward can miss navigation. Automated tests use synthetic worker/window fixtures and mounted React components; they do not verify native phone installation or notification launch behavior.
+
 ## Data boundary
 
 The broker does not receive plaintext chat messages, diffs, commands, or notification content. It routes signed ciphertext and keeps WebSocket and Push routing state in memory.

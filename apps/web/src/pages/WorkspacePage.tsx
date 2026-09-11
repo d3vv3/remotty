@@ -10,6 +10,7 @@ import { ConnectionDetails, folderName, isSessionVisibleInList, NewSessionDialog
 import { useVisualViewport } from "../hooks/useVisualViewport"
 import { useDismissibleDetails } from "../hooks/useDismissibleDetails"
 import { PwaInstallPrompt } from "../features/pwa/PwaInstallPrompt"
+import { useNotificationNavigation } from "../features/notifications/hooks/useNotificationNavigation"
 
 export { SESSION_LIST_MAX_AGE_MS, isSessionVisibleInList }
 
@@ -26,6 +27,7 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
     () => new URLSearchParams(location.search).get("session") ?? undefined,
   )
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
+  useNotificationNavigation(relayState.enrolled, setSelectedKey)
   const [notificationPromptOpen, setNotificationPromptOpen] = useState(false)
   const [clock, setClock] = useState(() => Date.now())
   const selected = relayState.sessions.find((session) =>

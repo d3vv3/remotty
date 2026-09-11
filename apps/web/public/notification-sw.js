@@ -262,22 +262,75 @@ const sendPermissionAction = async (action, data) => {
 
 const applicationUrl = (data) => {
   const url = new URL("/app", self.location.origin)
-  if (typeof data?.sessionId === "string") {
-    const sessionKey = typeof data.workspaceId === "string" || typeof data.workspaceRelayId === "string"
-      ? `${data.workspaceId || data.workspaceRelayId}:${data.sessionId}`
+  const validIdentifier = (value) => typeof value === "string" && value.length > 0 && value.length <= 2048 && !/[\u0000-\u001f\u007f]/.test(value)
+  if (validIdentifier(data?.sessionId)) {
+    const workspace = validIdentifier(data.workspaceId) ? data.workspaceId
+      : validIdentifier(data.workspaceRelayId) ? data.workspaceRelayId : undefined
+    const sessionKey = workspace
+      ? `${workspace}:${data.sessionId}`
       : data.sessionId
     url.searchParams.set("session", sessionKey)
   }
   return url
 }
 
+// One deadline for all candidates; preserve matchAll's most-recently-focused order.
+const readyApplication = (windows) => new Promise((resolve) => {
+  const probes = []
+  let remaining = windows.length
+  let finished = false
+  const finish = () => {
+    if (finished) return
+    finished = true
+    clearTimeout(timer)
+    for (const probe of probes) {
+      probe.channel.port1.onmessage = null
+      probe.channel.port1.onmessageerror = null
+      probe.channel.port1.close()
+      probe.channel.port2.close()
+    }
+    resolve(probes.find((probe) => probe.ready)?.client)
+  }
+  const timer = setTimeout(finish, 250)
+  if (!remaining) return finish()
+  for (const client of windows) {
+    const channel = new MessageChannel()
+    const probe = { client, channel, ready: false, settled: false }
+    probes.push(probe)
+    const settle = (data) => {
+      if (finished || probe.settled) return
+      probe.settled = true
+      probe.ready = data?.type === "notification.navigation.ready" && data.version === 1 &&
+        data.standalone === true && data.ready === true
+      if (--remaining === 0) finish()
+    }
+    channel.port1.onmessage = (event) => settle(event.data)
+    channel.port1.onmessageerror = () => settle()
+    try {
+      client.postMessage({ type: "notification.navigation.probe", version: 1 }, [channel.port2])
+    } catch {
+      settle()
+    }
+  }
+})
+
 const openApplication = async (data) => {
   const url = applicationUrl(data)
-  const windows = await clients.matchAll({ type: "window", includeUncontrolled: true })
-  const client = windows[0]
-  if (client) {
-    await client.navigate(url.href)
-    return client.focus()
+  try {
+    const windows = (await clients.matchAll({ type: "window", includeUncontrolled: true })).filter((client) => {
+      try {
+        const candidate = new URL(client.url)
+        return candidate.origin === url.origin && ["/app", "/pair", "/"].includes(candidate.pathname)
+      } catch { return false }
+    })
+    const client = await readyApplication(windows)
+    if (client) {
+      await client.focus()
+      client.postMessage({ type: "notification.navigation.open", version: 1, sessionKey: url.searchParams.get("session") })
+      return
+    }
+  } catch {
+    // Closed clients, failed focus, and old workers fall back to native window selection.
   }
   return clients.openWindow(url.href)
 }

@@ -8,9 +8,102 @@ import {
 import { webcrypto } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { runInNewContext } from "node:vm"
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 const source = readFileSync(new URL("../public/notification-sw.js", import.meta.url), "utf8")
+
+describe("notification body click window selection", () => {
+  afterEach(() => vi.useRealTimers())
+  const setup = () => {
+    vi.useFakeTimers()
+    const ports: { close: ReturnType<typeof vi.fn> }[] = []
+    class Channel {
+      port1 = { onmessage: null as null | ((event: { data: unknown }) => void), onmessageerror: null as null | (() => void), close: vi.fn() }
+      port2 = { close: vi.fn(), postMessage: (data: unknown) => this.port1.onmessage?.({ data }) }
+      constructor() { ports.push(this.port1, this.port2) }
+    }
+    const candidate = (standalone: boolean | undefined, ready = true, url = "https://app.example/app") => ({
+      url, navigate: vi.fn(), focus: vi.fn().mockResolvedValue(undefined),
+      postMessage: vi.fn((data, transfer) => {
+        if (data.type.endsWith("probe") && standalone !== undefined) transfer[0].postMessage({ type: "notification.navigation.ready", version: 1, standalone, ready })
+      }),
+    })
+    const clients = { matchAll: vi.fn().mockResolvedValue([]), openWindow: vi.fn() }
+    const handlers: Record<string, (event: unknown) => void> = {}
+    runInNewContext(source, { TextEncoder, TextDecoder, URL, setTimeout, clearTimeout, MessageChannel: Channel, clients,
+      self: { location: { origin: "https://app.example" }, addEventListener: (name: string, handler: (event: unknown) => void) => { handlers[name] = handler } },
+    })
+    const click = (action = "", data: unknown = { workspaceId: "workspace", sessionId: "session" }) => {
+      let done: Promise<unknown> = Promise.resolve()
+      handlers.notificationclick({ action, notification: { data, close: vi.fn() }, waitUntil: (promise: Promise<unknown>) => { done = promise } })
+      return done
+    }
+    return { clients, candidate, ports, click }
+  }
+
+  it("chooses the first ready standalone in focus order, without navigating any window", async () => {
+    const { clients, candidate, ports, click } = setup()
+    const browser = candidate(false), installed = candidate(true), older = candidate(true)
+    clients.matchAll.mockResolvedValue([browser, installed, older])
+    await click()
+    expect(installed.focus).toHaveBeenCalledOnce()
+    expect(installed.postMessage).toHaveBeenLastCalledWith({ type: "notification.navigation.open", version: 1, sessionKey: "workspace:session" })
+    expect(installed.focus.mock.invocationCallOrder[0]).toBeLessThan(installed.postMessage.mock.invocationCallOrder[1])
+    for (const client of [browser, installed, older]) expect(client.navigate).not.toHaveBeenCalled()
+    expect(browser.focus).not.toHaveBeenCalled()
+    expect(older.focus).not.toHaveBeenCalled()
+    expect(clients.openWindow).not.toHaveBeenCalled()
+    expect(ports.every((port) => port.close.mock.calls.length === 1)).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it("uses one bounded deadline for unresponsive or closed ports and cleans up", async () => {
+    const { clients, candidate, ports, click } = setup()
+    clients.matchAll.mockResolvedValue([candidate(undefined), candidate(undefined)])
+    const done = click()
+    await vi.advanceTimersByTimeAsync(249)
+    expect(clients.openWindow).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    await done
+    expect(clients.openWindow).toHaveBeenCalledExactlyOnceWith("https://app.example/app?session=workspace%3Asession")
+    expect(ports.every((port) => port.close.mock.calls.length === 1)).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it("opens a native window when only browser, unenrolled, or foreign clients exist", async () => {
+    const { clients, candidate, click } = setup()
+    const browser = candidate(false), pending = candidate(true, false), foreign = candidate(true, true, "https://evil.example/app")
+    clients.matchAll.mockResolvedValue([browser, pending, foreign])
+    await click()
+    expect(clients.openWindow).toHaveBeenCalledOnce()
+    expect(browser.focus).not.toHaveBeenCalled()
+    expect(pending.focus).not.toHaveBeenCalled()
+    expect(foreign.postMessage).not.toHaveBeenCalled()
+  })
+
+  it.each(["focus", "probe", "route"])("falls back after a client %s failure", async (failure) => {
+    const { clients, candidate, click } = setup()
+    const installed = candidate(true)
+    if (failure === "focus") installed.focus.mockRejectedValue(new Error("closed"))
+    if (failure === "probe") installed.postMessage.mockImplementation(() => { throw new Error("closed") })
+    if (failure === "route") installed.postMessage.mockImplementation((data, transfer) => {
+      if (data.type.endsWith("open")) throw new Error("closed")
+      transfer[0].postMessage({ type: "notification.navigation.ready", version: 1, standalone: true, ready: true })
+    })
+    clients.matchAll.mockResolvedValue([installed])
+    await click()
+    expect(clients.openWindow).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it("does not open UI for action clicks", async () => {
+    const { clients, click } = setup()
+    await click("once") // Missing permission ID: action handler exits without a request.
+    await click("unknown")
+    expect(clients.matchAll).not.toHaveBeenCalled()
+    expect(clients.openWindow).not.toHaveBeenCalled()
+  })
+})
 
 const workerCrypto = () => {
   const context = {
