@@ -57,3 +57,18 @@ it.each(["available", "read blocked", "write blocked"])("shares and retains the 
     expect(container.querySelector("button")?.getAttribute("aria-pressed")).toBe("true")
   }
 })
+
+it.each(["false", "true", "invalid", "null"])("preserves the boolean encoding for %s without writing on mount", async stored => {
+  vi.resetModules()
+  localStorage.setItem("remotty.show-tool-calls", stored)
+  const set = vi.spyOn(Storage.prototype, "setItem")
+  const { useShowToolCalls } = await import("../src/features/session/hooks/useShowToolCalls")
+  function Control() {
+    const [show] = useShowToolCalls()
+    return <button aria-pressed={show} />
+  }
+  await act(async () => root.render(<Control />))
+  expect(container.querySelector("button")?.getAttribute("aria-pressed")).toBe(String(stored !== "false"))
+  expect(set).not.toHaveBeenCalled()
+  expect(localStorage.getItem("remotty.show-tool-calls")).toBe(stored)
+})

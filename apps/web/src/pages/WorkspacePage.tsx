@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Bell, BellOff, Check, Code2, Folder, Github, LoaderCircle, LogOut, Plus, RefreshCw, Settings2, Wifi, WifiOff } from "lucide-react"
+import { Bell, BellOff, Code2, Folder, Github, LoaderCircle, LogOut, Plus, RefreshCw, Settings2, Wifi, WifiOff } from "lucide-react"
 import type { PairingBundle } from "@remotty/protocol"
 import { Button, EmptyState, ErrorToast, IconButton, ThemeControl } from "../components/ui"
 import { clearNotificationPromptSeen, markNotificationPromptSeen, notificationPromptWasSeen, shouldOfferPushNotifications } from "../features/notifications"
@@ -152,7 +152,7 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
             <div ref={folderFiltersRef} className="folder-filters" role="group" aria-label="Filter by folder">
             {folders.map(folder => <Button key={folder.directory} className="folder-filter" title={folder.directory}
               aria-label={folder.directory} aria-pressed={folder.enabled} onClick={() => toggleFolder(folder.directory)}
-              startIcon={folder.enabled ? <Check size={14} /> : <Folder size={14} />}>
+              startIcon={<Folder size={14} />}>
               <span>{folder.label}</span>
             </Button>)}
             </div>

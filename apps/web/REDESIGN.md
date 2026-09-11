@@ -379,3 +379,24 @@ Validation used Node 24.15.0 and pnpm 11.6.0:
 No real pairing, invites, device changes, camera hardware, push delivery, PWA
 installation, or physical phone keyboard was exercised. No commit or deployment
 was made. `.serena/` and unrelated workspace content were preserved.
+
+## Local preferences
+
+`src/infrastructure/preferences/localPreference.ts` owns dependency-free typed
+local-storage preferences. Feature-owned singleton configurations supply `key`,
+`defaultValue`, `parse`, and `serialize` (returning null removes the key). Immutable
+snapshots are cached by raw stored value; `set` and pure `update` publish same-tab
+changes. `src/hooks/usePreference.ts` adapts the store with `useSyncExternalStore`
+and returns `[value, set]`. Non-React code can use the store directly.
+
+Only tool visibility and hidden session folders use this module. Their existing
+keys, encodings, defaults, and browser-global scope remain. New folders start
+enabled; absent folders retain their exclusions. Reads and mounts never repair
+invalid data or write defaults. Storage events reread current values, including
+clear events; the last subscriber removes the listener and remount refreshes the
+cache. Storage failures retain authoritative memory state for the store lifetime.
+
+Theme remains an adapter to the blocking `public/theme-init.js` API, which owns
+first-paint bootstrap and the static install guide. This module is not a universal
+state framework: identity/keys, caches, notification intent/seen state, installation
+workflows, and request lifecycles retain their existing owners.
