@@ -502,7 +502,8 @@ body { font-size: var(--font-size-md); }
 .folder-filters::-webkit-scrollbar { display: none; }
 .folder-filters .folder-filter { flex: 0 0 auto; min-height: 44px; max-width: 240px; border-radius: 999px; }
 .folder-filter > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.folder-filter[aria-pressed="true"] { background: var(--accent-surface); border-color: var(--accent); color: var(--text); }
+.folder-filters .folder-filter[aria-pressed="true"] { background: var(--accent-surface); border-color: var(--accent); color: var(--text); }
+.folder-filters .folder-filter[aria-pressed="false"] { background: var(--surface); border-color: var(--border-strong); color: var(--text-muted); }
 .session-copy .session-row-folder { align-self: flex-end; max-width: 100%; margin-top: 2px; font-size: 11px; }
 .session-meta { color: var(--text-dim); }
 .detail-header { position: absolute; top: 0; left: 0; right: 0; z-index: 3; pointer-events: none; isolation: isolate; min-height: calc(76px + env(safe-area-inset-top)); padding: calc(12px + env(safe-area-inset-top)) 12px 8px; border: 0; background: transparent; }
