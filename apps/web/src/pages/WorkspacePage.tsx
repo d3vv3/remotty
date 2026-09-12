@@ -6,7 +6,6 @@ import { clearNotificationPromptSeen, markNotificationPromptSeen, notificationPr
 import { PairingScreen, routeForEnrollment } from "../features/pairing"
 import { effectiveConnectionPresentation, stableWorkspaceKey, useRelay, workspaceSessionKey } from "../features/relay"
 import { SessionDetail } from "../features/session"
-import { AttachmentProvider } from "../features/attachments/AttachmentProvider"
 import { ConnectionDetails, isSessionVisibleInList, NewSessionDialog, NotificationPrompt, SESSION_LIST_MAX_AGE_MS, SessionRow, sessionKey } from "../features/workspace"
 import { useSessionFilters } from "../features/workspace/hooks/useSessionFilters"
 import { useHorizontalOverflow } from "../hooks/useHorizontalOverflow"
@@ -210,7 +209,6 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
 
         <section className={`detail-panel ${!selected ? "mobile-hidden" : ""}`}>
           {selected ? (
-            <AttachmentProvider key={`${relayState.attachmentIdentityKey}:${sessionKey(selected)}`} workspaceRelayId={selected.workspaceRelayId} read={relayState.readAttachment}>
             <SessionDetail
               key={sessionKey(selected)}
               session={selected}
@@ -231,7 +229,6 @@ export function WorkspacePage({ initialBundle }: { initialBundle?: PairingBundle
               focusPrompt={focusSessionKey === sessionKey(selected)}
               onPromptFocused={() => setFocusSessionKey(undefined)}
             />
-            </AttachmentProvider>
           ) : (
             <div className="detail-placeholder">
               <Code2 size={32} />

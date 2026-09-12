@@ -62,12 +62,7 @@ export const queueProgressSnapshot = (pending: Pick<ProgressPending, "progress" 
   return queueProgress(pending, messages, onFailure, isActive)
 }
 
-export const commandForRelayCapabilities = (command: RelayRequest, capabilities?: { attachmentRead?: 1; messageChunks?: boolean; messageDelta?: 1; promptMessageId?: 1; relayPromptMessageId?: 1; workspaceDiff?: 1 }): RelayRequest => {
-  if (command.type === "attachment.get" && !capabilities?.attachmentRead) throw new Error("Update the workspace plugin to load this attachment.")
-  if (command.type === "session.messages") {
-    const { attachments: _attachments, ...base } = command
-    command = capabilities?.attachmentRead ? { ...base, attachments: "references-v1" } : base
-  }
+export const commandForRelayCapabilities = (command: RelayRequest, capabilities?: { messageChunks?: boolean; messageDelta?: 1; promptMessageId?: 1; relayPromptMessageId?: 1; workspaceDiff?: 1 }): RelayRequest => {
   if (command.type === "session.prompt") {
     const { messageId: _messageId, ...legacy } = command
     return legacy

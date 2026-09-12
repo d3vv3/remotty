@@ -6,8 +6,6 @@ const decoder = new TextDecoder("utf-8", { fatal: true })
 
 const openDatabase = () => new Promise((resolve, reject) => {
   const request = indexedDB.open(DB_NAME, DB_VERSION)
-  let failed = false
-  request.onblocked = () => { failed = true; reject(new Error("Identity database blocked")) }
   request.onupgradeneeded = () => {
     const database = request.result
     if (!database.objectStoreNames.contains("identities")) database.createObjectStore("identities", { keyPath: "key" })
@@ -15,11 +13,7 @@ const openDatabase = () => new Promise((resolve, reject) => {
     if (!database.objectStoreNames.contains("messages")) database.createObjectStore("messages", { keyPath: "key" })
     if (!database.objectStoreNames.contains("cache")) database.createObjectStore("cache", { keyPath: "key" })
   }
-  request.onsuccess = () => {
-    if (failed) { request.result.close(); return }
-    request.result.onversionchange = () => request.result.close()
-    resolve(request.result)
-  }
+  request.onsuccess = () => resolve(request.result)
   request.onerror = () => reject(request.error)
 })
 

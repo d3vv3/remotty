@@ -6,15 +6,14 @@ export interface NoticeProps {
   className?: string
   tone?: "warning" | "error"
   action?: ReactNode
-  as?: "div" | "span"
 }
 
-export function Notice({ children, className = "", tone = "warning", action, as: Container = "div" }: NoticeProps) {
-  return <Container className={`ui-notice ui-notice--${tone} ${className}`.trim()} role={tone === "error" ? "alert" : "status"} aria-atomic="true">
+export function Notice({ children, className = "", tone = "warning", action }: NoticeProps) {
+  return <div className={`ui-notice ui-notice--${tone} ${className}`.trim()} role={tone === "error" ? "alert" : "status"} aria-atomic="true">
     <AlertTriangle className="ui-notice-icon" size={18} aria-hidden="true" />
-    <Container className="ui-notice-content">{children}</Container>
+    <div className="ui-notice-content">{children}</div>
     {action}
-  </Container>
+  </div>
 }
 
 export function WarningNotice({ children, className }: Pick<NoticeProps, "children" | "className">) {

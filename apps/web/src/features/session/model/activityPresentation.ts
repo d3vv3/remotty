@@ -23,7 +23,7 @@ function pendingPhase(messages: SessionMessage[]): PendingPhase {
 export function activityPresentation(messages: SessionMessage[], status: string | undefined, loading: boolean, error: boolean, visibility: "content" | "all" = "content", context: { agent?: string; subagent?: boolean } = {}) {
   // Preserve each view's history policy: subagents retain all journal bylines,
   // while primary Activity omits entries containing only internal parts.
-  const visible = messages.filter((message) => visibility === "all" || message.parts.some((part) => part.type === "text" || part.type === "tool" || part.type === "file"))
+  const visible = messages.filter((message) => visibility === "all" || message.parts.some((part) => part.type === "text" || part.type === "tool"))
   // Status is evidence of work, not a promise of a reply. A failed refresh or
   // initial fetch cannot reliably describe the current conversation.
   const pending = (status === "busy" || status === "retry") && !error && !(loading && visible.length === 0)

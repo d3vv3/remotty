@@ -59,6 +59,74 @@ describe("Native conversation commands", () => {
     expect(request).toHaveBeenCalledWith({ type: "session.prompt", sessionId: "session", text: "Keep this instruction", agent: "plan" })
   })
 
+  const editDraft = async (value: string) => act(async () => {
+    const input = container.querySelector<HTMLTextAreaElement>(".composer textarea")!
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, value)
+    input.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+
+  it.each(["new instruction", "rapid text"])("sends current text once and handles a queued response with draft %s", async (nextDraft) => {
+    let acknowledge!: (value: any) => void
+    request.mockImplementationOnce(() => new Promise((resolve) => { acknowledge = resolve }))
+    await editDraft("rapid text")
+    expect(retainedSessionState.read(sessionKey)?.draft).toBe("rapid text")
+    await act(async () => {
+      const form = container.querySelector("form.composer")!
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }))
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }))
+    })
+    expect(request).toHaveBeenCalledExactlyOnceWith({ type: "session.prompt", sessionId: "session", text: "rapid text", agent: "build" })
+    await editDraft("intermediate draft")
+    await editDraft(nextDraft)
+    await act(async () => acknowledge({ messageId: "msg_accepted" }))
+    const expected = nextDraft === "rapid text" ? "" : nextDraft
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe(expected)
+    expect(retainedSessionState.read(sessionKey)?.draft).toBe(expected)
+    expect(retainedSessionState.read(sessionKey)?.messages).toEqual(expect.arrayContaining([expect.objectContaining({ info: expect.objectContaining({ id: "msg_accepted", delivery: "accepted" }), parts: [{ type: "text", text: "rapid text" }] })]))
+    // Hiding flushes any outstanding timer, and remounting cannot apply an old reset.
+    await act(async () => container.querySelector<HTMLButtonElement>("#session-view-subagents-tab")!.click())
+    await act(async () => container.querySelector<HTMLButtonElement>("#session-view-activity-tab")!.click())
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe(expected)
+  })
+
+  it("retains edits across a keyed session switch before the debounce fires", async () => {
+    await editDraft("switch immediately")
+    await act(async () => root.unmount())
+    expect(retainedSessionState.read(sessionKey)?.draft).toBe("switch immediately")
+    root = createRoot(container)
+    await renderSession()
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("switch immediately")
+  })
+
+  it("does not let an old session instance clear the draft after returning and editing", async () => {
+    let acknowledge!: (value: any) => void
+    request.mockImplementationOnce(() => new Promise((resolve) => { acknowledge = resolve }))
+    await editDraft("submitted before switch")
+    await act(async () => container.querySelector("form.composer")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+    await act(async () => root.unmount())
+    root = createRoot(container)
+    await renderSession()
+    await editDraft("new draft after returning")
+    await act(async () => acknowledge({ messageId: "msg_old_ack" }))
+    expect(retainedSessionState.read(sessionKey)?.draft).toBe("new draft after returning")
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("new draft after returning")
+  })
+
+  it("does not flush submitted text back when acknowledgement and hiding share a batch", async () => {
+    let acknowledge!: (value: any) => void
+    request.mockImplementationOnce(() => new Promise((resolve) => { acknowledge = resolve }))
+    await editDraft("send and hide")
+    await act(async () => container.querySelector("form.composer")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+    await act(async () => {
+      acknowledge({ messageId: "msg_hidden_ack" })
+      await Promise.resolve()
+      container.querySelector<HTMLButtonElement>("#session-view-subagents-tab")!.click()
+    })
+    await act(async () => container.querySelector<HTMLButtonElement>("#session-view-activity-tab")!.click())
+    expect(retainedSessionState.read(sessionKey)?.draft).toBe("")
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("")
+  })
+
   it("exposes an icon-only Stop agent control and aborts the session", async () => {
     const stop = container.querySelector<HTMLButtonElement>('[aria-label="Stop agent"]')!
     expect(stop.title).toBe("Stop agent")

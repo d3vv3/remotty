@@ -1,15 +1,7 @@
 import type { DeliveryState } from "./messagePresentation"
-import type { AttachmentDescriptor } from "@remotty/protocol"
 
 export type MessagePart = {
   type: string
-  id?: string
-  sessionID?: string
-  messageID?: string
-  mime?: string
-  url?: string
-  filename?: string
-  attachment?: AttachmentDescriptor
   text?: string
   tool?: string
   time?: { start?: number; end?: number }
@@ -20,14 +12,12 @@ export type MessagePart = {
     output?: string
     error?: string
     metadata?: Record<string, unknown>
-    attachments?: MessagePart[]
   }
 }
 
 export type SessionMessage = {
   info: {
     id: string
-    sessionID?: string
     role: string
     agent?: string
     parentID?: string

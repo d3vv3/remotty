@@ -70,6 +70,18 @@ export function SessionDetail({
   const [diffVersion, setDiffVersion] = useState(0)
   const [todos, setTodos] = useState<SessionTodo[]>(() => retained?.todos as SessionTodo[] ?? [])
   const [prompt, setPrompt] = useState(() => retained?.draft ?? "")
+  const latestDraftRef = useRef(prompt)
+  const [draftReset, setDraftReset] = useState<{ value: string }>()
+  const sendingRef = useRef(false)
+  const retainDraft = useCallback((draft: string) => {
+    latestDraftRef.current = draft
+    retainedSessionState.write(sessionKey, { draft })
+  }, [sessionKey])
+  const updatePrompt = useCallback((draft: string) => {
+    // A submit acknowledgement can clear the draft in the same batch that
+    // unmounts the composer. Its cleanup must not flush the old text back.
+    if (draft === latestDraftRef.current) setPrompt(draft)
+  }, [])
   const [sending, setSending] = useState(false)
   const [tab, setTab] = useState<"activity" | "todos" | "changes" | "subagents">(() => retained?.tab ?? "activity")
   const headerOverlay = useOverlayHeight<HTMLElement>(tab !== "subagents")
@@ -80,7 +92,7 @@ export function SessionDetail({
   const [messagesLoading, setMessagesLoading] = useState(true)
   const [messagesError, setMessagesError] = useState(false)
   const [messageCacheReadySession, setMessageCacheReadySession] = useState<string>()
-  const [, setClock] = useState(0)
+  const [clock, setClock] = useState(0)
   const promptRef = useRef<HTMLTextAreaElement>(null)
   const mountedRef = useRef(true)
   const snapshotRef = useRef<Record<string, string>>({})
@@ -267,8 +279,8 @@ export function SessionDetail({
   }, [loadCache, session.id, sessionKey])
 
   useEffect(() => {
-    retainedSessionState.write(sessionKey, { draft: prompt, tab, agent, selectedChildId, messages, messageCache: messageCacheRef.current, todos, diffs, diffState, diffTruncated })
-  }, [agent, diffState, diffTruncated, diffs, messages, prompt, selectedChildId, sessionKey, tab, todos])
+    retainedSessionState.write(sessionKey, { tab, agent, selectedChildId, messages, messageCache: messageCacheRef.current, todos, diffs, diffState, diffTruncated })
+  }, [agent, diffState, diffTruncated, diffs, messages, selectedChildId, sessionKey, tab, todos])
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock((value) => value + 1), 30_000)
@@ -329,10 +341,10 @@ export function SessionDetail({
   )
   const activityScroll = useActivityScroll(tab === "activity", [presentation, loading, showToolCalls, headerOverlay.height, dockOverlay.height])
 
-  const submit = async (event: FormEvent) => {
+  const submit = async (event: FormEvent, rawSubmitted: string) => {
     event.preventDefault()
-    if (!prompt.trim() || sending || messageCacheReadySession !== session.id) return
-    const rawSubmitted = prompt
+    if (!rawSubmitted.trim() || sendingRef.current || messageCacheReadySession !== session.id) return
+    sendingRef.current = true
     const text = rawSubmitted.trim()
     const messageId = crypto.randomUUID()
     const knownMessageIds = [...new Set([
@@ -366,7 +378,13 @@ export function SessionDetail({
         void persistLocalMessages(next).catch(() => undefined)
         return next
       })
-      setPrompt((current) => clearSubmittedDraft(current, rawSubmitted))
+      const current = latestDraftRef.current
+      const next = clearSubmittedDraft(current, rawSubmitted)
+      if (mountedRef.current && next !== current) {
+        retainDraft(next)
+        setPrompt(next)
+        setDraftReset({ value: next })
+      }
     } catch (error) {
       const delivery = promptDeliveryState((error as Error).message)
       setMessages((current) => {
@@ -376,6 +394,7 @@ export function SessionDetail({
       })
       onError((error as Error).message)
     } finally {
+      sendingRef.current = false
       setSending(false)
     }
   }
@@ -417,7 +436,7 @@ export function SessionDetail({
               <div className="empty-state"><LoaderCircle className="spin" size={22} /></div>
             ) : (
               <>
-                <ActivityMessages presentation={presentation} showToolCalls={showToolCalls} />
+                <ActivityMessages presentation={presentation} showToolCalls={showToolCalls} clock={clock} />
                 {!messagesLoading && !presentation.pending && presentation.messages.length === 0 && <div className="empty-state"><p>No message activity yet.</p></div>}
               </>
             )}
@@ -439,7 +458,7 @@ export function SessionDetail({
           <Button className="tool-visibility-toggle" aria-label="Show tool calls" aria-pressed={showToolCalls} title={`Show tool calls: ${showToolCalls ? "on" : "off"}`} onClick={() => setShowToolCalls(!showToolCalls)} startIcon={<Code2 size={18} />}><span>Show tool calls</span></Button>
           {session.status === "busy" && <Button variant="danger" size="icon" aria-label="Stop agent" title="Stop agent" startIcon={<CircleStop size={20} />} onClick={() => void request({ type: "session.abort", sessionId: session.id }).catch((error) => onError(error.message))} />}
         </div>
-        {showComposer && <Composer value={prompt} onChange={setPrompt} onSubmit={submit} sending={sending} disabled={messageCacheReadySession !== session.id} idle={session.status === "idle"} promptRef={promptRef} />}
+        {showComposer && <Composer value={prompt} reset={draftReset} onDraftChange={retainDraft} onChange={updatePrompt} onSubmit={submit} sending={sending} disabled={messageCacheReadySession !== session.id} idle={session.status === "idle"} promptRef={promptRef} />}
       <nav className="session-tools" aria-label="Session tools">
         <Tabs<"activity" | "todos" | "changes" | "subagents">
           id="session-view"

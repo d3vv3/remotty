@@ -1,10 +1,8 @@
 import { z } from "zod"
 import type { JsonValue } from "./e2ee"
-import { attachmentAddressSchema, attachmentChunkSchema, attachmentManifestSchema } from "./images"
 
 export * from "./e2ee-schema"
 export * from "./e2ee"
-export * from "./images"
 
 export const sessionStatusSchema = z.enum(["busy", "idle", "retry", "error"])
 export type SessionStatus = z.infer<typeof sessionStatusSchema>
@@ -78,7 +76,7 @@ export const relayInfoSchema = z.object({
   instanceId: z.string().optional(),
   instanceStartedAt: z.number().int().nonnegative().optional(),
   workspaceId: z.string().optional(),
-  capabilities: z.object({ attachmentRead: z.literal(1).optional(), ping: z.boolean().optional(), messageChunks: z.boolean().optional(), messageDelta: z.literal(1).optional(), promptMessageId: z.literal(1).optional(), relayPromptMessageId: z.literal(1).optional(), sessionCreate: z.literal(1).optional(), workspaceDiff: z.literal(1).optional(), subagents: z.literal(1).optional() }).optional(),
+  capabilities: z.object({ ping: z.boolean().optional(), messageChunks: z.boolean().optional(), messageDelta: z.literal(1).optional(), promptMessageId: z.literal(1).optional(), relayPromptMessageId: z.literal(1).optional(), sessionCreate: z.literal(1).optional(), workspaceDiff: z.literal(1).optional(), subagents: z.literal(1).optional() }).optional(),
 })
 export type RelayInfo = z.infer<typeof relayInfoSchema>
 /** Largest canonical message body accepted by both relay planning and browser reassembly. */
@@ -145,8 +143,6 @@ export const questionRequestSchema = z.object({
 export type QuestionRequest = z.infer<typeof questionRequestSchema>
 
 export const relayMessageSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("attachment.manifest"), requestId: z.string(), manifest: attachmentManifestSchema }).strict(),
-  z.object({ type: z.literal("attachment.chunk"), requestId: z.string(), chunk: attachmentChunkSchema }).strict(),
   z.object({ type: z.literal("relay.hello"), relay: relayInfoSchema, sequence: z.number().int().nonnegative().optional() }),
   z.object({
     type: z.literal("relay.snapshot"),
@@ -190,7 +186,6 @@ export const relayMessageSchema = z.discriminatedUnion("type", [
 export type RelayMessage = z.infer<typeof relayMessageSchema>
 
 export const clientCommandSchema = z.discriminatedUnion("type", [
-  attachmentAddressSchema.extend({ type: z.literal("attachment.get"), requestId: z.string().min(1).max(200) }).strict(),
   z.object({
     type: z.literal("snapshot.request"),
     requestId: z.string(),
@@ -198,7 +193,6 @@ export const clientCommandSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("session.messages"),
-    attachments: z.literal("references-v1").optional(),
     requestId: z.string(),
     sessionId: z.string(),
     chunked: z.literal(true).optional(),

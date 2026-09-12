@@ -2,6 +2,8 @@
 
 remotty is a remote TTY-style PWA for local OpenCode sessions. It shows live messages, diffs, todos, questions, permission requests, and agent state. It can send prompts, stop work, switch agents, and reply to permissions from native Push notifications.
 
+The composer updates text immediately and retains each edit when switching sessions. Session-level draft updates are debounced by 120 ms, and unchanged activity history is memoized so typing does not repeatedly parse Markdown. Enter sends the latest text without waiting for the debounce; Shift+Enter and IME composition keep their normal input behavior.
+
 The local OpenCode plugin makes an outbound WebSocket connection to the broker. OpenCode stays bound to the local machine.
 
 ## Packages
@@ -101,9 +103,7 @@ The room identifier is the relay authority fingerprint and grants no command aut
 
 Use `npx --yes --package opencode-remotty@latest remotty invite`, `npx --yes --package opencode-remotty@latest remotty devices`, and `npx --yes --package opencode-remotty@latest remotty revoke <device-id>` to manage browser access. The device ID is the SHA-256 fingerprint of its signing public key, not a random UUID; the list includes a browser, operating-system, and short-fingerprint label.
 
-A running relay sends revocation over the browser's established connection, and the device unpairs itself when it receives it. A revoked offline device remains as a tombstone until it connects once more. Use `npx --yes --package opencode-remotty@latest remotty remove <device-id>` or `npx --yes --package opencode-remotty@latest remotty remove --revoked` to delete records that never reconnect.
-
-Verified attachment images are cached locally, subject to cache eviction, until the browser identity is deleted or revocation is received on its next connection. Remote wiping of a closed or offline PWA is not guaranteed. Cancelling an image preview stops delivery to that preview; an active relay read continues until completion or failure before the next queued read starts. Preview timeouts do not guarantee a hard seven-second transfer limit.
+A running relay pushes a revocation to the device within seconds, and the device unpairs itself. A revoked offline device remains as a tombstone until it connects once more. Use `npx --yes --package opencode-remotty@latest remotty remove <device-id>` or `npx --yes --package opencode-remotty@latest remotty remove --revoked` to delete records that never reconnect.
 
 The hosted service privacy design is available at `https://remotty.devve.space/privacy`.
 

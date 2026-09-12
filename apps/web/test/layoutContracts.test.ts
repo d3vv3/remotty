@@ -114,7 +114,7 @@ describe("layout source contracts", () => {
     expect(sessionDetail).toContain('const showComposer = tab !== "subagents"')
     expect(sessionDetail).not.toContain('className="command-progress"')
     expect(sessionDetail).toContain("{showComposer && <Composer")
-    expect(composer).toContain('<form className="composer" onSubmit={onSubmit}>')
+    expect(composer).toContain('<form className="composer" onSubmit=')
     expect(sessionDetail).toContain("activityScroll.beforeTabChange")
     expect(activityScroll).toContain("if (leavingActivity && contentRef.current)")
     expect(activityScroll).toContain("if (followOutputRef.current) {")
