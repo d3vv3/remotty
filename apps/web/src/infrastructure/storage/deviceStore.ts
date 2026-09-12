@@ -6,6 +6,7 @@ import {
   type PairingBundle,
 } from "@remotty/protocol"
 import { currentDeviceName } from "./deviceName"
+import { deleteCachedAttachments } from "./attachmentStore"
 
 export const DEVICE_DB_NAME = "remotty-e2ee-v2"
 export const DEVICE_DB_VERSION = 2
@@ -78,6 +79,9 @@ let databasePromise: Promise<IDBDatabase> | undefined
 const database = () => {
   databasePromise ??= new Promise((resolve, reject) => {
     const request = indexedDB.open(DEVICE_DB_NAME, DEVICE_DB_VERSION)
+    let failed = false
+    const fail = () => { failed = true; databasePromise = undefined; reject(new Error("Cannot open the device identity store")) }
+    request.onblocked = fail
     request.onupgradeneeded = () => {
       const db = request.result
       if (!db.objectStoreNames.contains("identities")) db.createObjectStore("identities", { keyPath: "key" })
@@ -85,8 +89,12 @@ const database = () => {
       if (!db.objectStoreNames.contains("messages")) db.createObjectStore("messages", { keyPath: "key" })
       if (!db.objectStoreNames.contains("cache")) db.createObjectStore("cache", { keyPath: "key" })
     }
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error ?? new Error("Cannot open the device identity store"))
+    request.onsuccess = () => {
+      if (failed) { request.result.close(); return }
+      request.result.onversionchange = () => { request.result.close(); databasePromise = undefined }
+      resolve(request.result)
+    }
+    request.onerror = fail
   })
   return databasePromise
 }
@@ -164,6 +172,7 @@ export const deleteIdentity = async (identity: DeviceIdentity) => {
   if (localStorage.getItem(CURRENT_IDENTITY_MARKER) === identity.key) {
     localStorage.removeItem(CURRENT_IDENTITY_MARKER)
   }
+  await deleteCachedAttachments(identity.key).catch(() => undefined)
 }
 
 export const loadCachedResource = async <T>(identity: DeviceIdentity, relayId: string, resource: string, sessionId?: string) => {

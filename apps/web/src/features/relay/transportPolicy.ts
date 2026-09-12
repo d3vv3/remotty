@@ -40,7 +40,7 @@ export const hasSequenceGap = (current: number | undefined, next: number) =>
   current !== undefined && next > current + 1
 
 export const readOnlyCommand = (type: string) =>
-  ["snapshot.request", "session.messages", "session.todos", "session.diff", "workspace.diff", "workspace.diff.patch", "relay.ping"].includes(type)
+  ["attachment.get", "snapshot.request", "session.messages", "session.todos", "session.diff", "workspace.diff", "workspace.diff.patch", "relay.ping"].includes(type)
 
 export const retryPlan = (now: number, deadline: number, attempts: number) => attempts < 2 && now < deadline
-export const requestInactivityMs = (type: string) => type === "relay.ping" ? 8_000 : ["session.messages", "workspace.diff", "workspace.diff.patch"].includes(type) ? 20_000 : 15_000
+export const requestInactivityMs = (type: string) => type === "relay.ping" ? 8_000 : ["attachment.get", "session.messages", "workspace.diff", "workspace.diff.patch"].includes(type) ? 20_000 : 15_000

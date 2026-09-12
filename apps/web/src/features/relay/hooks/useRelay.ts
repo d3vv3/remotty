@@ -17,6 +17,8 @@ import {
   type QuestionRequest,
   type SessionSummary,
   type MessageDeltaManifest,
+  type AttachmentAddress,
+  type AttachmentDescriptor,
 } from "@remotty/protocol"
 import { currentDeviceName } from "../../../infrastructure/storage"
 import {
@@ -39,6 +41,9 @@ import { messageCacheErrorDetail, shouldReportCacheFailure, type CacheFailure, v
 import { retainedSessionState } from "../../session/model/sessionState"
 import { serializePushSubscription } from "../../notifications"
 import { persistNotificationPreference } from "../../notifications/notificationPreference"
+import { AttachmentAssembly } from "../attachmentTransfer"
+import { attachmentCacheKey, loadCachedAttachment, saveCachedAttachment } from "../../../infrastructure/storage/attachmentStore"
+import { AttachmentReadQueue } from "../../attachments/attachmentReadQueue"
 
 type PendingRequest = {
   relayId: string
@@ -56,6 +61,7 @@ type PendingRequest = {
   progressChain: Promise<void>
   progressSignature?: string
   completionScheduled: boolean
+  attachment?: AttachmentAssembly
 }
 
 const MAX_FRAME_AGE_MS = 5 * 60 * 1_000
@@ -174,6 +180,7 @@ export function useRelay(initialBundle?: PairingBundle) {
   const socketRef = useRef<WebSocket | undefined>(undefined)
   const identityRef = useRef<DeviceIdentity | undefined>(undefined)
   const pendingRef = useRef(new Map<string, PendingRequest>())
+  const attachmentReadsRef = useRef(new AttachmentReadQueue<Uint8Array<ArrayBuffer>>())
   const connectedRelaysRef = useRef(new Set<string>())
   const slicesRef = useRef(new Map<string, RelaySlice>())
   const sessionRelaysRef = useRef(new Map<string, string>())
@@ -234,13 +241,17 @@ export function useRelay(initialBundle?: PairingBundle) {
     const requestId = crypto.randomUUID()
     return new Promise<unknown>((resolve, reject) => {
       const generation = socketGenerationRef.current
-      const timeout = window.setTimeout(() => {
+      const expire = () => {
         pendingRef.current.delete(requestId)
         reject(new Error("The relay did not respond."))
-      }, requestInactivityMs(command.type))
+      }
+      const timeout = command.type === "attachment.get" ? 0 : window.setTimeout(expire, requestInactivityMs(command.type))
       pendingRef.current.set(requestId, { relayId, resolve, reject, timeout, command, startedAt: Date.now(), chunks: createChunkAssembly(), generation, progress, verifiedMessageIds: new Set(), progressChain: Promise.resolve(), completionScheduled: false })
-      void sendCommandFrame(identity, relayId, { ...command, requestId } as ClientCommand).catch((cause) => {
-        window.clearTimeout(timeout)
+      void sendCommandFrame(identity, relayId, { ...command, requestId } as ClientCommand).then(() => {
+        const pending = pendingRef.current.get(requestId)
+        if (command.type === "attachment.get" && pending && !pending.timeout) pending.timeout = window.setTimeout(expire, requestInactivityMs(command.type))
+      }).catch((cause) => {
+        window.clearTimeout(pendingRef.current.get(requestId)?.timeout ?? timeout)
         pendingRef.current.delete(requestId)
         reject(cause)
       })
@@ -448,6 +459,32 @@ export function useRelay(initialBundle?: PairingBundle) {
         publishSlices()
       } else if (data.type === "relay.event") {
         applyEvent(frame.sender, data.event, data.instanceId, data.sequence)
+      } else if (data.type === "attachment.manifest" || data.type === "attachment.chunk") {
+        const pending = pendingRef.current.get(data.requestId)
+        if (!pending || pending.relayId !== frame.sender || pending.command.type !== "attachment.get" || pending.generation !== socketGenerationRef.current) return
+        try {
+          if (data.type === "attachment.manifest") {
+            if (pending.attachment) throw new Error("Duplicate attachment manifest")
+            pending.attachment = new AttachmentAssembly(pending.command)
+            pending.attachment.start(data.manifest)
+          } else {
+            if (!pending.attachment) throw new Error("Attachment chunk arrived before manifest")
+            const result = await pending.attachment.add(data.chunk)
+            if (pendingRef.current.get(data.requestId) !== pending || pending.generation !== socketGenerationRef.current) return
+            if (result) {
+              window.clearTimeout(pending.timeout)
+              pendingRef.current.delete(data.requestId)
+              pending.resolve(result)
+              return
+            }
+          }
+          window.clearTimeout(pending.timeout)
+          pending.timeout = window.setTimeout(() => { pendingRef.current.delete(data.requestId); pending.reject(new Error("Attachment transfer timed out. Retry to load it.")) }, 20_000)
+        } catch (cause) {
+          window.clearTimeout(pending.timeout)
+          pendingRef.current.delete(data.requestId)
+          pending.reject(cause instanceof Error ? cause : new Error("Invalid attachment transfer"))
+        }
       } else if (data.type === "session.messages.manifest") {
         const pending = pendingRef.current.get(data.requestId)
         if (!pending || pending.relayId !== frame.sender || pending.command.type !== "session.messages") return
@@ -554,6 +591,12 @@ export function useRelay(initialBundle?: PairingBundle) {
           })
           return
         }
+        if (pending.command.type === "attachment.get") {
+          window.clearTimeout(pending.timeout)
+          pendingRef.current.delete(data.requestId)
+          pending.reject(new Error(data.error ?? "Invalid attachment response"))
+          return
+        }
         if (pending.command.type === "session.messages" &&
           validManifest(data.result)) {
           const manifest = validManifest(data.result)!
@@ -608,6 +651,12 @@ export function useRelay(initialBundle?: PairingBundle) {
       } else if (data.type === "rpc.chunk") {
         const pending = pendingRef.current.get(data.requestId)
         if (!pending || pending.relayId !== frame.sender) return
+        if (pending.command.type === "attachment.get") {
+          window.clearTimeout(pending.timeout)
+          pendingRef.current.delete(data.requestId)
+          pending.reject(new Error("Unexpected attachment response"))
+          return
+        }
         if (data.error) {
           window.clearTimeout(pending.timeout)
           pendingRef.current.delete(data.requestId)
@@ -917,7 +966,7 @@ export function useRelay(initialBundle?: PairingBundle) {
     for (let attempts = 0; ; attempts += 1) {
        const relayId = workspaceKey ? resolveConnectedWorkspaceRelay(workspaceKey, connectedRelaysRef.current, slicesRef.current) : initialRelayId
        if (!relayId) {
-         if (!readOnlyCommand(command.type) || Date.now() >= deadline) throw new Error("The workspace relay disconnected.")
+          if (command.type === "attachment.get" || !readOnlyCommand(command.type) || Date.now() >= deadline) throw new Error("The workspace relay disconnected.")
          await new Promise((resolve) => window.setTimeout(resolve, 100))
          continue
        }
@@ -927,7 +976,7 @@ export function useRelay(initialBundle?: PairingBundle) {
          const result = await requestFromRelay(identity, relayId, compatibleCommand, progress)
           return command.type === "session.prompt" && !relay?.capabilities?.relayPromptMessageId ? { promptMessageId: false, result } : result
        } catch (error) {
-        if (!readOnlyCommand(command.type) || !retryPlan(Date.now(), deadline, attempts)) throw error
+         if (command.type === "attachment.get" || !readOnlyCommand(command.type) || !retryPlan(Date.now(), deadline, attempts)) throw error
          while (Date.now() < deadline && (!authenticatedRef.current || !(workspaceKey ? resolveConnectedWorkspaceRelay(workspaceKey, connectedRelaysRef.current, slicesRef.current) : connectedRelaysRef.current.has(relayId)))) {
           await new Promise((resolve) => window.setTimeout(resolve, 100))
         }
@@ -935,6 +984,27 @@ export function useRelay(initialBundle?: PairingBundle) {
       }
     }
   }, [requestFromRelay, requestSnapshots])
+
+  const readAttachment = useCallback(async (workspaceRelayId: string, address: AttachmentAddress, descriptor: AttachmentDescriptor, signal?: AbortSignal) => {
+    const identity = identityRef.current
+    const slice = slicesRef.current.get(workspaceRelayId)
+    if (!identity?.enrolled || !slice) throw new Error("Attachment workspace unavailable")
+    const workspace = stableWorkspaceKey(slice.relay)
+    const epoch = connectionEpochRef.current
+    const active = () => identityRef.current === identity && connectionEpochRef.current === epoch
+    return attachmentReadsRef.current.read(attachmentCacheKey(identity.key, workspace, address, descriptor), async () => {
+      if (!active()) throw new Error("Attachment workspace changed")
+      const cached = await loadCachedAttachment(identity, workspace, address, descriptor).catch(() => undefined)
+      if (!active()) throw new Error("Attachment workspace changed")
+      if (cached) return cached
+      const result = await request({ type: "attachment.get", ...address }, workspaceRelayId) as { bytes: Uint8Array<ArrayBuffer>; descriptor: AttachmentDescriptor }
+      if (!active()) throw new Error("Attachment workspace changed")
+      if (result.descriptor.digest !== descriptor.digest || result.descriptor.mime !== descriptor.mime || result.descriptor.byteLength !== descriptor.byteLength) throw new Error("Attachment changed; refresh the session")
+      await saveCachedAttachment(identity, workspace, address, descriptor, result.bytes).catch(() => undefined)
+      if (!active()) throw new Error("Attachment workspace changed")
+      return result.bytes
+    }, signal)
+  }, [request])
 
   const toggleNotifications = useCallback(async () => {
     if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) {
@@ -1071,6 +1141,8 @@ export function useRelay(initialBundle?: PairingBundle) {
   }, [requestFromRelay])
 
   return {
+    readAttachment,
+    attachmentIdentityKey: identityRef.current?.key,
     connection,
     enrolled,
     relay,

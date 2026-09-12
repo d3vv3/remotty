@@ -36,4 +36,4 @@ The plugin keeps relay authority keys, invitation hashes, device keys, revocatio
 
 Each device ID is the SHA-256 fingerprint of its signing public key. The readable device name contains the browser, operating system, and a short fingerprint. Active devices refresh this name when they connect.
 
-A running relay pushes the revocation to the device within seconds, and the device unpairs itself. A revoked device that is offline stays in the list as a tombstone until it connects once more. `remove` deletes records that never reconnect; `remove --revoked` clears all tombstones at once.
+A running relay sends revocation over the browser's established connection, and the device unpairs itself when it receives it. A revoked device that is offline stays in the list as a tombstone until it connects once more. `remove` deletes records that never reconnect; `remove --revoked` clears all tombstones at once. Attachment images cached locally in the browser remain subject to cache eviction until its identity is deleted or revocation is received on the next connection. Remote wiping of a closed or offline PWA is not guaranteed.

@@ -36,6 +36,9 @@ import {
 } from "./security.js"
 import { includeActiveSession, routeSessionRequests, selectOpenSessions, selectSubagents, sessionDirectory } from "./sessions.js"
 import { messageDeltaPlan, messagePlan } from "./messageSync.js"
+import { attachmentChunks, attachmentReferences, resolveAttachment } from "./attachments.js"
+import { IMAGE_CHUNK_BYTES } from "@remotty/protocol"
+import { AttachmentScheduler } from "./attachmentScheduler.js"
 import { openCodeMessageId } from "./messageId.js"
 import { promptBody } from "./prompt.js"
 import { PerRecipientQueue } from "./sendQueue.js"
@@ -97,7 +100,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
     instanceId,
     instanceStartedAt,
     workspaceId,
-    capabilities: { ping: true, messageChunks: true, messageDelta: 1, relayPromptMessageId: 1, sessionCreate: 1, workspaceDiff: 1, subagents: 1 },
+    capabilities: { attachmentRead: 1, ping: true, messageChunks: true, messageDelta: 1, relayPromptMessageId: 1, sessionCreate: 1, workspaceDiff: 1, subagents: 1 },
   }
 
   let socket: WebSocket | undefined
@@ -122,6 +125,7 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
   })
 
   let controlSendQueue = Promise.resolve()
+  const attachmentScheduler = new AttachmentScheduler()
   const bulkSendQueues = new PerRecipientQueue()
   const sendEncrypted = async (
     payload: unknown,
@@ -267,8 +271,34 @@ export const remottyPlugin: Plugin = async ({ client, directory }) => {
           await snapshot(device)
           await reply(device, command.requestId, true)
           break
+        case "attachment.get": {
+          const target = socket
+          if (!target || target.readyState !== WebSocket.OPEN) throw new Error("Image transfer connection closed")
+          const controller = new AbortController()
+          const close = () => controller.abort()
+          target.addEventListener("close", close, { once: true })
+          try {
+            await attachmentScheduler.run(async () => {
+              const address = { sessionId: command.sessionId, messageId: command.messageId, attachmentId: command.attachmentId }
+              const message = await sdkData(client.session.message({ path: { id: command.sessionId, messageID: command.messageId }, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]) }))
+              controller.signal.throwIfAborted()
+              const { bytes, descriptor } = await resolveAttachment(message, address)
+              const send = (payload: unknown) => attachmentScheduler.frame(target, controller.signal, () => bulkSendQueues.enqueue(device.id, async () => {
+                controller.signal.throwIfAborted()
+                if (socket !== target) throw new Error("Image transfer connection replaced")
+                const recipient = (await activeDevices()).find((candidate) => candidate.id === device.id)
+                controller.signal.throwIfAborted()
+                if (recipient) await sendEncrypted(payload, recipient)
+              }))
+              await send({ type: "attachment.manifest", requestId: command.requestId, manifest: { ...address, descriptor, total: Math.ceil(bytes.length / IMAGE_CHUNK_BYTES) } })
+              for (const chunk of attachmentChunks(bytes)) await send({ type: "attachment.chunk", requestId: command.requestId, chunk })
+            }, controller.signal)
+          } finally { target.removeEventListener("close", close) }
+          break
+        }
         case "session.messages":
-          const messages = await sdkData(client.session.messages({ path: { id: command.sessionId }, query: { limit: 80 } })) as JsonObject[]
+          const originalMessages = await sdkData(client.session.messages({ path: { id: command.sessionId }, query: { limit: 80 } })) as JsonObject[]
+          const messages = command.attachments === "references-v1" ? await attachmentReferences(originalMessages) : originalMessages
           if (command.sync) {
             const plan = await messageDeltaPlan(messages, command.sync.known)
             await enqueuePayload({ type: "session.messages.manifest", requestId: command.requestId, manifest: plan.manifest }, device)

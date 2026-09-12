@@ -1,10 +1,25 @@
 import { Clock3, ListTodo, Code2, ChevronDown } from "lucide-react"
-import ReactMarkdown from "react-markdown"
+import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { PendingResponse } from "./PendingResponse"
 import { messageAuthor, type PendingPhase } from "../model/activityPresentation"
 import { deliveryLabel, type DeliveryState } from "../model/messagePresentation"
 import { limited, relativeTime, type MessagePart, type SessionMessage } from "../model/sessionContent"
+import { ImagePreview } from "../../attachments/ImagePreview"
+
+const markdownComponents: Components = {
+  a: ({ children, href, node }) => node?.children.some((child) => child.type === "element" && child.tagName === "img")
+    ? <span>{children}</span>
+    : <a href={href} target="_blank" rel="noreferrer">{children}</a>,
+  img: ({ src, alt }) => <ImagePreview key={src} source={src ?? ""} alt={alt} />,
+}
+
+function FileImage({ part, message }: { part: MessagePart; message?: SessionMessage }) {
+  if (!part.url) return <span className="image-placeholder">{part.filename ?? "Attachment"}: image source unavailable.</span>
+  const sessionId = message?.info.sessionID
+  const address = sessionId && part.id && part.sessionID === sessionId && part.messageID === message.info.id ? { sessionId, messageId: message.info.id, attachmentId: part.id } : undefined
+  return <ImagePreview key={`${part.url}:${part.attachment?.digest}`} source={part.url} alt={part.filename ?? "Image attachment"} mime={part.mime} address={address} descriptor={part.attachment} />
+}
 
 function DiffBlock({ diff }: { diff: string }) {
   return <section className="tool-diff"><strong>Diff</strong><pre><code>{limited(diff, 50_000).split("\n").map((line, index) => (
@@ -12,7 +27,7 @@ function DiffBlock({ diff }: { diff: string }) {
   ))}</code></pre></section>
 }
 
-export function ToolDetails({ part }: { part: MessagePart }) {
+export function ToolDetails({ part, message }: { part: MessagePart; message?: SessionMessage }) {
   const diff = typeof part.state?.metadata?.diff === "string" ? part.state.metadata.diff : undefined
   const output = part.state?.output ?? part.state?.error
   return <details className="tool-details">
@@ -21,6 +36,7 @@ export function ToolDetails({ part }: { part: MessagePart }) {
       {diff && <DiffBlock diff={diff} />}
       {part.state?.input && Object.keys(part.state.input).length > 0 && <section><strong>Input</strong><pre><code>{limited(JSON.stringify(part.state.input, null, 2), 20_000)}</code></pre></section>}
       {output && <section><strong>{part.state?.error ? "Error" : "Output"}</strong><pre><code>{limited(output, 30_000)}</code></pre></section>}
+      {part.state?.status === "completed" && part.state.attachments?.filter((attachment) => attachment.type === "file").map((attachment, index) => <FileImage key={attachment.id ?? index} part={attachment} message={message} />)}
     </div>
   </details>
 }
@@ -38,8 +54,8 @@ export function ActivityMessage({ message, delivery, pending = false, pendingPha
     </header>
     <div className="message-body">
         {message.parts.map((part, index) => part.type === "text" && part.text
-          ? isUser ? <p key={index}>{part.text}</p> : <div className="markdown" key={index}><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: ({ children, href }) => <a href={href} target="_blank" rel="noreferrer">{children}</a> }}>{part.text}</ReactMarkdown></div>
-          : part.type === "tool" ? <ToolDetails part={part} key={index} /> : null)}
+          ? isUser ? <p key={index}>{part.text}</p> : <div className="markdown" key={index}><ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(url, key, node) => node.tagName === "img" && key === "src" ? url : defaultUrlTransform(url)} components={markdownComponents}>{part.text}</ReactMarkdown></div>
+          : part.type === "tool" ? <ToolDetails part={part} message={message} key={index} /> : part.type === "file" ? <FileImage part={part} message={message} key={index} /> : null)}
         {pending && <PendingResponse phase={pendingPhase} author={author} subagent={subagent} />}
     </div>
   </article>
