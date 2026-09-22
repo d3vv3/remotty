@@ -19,7 +19,7 @@ describe("controlled PWA updates", () => {
     expect(config).not.toContain("clientsClaim: true")
     expect(app).toContain("Update now")
     expect(app).toContain("close every Remotty tab and installed app window")
-    expect(app).toContain("opencode plugin opencode-remotty --global --force")
+    expect(app).toContain("opencode plugin add opencode-remotty")
     expect(app).toContain('<code tabIndex={0} aria-label="OpenCode plugin update command">')
     expect(app).toContain("const [deferred, setDeferred] = useState(false)")
     expect(app).toContain("<Button disabled={updating} onClick={() => setDeferred(true)}>Later</Button>")

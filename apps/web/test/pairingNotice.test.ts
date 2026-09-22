@@ -7,7 +7,7 @@ describe("pairing without a connected workspace", () => {
   it("tells the user how to start the workspace relay", async () => {
     const source = await relaySource()
     expect(source).toContain("No OpenCode workspace is connected.")
-    expect(source).toContain("opencode plugin opencode-remotty --global --force")
+    expect(source).toContain("opencode plugin add opencode-remotty")
     expect(source).toContain("Pairing resumes automatically.")
   })
 

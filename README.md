@@ -15,10 +15,10 @@ The local OpenCode plugin makes an outbound WebSocket connection to the broker. 
 
 ## Install the OpenCode plugin
 
-Requirements: OpenCode and Node `>=22` for `npx`. Install the plugin; it registers itself in OpenCode's global configuration, so no manual `tui.json` edit is needed:
+Requirements: OpenCode v2 and Node `>=22` for `npx`. Install the plugin; it registers itself in OpenCode's global configuration, so no manual TUI configuration edit is needed:
 
 ```sh
-opencode plugin opencode-remotty --global --force
+opencode plugin add opencode-remotty
 ```
 
 Create the relay identity and a ten-minute encrypted device invite:
@@ -32,6 +32,8 @@ The command mutates `~/.config/remotty/config.json` (or `$XDG_CONFIG_HOME/remott
 ```sh
 opencode --continue
 ```
+
+The relay remains connected while this local OpenCode TUI is running. Upgrading from the OpenCode v1 plugin reuses the existing pairing keys and devices without rewriting the relay configuration.
 
 Each command uses `npx --yes --package opencode-remotty@latest remotty` so it does not depend on a PATH-installed binary. For example:
 

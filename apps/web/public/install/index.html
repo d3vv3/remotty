@@ -37,17 +37,17 @@
       </section>
       <section class="requirements" aria-labelledby="requirements-title">
         <p class="section-number">Before you begin</p><h2 id="requirements-title">What you'll need</h2>
-        <ul><li>OpenCode installed on the computer running the session.</li><li>Node.js 22 or newer for the one-off <code>npx</code> command.</li><li>A browser on the device to pair. HTTPS is required outside localhost.</li></ul>
+        <ul><li>OpenCode v2 installed on the computer running the session.</li><li>Node.js 22 or newer for the one-off <code>npx</code> command.</li><li>A browser on the device to pair. HTTPS is required outside localhost.</li></ul>
       </section>
       <section class="steps" aria-labelledby="hosted-title">
         <p class="eyebrow">Hosted service</p>
         <h2 id="hosted-title">Pair a device</h2>
         <ol>
-          <li><strong>Install the OpenCode plugin.</strong><pre tabindex="0" aria-label="OpenCode plugin install command"><code>opencode plugin opencode-remotty --global --force</code></pre></li>
+          <li><strong>Install the OpenCode plugin.</strong><pre tabindex="0" aria-label="OpenCode plugin install command"><code>opencode plugin add opencode-remotty</code></pre></li>
           <li><strong>Create a device invite.</strong><pre tabindex="0" aria-label="remotty pairing command"><code>npx --yes --package opencode-remotty@latest remotty pair</code></pre><p class="warning">The output contains a sensitive ten-minute token, a pairing URL, and a QR code. Do not share, paste into tickets, or publish any of it.</p></li>
           <li><strong>Open the printed pairing URL, scan its QR code, or paste the token on the <a href="/pair">pairing page</a>.</strong></li>
           <li><strong>Quit the running OpenCode process, then restart it</strong> so the installed plugin starts with the paired relay configuration.<pre tabindex="0" aria-label="OpenCode restart command"><code>opencode --continue</code></pre></li>
-          <li><strong>Verify the connection</strong> by opening the PWA and checking that the local OpenCode session appears.</li>
+          <li><strong>Verify the connection</strong> by keeping the local OpenCode TUI running, then opening the PWA and checking that the session appears.</li>
         </ol>
       </section>
       <section class="steps" aria-labelledby="custom-title">
@@ -66,7 +66,7 @@ npx --yes --package opencode-remotty@latest remotty revoke &lt;device-id&gt;
 npx --yes --package opencode-remotty@latest remotty remove &lt;device-id&gt;
 npx --yes --package opencode-remotty@latest remotty remove --revoked
 npx --yes --package opencode-remotty@latest remotty status</code></pre>
-        <p>For an upgrade, reinstall the plugin with <code>opencode plugin opencode-remotty --global --force</code>, quit OpenCode, then run <code>opencode --continue</code>.</p>
+        <p>For an upgrade, run <code>opencode plugin add opencode-remotty</code>, quit OpenCode, then run <code>opencode --continue</code>.</p>
       </section>
       <section class="details" aria-labelledby="troubleshooting-title">
         <p class="section-number">When you need a hand</p><h2 id="troubleshooting-title">Configuration and troubleshooting</h2>
