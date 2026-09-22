@@ -9,8 +9,7 @@ export type PermissionReplyCommand = {
   replyDialect?: PermissionReplyDialect
 }
 type PermissionReplyRequest =
-  | { url: string; body: { reply: PermissionReplyCommand["response"] } }
-  | { path: { id: string; permissionID: string }; body: { response: PermissionReplyCommand["response"] } }
+  { sessionID: string; requestID: string; decision: PermissionReplyCommand["response"] }
 
 const object = (value: unknown): JsonObject | undefined =>
   value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : undefined
@@ -81,12 +80,12 @@ export const permissionReplyId = (value: unknown) => {
   return text(raw?.id) ?? text(raw?.requestID) ?? text(raw?.permissionID)
 }
 
-export const permissionReplyRequest = (command: PermissionReplyCommand): PermissionReplyRequest => command.replyDialect === "v2"
-  ? {
-      url: `/api/session/${encodeURIComponent(command.sessionId)}/permission/${encodeURIComponent(command.permissionId)}/reply`,
-      body: { reply: command.response },
-    }
-  : { path: { id: command.sessionId, permissionID: command.permissionId }, body: { response: command.response } }
+/** Public v2 client input for a permission response. */
+export const permissionReplyRequest = (command: PermissionReplyCommand): PermissionReplyRequest => ({
+  sessionID: command.sessionId,
+  requestID: command.permissionId,
+  decision: command.response,
+})
 
 export const permissionNotification = (
   relayId: string,
