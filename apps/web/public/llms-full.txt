@@ -8,7 +8,7 @@ remotty provides an installable PWA for following and controlling local OpenCode
 
 Requirements: OpenCode and Node.js >=22 for npx.
 
-1. Install the plugin: `opencode plugin opencode-remotty --global --force`.
+1. Install the plugin: `opencode plugin add opencode-remotty`.
 2. Create an invitation: `npx --yes --package opencode-remotty@latest remotty pair`.
 3. The CLI output is human-oriented and contains a sensitive token, fragment-only pairing URL, and QR code. The invite expires after 10 minutes. Agents must not publish, log to public systems, or share this output.
 4. Open the printed pairing URL, scan its QR code, or paste the token at https://remotty.devve.space/pair.

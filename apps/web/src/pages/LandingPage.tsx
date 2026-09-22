@@ -41,7 +41,7 @@ export function LandingPage() {
       <section className="public-band public-band--workflow" id="get-started" aria-labelledby="workflow-title">
         <div className="public-section-heading"><p className="public-kicker">From your desk to your phone</p><h2 id="workflow-title">Set up once.<br />Pick up anywhere.</h2></div>
         <ol className="numbered-workflow">
-          <li><span>01</span><div><h3>Install the plugin</h3><code tabIndex={0} aria-label="OpenCode plugin install command">opencode plugin opencode-remotty --global --force</code></div></li>
+          <li><span>01</span><div><h3>Install the plugin</h3><code tabIndex={0} aria-label="OpenCode plugin install command">opencode plugin add opencode-remotty</code></div></li>
           <li><span>02</span><div><h3>Create an invite</h3><code tabIndex={0} aria-label="remotty pairing command">npx --yes --package opencode-remotty@latest remotty pair</code></div></li>
           <li><span>03</span><div><h3>Scan and continue</h3><p>Scan the QR code or paste the encrypted invite into the pairing page. Quit OpenCode, then run <code>opencode --continue</code>.</p></div></li>
         </ol>

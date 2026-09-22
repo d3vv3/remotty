@@ -4,10 +4,10 @@ remotty is a remote PWA control surface for OpenCode sessions.
 
 ## Install
 
-Requirements: OpenCode and Node `>=22` for `npx`. Install with one command. It registers the plugin in the OpenCode configuration; no manual `tui.json` edit is needed:
+Requirements: OpenCode v2 and Node `>=22` for `npx`. Install with one command. It registers the plugin in the OpenCode configuration; no manual TUI configuration edit is needed:
 
 ```sh
-opencode plugin opencode-remotty --global --force
+opencode plugin add opencode-remotty
 ```
 
 Create the relay identity and an encrypted device invite:
@@ -19,6 +19,8 @@ npx --yes --package opencode-remotty@latest remotty pair
 The command mutates `~/.config/remotty/config.json` (or `$XDG_CONFIG_HOME/remotty/config.json`) and prints a sensitive token, clickable fragment-only pairing link, and terminal QR code. Do not share or publish this output. The one-time invite expires after ten minutes.
 
 Open the pairing link, scan its QR code, or paste the token into `https://remotty.devve.space/pair`. Quit any running OpenCode process, then run `opencode --continue` after installation and pairing.
+
+The relay remains connected while this local OpenCode TUI is running. Existing pairing keys and devices from the OpenCode v1 plugin are reused without rewriting the relay configuration.
 
 ## Commands
 

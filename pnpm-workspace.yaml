@@ -8,3 +8,11 @@ onlyBuiltDependencies:
 allowBuilds:
   esbuild: true
   msgpackr-extract: true
+  protobufjs: false
+minimumReleaseAgeExclude:
+  - '@opencode/ai@2.0.13'
+  - '@opencode/client@2.0.13'
+  - '@opencode/plugin@2.0.13'
+  - '@opencode/protocol@2.0.13'
+  - '@opencode/schema@2.0.13'
+  - '@opencode/util@2.0.13'

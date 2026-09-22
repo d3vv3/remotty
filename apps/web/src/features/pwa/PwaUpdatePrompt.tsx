@@ -62,7 +62,7 @@ export function PwaUpdatePrompt({ onVisibilityChange }: { onVisibilityChange?: (
         <h2 id="pwa-update-title">A new Remotty version is ready.</h2>
         <span>Update now to reload the PWA. To update later, close every Remotty tab and installed app window, then reopen it.</span>
         <strong>Update the desktop plugin too:</strong>
-        <code tabIndex={0} aria-label="OpenCode plugin update command">opencode plugin opencode-remotty --global --force</code>
+        <code tabIndex={0} aria-label="OpenCode plugin update command">opencode plugin add opencode-remotty</code>
         <div>
           <Button disabled={updating} onClick={() => setDeferred(true)}>Later</Button>
           <Button ref={updateActionRef} variant="primary" loading={updating} loadingLabel="Updating" startIcon={<RefreshCw size={17} />} onClick={() => void update()}>{updateState === "idle" ? "Update now" : "Try again"}</Button>

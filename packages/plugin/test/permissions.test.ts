@@ -36,9 +36,9 @@ describe("OpenCode permission compatibility", () => {
 
   it("uses the correct reply contract and preserves v2 routing in push data", () => {
     expect(permissionReplyRequest({ sessionId: "session", permissionId: "permission", response: "once" }))
-      .toEqual({ path: { id: "session", permissionID: "permission" }, body: { response: "once" } })
+      .toEqual({ sessionID: "session", requestID: "permission", decision: "once" })
     expect(permissionReplyRequest({ sessionId: "session/id", permissionId: "permission/id", response: "always", replyDialect: "v2" }))
-      .toEqual({ url: "/api/session/session%2Fid/permission/permission%2Fid/reply", body: { reply: "always" } })
+      .toEqual({ sessionID: "session/id", requestID: "permission/id", decision: "always" })
     const request = routeSessionRequests([normalizePermissionRequest({ id: "permission", sessionID: "child", action: "bash", resources: [] })!], [{ id: "root" }, { id: "child", parentID: "root" }])[0]!
     expect(permissionNotification("relay", "workspace", request).data).toMatchObject({
       sessionId: "root", targetSessionId: "child", replyDialect: "v2",

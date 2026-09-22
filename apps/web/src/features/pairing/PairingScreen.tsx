@@ -42,7 +42,7 @@ export function PairingScreen({ onConnect, error }: { onConnect: (bundle: Pairin
         </div>
         <aside className="pairing-runbook" aria-labelledby="runbook-title">
           <h2 id="runbook-title"><Terminal aria-hidden="true" /> Install and pair</h2>
-          <ol><li><span>01</span><div><strong>Add the OpenCode plugin</strong><code tabIndex={0} aria-label="OpenCode plugin install command">opencode plugin opencode-remotty --global --force</code></div></li><li><span>02</span><div><strong>Create an encrypted device invite</strong><code tabIndex={0} aria-label="remotty pairing command">npx --yes --package opencode-remotty@latest remotty pair</code></div></li><li><span>03</span><div><strong>Restart OpenCode</strong><p>Quit the running OpenCode process, then run:</p><code tabIndex={0} aria-label="OpenCode restart command">opencode --continue</code></div></li></ol>
+          <ol><li><span>01</span><div><strong>Add the OpenCode plugin</strong><code tabIndex={0} aria-label="OpenCode plugin install command">opencode plugin add opencode-remotty</code></div></li><li><span>02</span><div><strong>Create an encrypted device invite</strong><code tabIndex={0} aria-label="remotty pairing command">npx --yes --package opencode-remotty@latest remotty pair</code></div></li><li><span>03</span><div><strong>Restart OpenCode</strong><p>Quit the running OpenCode process, then run:</p><code tabIndex={0} aria-label="OpenCode restart command">opencode --continue</code></div></li></ol>
         </aside>
       </section>
       <PublicFooter />
